@@ -3,7 +3,9 @@
 // 职责边界：
 //   * 开一个无控制台窗口，加载内嵌前端（dist）并通过本地 HTTP 服务代理 opencode API。
 //   * 后端不可用时仍然起本地服务（页面可访问，/api 返回 502），界面显示「未连接」，
-//     不白屏。只有显式设置 OC_WORKBENCH_URL 时才加载外部 dev 地址。
+//     不白屏。后端发现放到后台线程，失败每 5 秒重试一次，页面再轮询就能看到「已连接」；
+//     也可以 POST /api/reconnect 立刻重连。
+//   * 只有显式设置 OC_WORKBENCH_URL 时才加载外部 dev 地址。
 //   * token 不走 HTTP：index.html 里没有任何 token。页面加载后 IPC 发 'oc:auth'，
 //     外壳用 evaluate_script 下发 `window.__ocIpc('token:<token>')`；
 //     其它 IPC 消息仍回显 `pong:<msg>`。
@@ -18,6 +20,7 @@ use std::ffi::OsStr;
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tao::dpi::LogicalSize;
@@ -64,30 +67,19 @@ fn init_com_sta() {}
 
 /// 起内嵌前端 + 本地代理。
 ///
-/// 认证失败（opencode 没装/没起/pair 失败）**不阻塞启动**：仍然起本地服务，
-/// 只是 `Ctx.base` 为 None，`/api/*` 一律回 502，前端据此显示「未连接」。
+/// **这里不做任何后端发现**：`auth::discover()` 最长会等两条子命令各 5 秒，
+/// 放在启动路径上就是十几秒白窗。改成先起本地服务、立刻返回 URL，
+/// 由后台线程 [`server::spawn_bootstrap`] 去连接（失败每 5 秒重试）。
 fn start_local(token: &str) -> Result<String, String> {
-    let (base, cookie) = match auth::discover() {
-        Ok(backend) => {
-            append_log(&format!("[auth] 已连接 {}\n", backend.base));
-            (Some(backend.base), backend.cookie)
-        }
-        Err(err) => {
-            append_log(&format!("[auth] {err}\n"));
-            (None, String::new())
-        }
-    };
-
-    let online = base.is_some();
+    let backend: Arc<RwLock<Option<auth::Backend>>> = Arc::new(RwLock::new(None));
     let port = server::start(server::Ctx {
-        base,
-        cookie,
+        backend: backend.clone(),
         token: token.to_string(),
         port: 0,
     })?;
+    server::spawn_bootstrap(backend);
     append_log(&format!(
-        "[boot] 本地服务端口 {port}（后端{}）\n",
-        if online { "已连接" } else { "未连接，/api 回 502" }
+        "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));
     Ok(format!("http://127.0.0.1:{port}/"))
 }

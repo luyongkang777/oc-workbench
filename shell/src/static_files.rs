@@ -24,7 +24,11 @@ pub fn serve(request: tiny_http::Request, path: &str) {
 
     let header = Header::from_bytes(&b"content-type"[..], mime_of(rel).as_bytes())
         .expect("content-type 头构造失败");
-    let response = Response::from_data(file.contents().to_vec()).with_header(header);
+    // tiny_http 默认 ≥32KB 会改发 chunked 并丢掉 Content-Length（dist 里的 JS 有 100KB+）。
+    // 静态文件长度是已知的，抬到 usize::MAX 让它按 Identity 带 Content-Length 返回。
+    let response = Response::from_data(file.contents().to_vec())
+        .with_header(header)
+        .with_chunked_threshold(usize::MAX);
     let _ = request.respond(response);
 }
 

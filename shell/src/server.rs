@@ -9,28 +9,125 @@
 //!   * `/api/*` 额外校验 `x-oc-token` 头，值等于每次启动密码学随机生成的 token；
 //!   * token **不经 HTTP 下发**：index.html 里没有 token，页面通过 IPC 向外壳索取；
 //!   * 同时转发数上限 [`MAX_CONCURRENT`]，超出直接 503，避免本机进程刷连接把工作台拖死。
+//!
+//! 后端连接是**共享可变状态**（[`Ctx::backend`]）：启动时先起服务、先开窗口，
+//! 由后台线程 [`spawn_bootstrap`] 去 `discover()`，失败每 [`RETRY_INTERVAL`] 重试一次；
+//! 页面也可以 `POST /api/reconnect` 立刻触发一次重新认证（同样要过 `x-oc-token` 校验）。
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tiny_http::{Header, Response, Server, StatusCode};
 
+use crate::auth::Backend;
+
 /// 同时处理的请求上限（SSE 长连接也会长期占一个名额）。
 const MAX_CONCURRENT: usize = 64;
+/// 后台连不上后端时的重试间隔（后端起来后最多这么久就能自动恢复）。
+const RETRY_INTERVAL: Duration = Duration::from_secs(5);
+
+/// 串行化 `discover()`：后台重试和 `/api/reconnect` 可能同时触发，
+/// 并发跑 `opencode pair` 会一次生成多条一次性链接，没必要也不利于排查。
+static DISCOVER_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone)]
 pub struct Ctx {
-    /// 上游地址；`None` 表示后端不可用（未安装/认证失败），`/api/*` 直接回 502。
-    pub base: Option<String>,
-    pub cookie: String,
+    /// 后端连接（base + cookie）；`None` 表示未连接，`/api/*` 直接回 502。
+    ///
+    /// 后台线程和 `/api/reconnect` 都会写它，所以必须是共享可变状态，
+    /// 不能在启动时把 `base` 定死（那样后端晚起来就永远恢复不了）。
+    pub backend: Arc<RwLock<Option<Backend>>>,
     /// 每次启动随机生成的本地 API token（32 位 hex），由 main 生成后同时交给本服务和 IPC。
     pub token: String,
     /// 本地监听端口，start() 拿到真实端口后回填。
     pub port: u16,
+}
+
+impl Ctx {
+    /// 读当前后端（base, cookie）。锁中毒也照常取数据，不能因为某次 panic 丢掉连接。
+    fn current_backend(&self) -> Option<(String, String)> {
+        let guard = match self.backend.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard
+            .as_ref()
+            .map(|backend| (backend.base.clone(), backend.cookie.clone()))
+    }
+}
+
+/// 把新连接写进共享状态。
+fn store_backend(state: &Arc<RwLock<Option<Backend>>>, backend: Backend) {
+    match state.write() {
+        Ok(mut slot) => *slot = Some(backend),
+        Err(poisoned) => *poisoned.into_inner() = Some(backend),
+    }
+}
+
+/// 当前是否已经连上（后台线程据此在手动重连成功后提前退出）。
+fn has_backend(state: &Arc<RwLock<Option<Backend>>>) -> bool {
+    match state.read() {
+        Ok(guard) => guard.is_some(),
+        Err(poisoned) => poisoned.into_inner().is_some(),
+    }
+}
+
+/// 串行地跑一次 `auth::discover()`，并把结果原子地写进共享状态
+/// （后台重试和手动重连共用这个入口）。
+///
+/// 写状态必须发生在锁内：否则两个并发 discover 的结果可能以相反顺序落盘，
+/// 留下一个已经被后一次 pair 顶掉的旧 cookie。
+fn connect_once(state: &Arc<RwLock<Option<Backend>>>) -> Result<String, String> {
+    let _guard = match DISCOVER_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let backend = crate::auth::discover()?;
+    let base = backend.base.clone();
+    store_backend(state, backend);
+    Ok(base)
+}
+
+/// 后台连接后端：立即尝试一次，失败每 [`RETRY_INTERVAL`] 重试，成功后线程退出。
+///
+/// 这样 `opencode service status` / `pair` 的 5 秒超时（最坏两次）不会卡在
+/// 主线程上把窗口拖成白屏；后端晚起来也能自己恢复。
+///
+/// 同一个失败原因只记一次日志：每 5 秒重试一次，原样刷屏会把日志撑爆。
+pub fn spawn_bootstrap(state: Arc<RwLock<Option<Backend>>>) {
+    thread::spawn(move || {
+        let mut attempt = 0u32;
+        let mut last_error = String::new();
+        loop {
+            // 手动 /api/reconnect 已经连上了就别再跑一遍 pair（会浪费一次性链接）。
+            let already = has_backend(&state);
+            if already {
+                return;
+            }
+
+            attempt += 1;
+            match connect_once(&state) {
+                Ok(base) => {
+                    crate::append_log(&format!("[auth] 已连接 {base}（第 {attempt} 次尝试）\n"));
+                    return;
+                }
+                Err(err) => {
+                    if err != last_error {
+                        crate::append_log(&format!(
+                            "[auth] 第 {attempt} 次连接失败：{err}；之后每 {} 秒重试一次（同一原因不再重复记）\n",
+                            RETRY_INTERVAL.as_secs()
+                        ));
+                        last_error = err;
+                    }
+                }
+            }
+            thread::sleep(RETRY_INTERVAL);
+        }
+    });
 }
 
 /// 生成 32 位 hex token（16 字节密码学随机）。
@@ -119,6 +216,11 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             );
             return;
         }
+        // 重连是外壳自己的端点，不转发到上游。
+        if path == "/api/reconnect" {
+            reconnect(request, ctx);
+            return;
+        }
         proxy(request, ctx, &path, &url);
     } else {
         crate::static_files::serve(request, &path);
@@ -159,9 +261,8 @@ fn token_allowed(request: &tiny_http::Request, token: &str) -> bool {
     }
 }
 
-/// 用 JSON 回一个错误（前端会把 body 原样拼进异常信息）。
-fn json_error(request: tiny_http::Request, status: u16, message: &str) -> std::io::Result<()> {
-    let body = serde_json::json!({ "error": message, "status": status }).to_string();
+/// 用 JSON 回一个响应（前端会把 body 原样拼进异常信息）。
+fn respond_json(request: tiny_http::Request, status: u16, body: String) -> std::io::Result<()> {
     let header = Header::from_bytes(&b"content-type"[..], &b"application/json; charset=utf-8"[..])
         .expect("content-type 头构造失败");
     request.respond(
@@ -171,9 +272,47 @@ fn json_error(request: tiny_http::Request, status: u16, message: &str) -> std::i
     )
 }
 
+/// 用 JSON 回一个错误（前端会把 body 原样拼进异常信息）。
+fn json_error(request: tiny_http::Request, status: u16, message: &str) -> std::io::Result<()> {
+    let body = serde_json::json!({ "error": message, "status": status }).to_string();
+    respond_json(request, status, body)
+}
+
+/// `POST /api/reconnect`：立刻跑一次 `discover()`，把结果直接回给页面。
+///
+/// 成功 200 `{"ok":true,"base":"http://127.0.0.1:<port>"}`；
+/// 失败 502 `{"ok":false,"error":"..."}`（原因照抄 discover 的错误串）。
+///
+/// 这个端点本身不转发上游，所以后端没连上时也能用；token 校验和其它 `/api/*` 一样。
+fn reconnect(mut request: tiny_http::Request, ctx: &Ctx) {
+    if !request.method().as_str().eq_ignore_ascii_case("POST") {
+        let _ = json_error(request, 405, "只支持 POST /api/reconnect");
+        return;
+    }
+
+    // 前端可能带 `{}` 之类的请求体：读完丢掉，别让连接里残留半截 body。
+    let mut sink = Vec::new();
+    let mut reader = std::io::Read::take(request.as_reader(), 64 * 1024);
+    let _ = std::io::Read::read_to_end(&mut reader, &mut sink);
+
+    match connect_once(&ctx.backend) {
+        Ok(base) => {
+            crate::append_log(&format!("[auth] 手动重连成功：{base}\n"));
+            let body = serde_json::json!({ "ok": true, "base": base }).to_string();
+            let _ = respond_json(request, 200, body);
+        }
+        Err(err) => {
+            // 错误串由 auth::discover 拼好（命令、退出码、stderr 片段），不含 cookie。
+            crate::append_log(&format!("[auth] 手动重连失败：{err}\n"));
+            let body = serde_json::json!({ "ok": false, "error": err }).to_string();
+            let _ = respond_json(request, 502, body);
+        }
+    }
+}
+
 fn proxy(mut request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
     // 后端不可用（未安装/认证失败）时页面仍要能打开，`/api/*` 统一 502 + JSON。
-    let Some(base) = ctx.base.as_deref() else {
+    let Some((base, cookie)) = ctx.current_backend() else {
         let _ = json_error(
             request,
             502,
@@ -218,7 +357,7 @@ fn proxy(mut request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
         builder.timeout(Duration::from_secs(600)).build()
     };
 
-    let mut call = agent.request(&method, &target).set("cookie", &ctx.cookie);
+    let mut call = agent.request(&method, &target).set("cookie", &cookie);
     for (name, value) in &forwarded {
         call = call.set(name, value);
     }
@@ -233,9 +372,11 @@ fn proxy(mut request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
     match result {
         Ok(resp) => relay(request, resp),
         Err(ureq::Error::Status(401, _)) => {
-            // 认证过期（配对 token 通常 30 天），提示重启程序
-            let _ = request
-                .respond(Response::from_string("401 认证失效，请重启工作台").with_status_code(401));
+            // 认证过期（配对 token 通常 30 天）：页面可以 POST /api/reconnect 重新配对。
+            let _ = request.respond(
+                Response::from_string("401 认证失效，请点击「重试连接」或重启工作台")
+                    .with_status_code(401),
+            );
         }
         Err(ureq::Error::Status(_, resp)) => relay(request, resp),
         Err(err) => {
@@ -260,6 +401,12 @@ fn relay(request: tiny_http::Request, resp: ureq::Response) {
     let reader = resp.into_reader();
     // SSE 没有 content-length，交给 tiny_http 走 chunked 逐块转发。
     let mut out = Response::new(status, Vec::new(), reader, length, None);
+    // tiny_http 默认 ≥32KB 就改发 chunked 并**丢掉 Content-Length**，
+    // 前端的 2MB 预检查（读 content-length）会因此失效。上游有明确长度时
+    // 把阈值抬到 usize::MAX，按 Identity 原样透传长度；SSE 无长度仍走 chunked。
+    if length.is_some() {
+        out = out.with_chunked_threshold(usize::MAX);
+    }
     if let Some(value) = content_type {
         if let Ok(header) = Header::from_bytes(&b"content-type"[..], value.as_bytes()) {
             out.add_header(header);

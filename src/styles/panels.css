@@ -38,6 +38,30 @@
   word-break: break-all;
 }
 
+/* 顶栏「未连接」时的手动重试按钮 */
+.retry-button {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.retry-button:hover:not(:disabled) {
+  background: #37373d;
+}
+
+.retry-button:disabled {
+  color: #7a7a7a;
+  cursor: default;
+  opacity: 0.8;
+}
+
 /* ---------- 文件树 ---------- */
 .tree {
   flex: 1;

@@ -10,10 +10,10 @@
 //! 必须走 `cmd /C opencode ...`。
 //!
 //! 每条子命令最多等 5 秒（[`CMD_TIMEOUT`]）：服务锁、UAC 拦截、shim 弹交互都会让
-//! `Command::output()` 永久阻塞，而这段代码跑在事件循环启动之前 —— 卡住就是白窗且无日志。
+//! `Command::output()` 永久阻塞，而这段代码跑在后台线程里 —— 卡住就是不回复且没日志。
 //!
 //! 所有失败都返回带原因的错误字符串（命令、io::Error、退出码、stderr 片段），
-//! 由 main 写进 gui-error.log —— 这是排查「为什么没连接上后端」的唯一线索。
+//! 由 server 的后台重试线程写进 gui-error.log —— 这是排查「为什么没连接上后端」的唯一线索。
 
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -24,7 +24,14 @@ use std::time::{Duration, Instant};
 const CMD_TIMEOUT: Duration = Duration::from_secs(5);
 /// try_wait 轮询间隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Windows 的 CREATE_NO_WINDOW：GUI 进程起控制台子进程时不要弹黑窗。
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// 已连接的后端：上游地址 + 认证 cookie。
+///
+/// cookie 是凭据，不实现 `Debug`，也不进任何日志。
+#[derive(Clone)]
 pub struct Backend {
     pub base: String,
     pub cookie: String,
@@ -42,7 +49,10 @@ fn snippet(text: &str, limit: usize) -> String {
 
 #[cfg(windows)]
 fn command_for(args: &[&str]) -> Command {
+    use std::os::windows::process::CommandExt;
+
     let mut cmd = Command::new("cmd");
+    cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.arg("/C").arg("opencode");
     for arg in args {
         cmd.arg(arg);
@@ -66,8 +76,11 @@ fn command_for(args: &[&str]) -> Command {
 fn kill_tree(child: &mut Child) {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+
         let _ = Command::new("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -208,11 +221,11 @@ pub fn discover() -> Result<Backend, String> {
         .ok_or_else(|| format!("`opencode service status` 给了地址但解析不出端口：{base}"))?;
 
     let pair = run(&["pair"]).map_err(|err| format!("`opencode pair` 执行失败：{err}"))?;
+    // 解析失败时**不回显 pair 原文**：那是一枚 5 分钟有效的一次性配对链接，
+    // 不能因为格式变化就把它写进 gui-error.log（后台每 5 秒重试会反复写）。
     let link = find_link(&pair).ok_or_else(|| {
-        format!(
-            "`opencode pair` 输出里没有配对链接：{}",
-            snippet(&pair, 200)
-        )
+        "`opencode pair` 输出里没有 127.0.0.1 的 /auth/connect/ 链接（原文已省略，避免配对链接落日志）"
+            .to_string()
     })?;
 
     let agent = ureq::AgentBuilder::new()

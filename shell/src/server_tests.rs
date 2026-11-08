@@ -1,32 +1,70 @@
-//! `server` 模块的单元测试：token 不外泄、Host 精确匹配、后端不可用时 502 JSON。
+//! `server` 模块的单元测试：token 不外泄、Host 精确匹配、后端不可用时 502 JSON、
+//! 大响应保留 Content-Length、重连端点的入口约束。
 //!
 //! 全部走真实 loopback 端口，不 mock（tiny_http 起在 127.0.0.1:0，测试完进程退出即回收）。
+//! 注意：**不要**在测试里真正触发 `auth::discover()`（会执行 opencode 子命令、写真实配对链接）。
 
 use std::io::{Read as _, Write as _};
 use std::net::TcpStream;
+use std::sync::{Arc, RwLock};
+use std::thread;
 use std::time::Duration;
 
 use super::{start, Ctx};
+use crate::auth::Backend;
 use crate::static_files::DIST;
 
 fn start_test_server(base: Option<String>, token: &str) -> u16 {
-    start(Ctx {
+    let backend = base.map(|base| Backend {
         base,
         cookie: String::new(),
+    });
+    start(Ctx {
+        backend: Arc::new(RwLock::new(backend)),
         token: token.to_string(),
         port: 0,
     })
     .expect("本地服务应能启动")
 }
 
-/// 原始 TCP 请求：ureq 不允许改 Host，测精确匹配只能自己拼报文。
-fn raw_get(port: u16, host: &str, path: &str) -> String {
+/// 原始 TCP 请求：ureq 不允许改 Host / 加任意头，测精确匹配只能自己拼报文。
+fn raw_request(
+    port: u16,
+    method: &str,
+    host: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("连本地服务失败");
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
+    for (name, value) in headers {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("\r\n");
     stream.write_all(request.as_bytes()).expect("写请求失败");
     let mut out = Vec::new();
     stream.read_to_end(&mut out).expect("读响应失败");
     String::from_utf8_lossy(&out).to_string()
+}
+
+fn raw_get(port: u16, host: &str, path: &str) -> String {
+    raw_request(port, "GET", host, path, &[])
+}
+
+/// 递归找第一个超过 `min` 字节的内嵌文件，返回（相对路径, 长度）。
+fn find_large_file(dir: &include_dir::Dir<'_>, min: usize) -> Option<(String, usize)> {
+    for file in dir.files() {
+        let len = file.contents().len();
+        if len > min {
+            return Some((file.path().to_string_lossy().replace('\\', "/"), len));
+        }
+    }
+    for sub in dir.dirs() {
+        if let Some(found) = find_large_file(sub, min) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 #[test]
@@ -108,5 +146,96 @@ fn host_must_match_exactly() {
     assert!(
         port_suffix.starts_with("HTTP/1.1 403"),
         "端口后缀必须拒：{port_suffix}"
+    );
+}
+
+/// 重连端点同样是 `/api/*`：没有 token 必须 403，且不会触发任何 discover。
+#[test]
+fn reconnect_requires_token() {
+    let port = start_test_server(None, "unit-test-token");
+    let raw = raw_get(port, &format!("127.0.0.1:{port}"), "/api/reconnect");
+    assert!(
+        raw.starts_with("HTTP/1.1 403"),
+        "无 token 的重连必须 403：{raw}"
+    );
+}
+
+/// 只接受 POST：GET 直接 405（在校验方法之后才跑 discover，所以测试是快的）。
+#[test]
+fn reconnect_rejects_non_post() {
+    let token = "unit-test-token";
+    let port = start_test_server(None, token);
+    let raw = raw_request(
+        port,
+        "GET",
+        &format!("127.0.0.1:{port}"),
+        "/api/reconnect",
+        &[("x-oc-token", token)],
+    );
+    assert!(
+        raw.starts_with("HTTP/1.1 405"),
+        "GET /api/reconnect 必须 405：{raw}"
+    );
+}
+
+/// 上游返回 40KB + 明确 Content-Length 时，代理必须原样保留长度（不能再变 chunked）。
+#[test]
+fn proxy_keeps_content_length_for_large_response() {
+    let upstream = tiny_http::Server::http("127.0.0.1:0").expect("假上游应能启动");
+    let upstream_port = upstream
+        .server_addr()
+        .to_ip()
+        .expect("假上游没有 IP")
+        .port();
+    thread::spawn(move || {
+        for request in upstream.incoming_requests() {
+            let header = tiny_http::Header::from_bytes(&b"content-type"[..], &b"text/plain"[..])
+                .expect("content-type 头构造失败");
+            let response = tiny_http::Response::from_data(vec![b'x'; 40_000])
+                .with_header(header)
+                .with_chunked_threshold(usize::MAX);
+            let _ = request.respond(response);
+        }
+    });
+
+    let token = "unit-test-token";
+    let port = start_test_server(Some(format!("http://127.0.0.1:{upstream_port}")), token);
+    let raw = raw_request(
+        port,
+        "GET",
+        &format!("127.0.0.1:{port}"),
+        "/api/big",
+        &[("x-oc-token", token)],
+    );
+    let lower = raw.to_ascii_lowercase();
+    assert!(
+        lower.contains("content-length: 40000"),
+        "40KB 响应必须带 content-length：{}",
+        &lower[..lower.len().min(400)]
+    );
+    assert!(
+        !lower.contains("transfer-encoding: chunked"),
+        "有明确长度时不能再改 chunked"
+    );
+}
+
+/// dist 里的静态大文件（JS 有 100KB+）也必须带 Content-Length。
+#[test]
+fn large_static_file_keeps_content_length() {
+    let Some((rel, len)) = find_large_file(&DIST, 40_000) else {
+        // dist 里没有大文件就跳过（不影响其它断言）
+        return;
+    };
+    let port = start_test_server(None, "unit-test-token");
+    let raw = raw_get(port, &format!("127.0.0.1:{port}"), &format!("/{rel}"));
+    let lower = raw.to_ascii_lowercase();
+    assert!(
+        lower.contains(&format!("content-length: {len}")),
+        "静态文件 {rel} 必须带 content-length: {len}；实际头部：{}",
+        &lower[..lower.len().min(400)]
+    );
+    assert!(
+        !lower.contains("transfer-encoding: chunked"),
+        "静态文件不应改 chunked"
     );
 }

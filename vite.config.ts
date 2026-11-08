@@ -6,6 +6,8 @@ import { promisify } from 'node:util'
 const execAsync = promisify(exec)
 const FALLBACK_TARGET = 'http://127.0.0.1:28894'
 const PAIR_LINK_RE = /http:\/\/127\.0\.0\.1:(\d+)\/auth\/connect\/[A-Za-z0-9_-]+/
+/** 配对链接请求的超时：对端不收连接时不能让 dev server 启动卡死。 */
+const PAIR_FETCH_TIMEOUT_MS = 10_000
 
 type Auth = { cookie: string; target: string }
 
@@ -26,7 +28,11 @@ async function resolveAuth(): Promise<Auth> {
 
     const port = match[1]
     const link = match[0]
-    const res = await fetch(link, { headers: { accept: 'text/html' }, redirect: 'manual' })
+    const res = await fetch(link, {
+      headers: { accept: 'text/html' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(PAIR_FETCH_TIMEOUT_MS),
+    })
     const raw =
       (typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie()[0] : undefined) ??
       res.headers.get('set-cookie') ??

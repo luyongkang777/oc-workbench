@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import ChatPanel from './components/ChatPanel'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
 import { getAuthState, startAuth, subscribeAuth } from './api/auth'
-import { getInfo, readFile } from './api/client'
+import { getInfo, readFile, reconnect } from './api/client'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
 const PROBE_INTERVAL_MS = 10_000
@@ -12,44 +12,60 @@ export default function App() {
   // 令牌只能经 IPC 拿：ready 之前不发任何 /api 请求，避免先刷一片 401。
   const auth = useSyncExternalStore(subscribeAuth, getAuthState)
   const [connected, setConnected] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
   const [file, setFile] = useState<string | null>(null)
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // 每次打开文件的序号：只有最新一次请求的返回才能写进编辑器
   const openSeq = useRef(0)
+  // 当前在途的读文件请求：切文件时 aborts 它
+  const readAbort = useRef<AbortController | null>(null)
+  // 组件是否还在树上：异步回调据此决定要不要写状态
+  const alive = useRef(true)
+  // 探活请求是否在途：定时探活不叠加；finally 里保证复位
+  const probing = useRef(false)
+
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      readAbort.current?.abort()
+    }
+  }, [])
 
   // 挂载即发起 IPC 握手；拿不到令牌只影响连接状态，不影响界面渲染。
   useEffect(() => {
     startAuth()
   }, [])
 
+  /** 立即探活一次（带 15 秒超时），返回是否连上。 */
+  const probeNow = useCallback(async (): Promise<boolean> => {
+    probing.current = true
+    try {
+      await getInfo()
+      if (alive.current) setConnected(true)
+      return true
+    } catch {
+      if (alive.current) setConnected(false)
+      return false
+    } finally {
+      probing.current = false
+    }
+  }, [])
+
+  /** 定时探活用：上一次还没回来就跳过，避免请求越堆越多。 */
+  const probeOnce = useCallback(() => {
+    if (probing.current) return
+    void probeNow()
+  }, [probeNow])
+
   useEffect(() => {
     if (auth.status !== 'ready') return
-    let alive = true
-    let inflight = false
-    const probe = () => {
-      // 上一次探活还没回来就不叠加请求，避免后端卡住时请求越堆越多
-      if (inflight) return
-      inflight = true
-      getInfo()
-        .then(() => {
-          if (alive) setConnected(true)
-        })
-        .catch(() => {
-          if (alive) setConnected(false)
-        })
-        .finally(() => {
-          inflight = false
-        })
-    }
-    probe()
-    const timer = window.setInterval(probe, PROBE_INTERVAL_MS)
-    return () => {
-      alive = false
-      window.clearInterval(timer)
-    }
-  }, [auth.status])
+    probeOnce()
+    const timer = window.setInterval(probeOnce, PROBE_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [auth.status, probeOnce])
 
   useEffect(
     () => () => {
@@ -61,11 +77,15 @@ export default function App() {
 
   async function openFile(relPath: string) {
     const seq = ++openSeq.current
+    // 放弃上一个读请求，别让旧响应拖住新文件
+    readAbort.current?.abort()
+    const controller = new AbortController()
+    readAbort.current = controller
     setFile(relPath)
     setLoading(true)
     setError(null)
     try {
-      const text = await readFile(DEFAULT_ROOT, relPath)
+      const text = await readFile(DEFAULT_ROOT, relPath, controller.signal)
       if (seq !== openSeq.current) return
       setContent(text)
     } catch (err) {
@@ -74,6 +94,19 @@ export default function App() {
       setError((err as Error).message)
     } finally {
       if (seq === openSeq.current) setLoading(false)
+    }
+  }
+
+  /** 手动重连：先让外壳重新配对，再立刻探活一次决定状态。 */
+  async function retryConnect() {
+    if (reconnecting) return
+    setReconnecting(true)
+    try {
+      // 外壳版本过旧、没有 /api/reconnect 时忽略，靠下面这次探活定状态
+      await reconnect().catch(() => {})
+      await probeNow()
+    } finally {
+      if (alive.current) setReconnecting(false)
     }
   }
 
@@ -86,6 +119,7 @@ export default function App() {
         : connected
           ? '已连接'
           : '未连接'
+  const showRetry = !statusOk && auth.status !== 'pending'
 
   return (
     <div className="app">
@@ -94,6 +128,16 @@ export default function App() {
         <span className="topbar-spacer" />
         <span className={`status-dot ${statusOk ? 'ok' : 'bad'}`} />
         <span className="status-text">{statusText}</span>
+        {showRetry ? (
+          <button
+            type="button"
+            className="retry-button"
+            onClick={() => void retryConnect()}
+            disabled={reconnecting}
+          >
+            {reconnecting ? '连接中…' : '重试'}
+          </button>
+        ) : null}
       </header>
 
       <div className="main">
