@@ -1,0 +1,5 @@
+node_modules/
+dist/
+shell/target/
+*.log
+.DS_Store
