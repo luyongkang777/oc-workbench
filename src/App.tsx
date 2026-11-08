@@ -7,6 +7,8 @@ import { getInfo, readFile, reconnect } from './api/client'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
 const PROBE_INTERVAL_MS = 10_000
+// 未连上时的快轮询间隔：后端 0.5 秒内就绪时用户感知不到等待。
+const FAST_PROBE_INTERVAL_MS = 1_000
 
 export default function App() {
   // 令牌只能经 IPC 拿：ready 之前不发任何 /api 请求，避免先刷一片 401。
@@ -64,9 +66,12 @@ export default function App() {
   useEffect(() => {
     if (auth.status !== 'ready') return
     probeOnce()
-    const timer = window.setInterval(probeOnce, PROBE_INTERVAL_MS)
+    // 冷启动时后台还在配对，首次探活经常吃 502。断开态用 1 秒快轮询，
+    // 连上后回到 10 秒，保证「启动到可操作」不被 10 秒间隔拖住。
+    const delay = connected ? PROBE_INTERVAL_MS : FAST_PROBE_INTERVAL_MS
+    const timer = window.setInterval(probeOnce, delay)
     return () => window.clearInterval(timer)
-  }, [auth.status, probeOnce])
+  }, [auth.status, connected, probeOnce])
 
   useEffect(
     () => () => {
