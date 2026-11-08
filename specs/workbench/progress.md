@@ -30,14 +30,19 @@
 
 最终报告：`C:\backup\review-feature_workbench-v0-20261108-230403.md`
 
-## 剩余 MINOR（不阻塞，后续清理）
+## MINOR 清理（2026-11-09）
 
-- `server.rs` 521 行，超过项目自定的 300 行；`proxy` 函数偏长
-- `client.ts` 500KB 限制用 `text.length`（UTF-16 单元）而非字节
-- `reconnect` 失败原因没有显示在界面上，只写日志
-- `/api/reconnect` 在后台 discover 未完成时可能排队超时
-- `auth.rs` 的 `find_base` 只取第一个地址（本地形态没问题，UNCERTAIN）
-- `build.rs` 缺 `rerun-if-changed=../dist`
+已修：
+- `server.rs` 521 行 → 拆成 server.rs 287 / proxy.rs 164 / body.rs 58，都在 300 行内
+- 大文件限制改为按 UTF-8 实际字节判断（不再只看 UTF-16 字符数）
+- 重连失败原因显示在侧栏提示里（不再只写日志）
+- `build.rs` 补 `rerun-if-changed=../dist`（新增文件也会重打包）
+- 配对链接在错误串里统一替换成 `<redacted>`（`auth.rs::redact`），不会进日志/界面
+- `auth.rs` 里误写的 `$ARGS` 已删
+
+仍待处理：
+- `/api/reconnect` 在后台 discover 未完成时可能排到超时（后台会自愈，不影响最终连接）
+- `find_base` 只取第一个 127.0.0.1 地址（本地单地址形态无影响）
 
 ## 阻塞
 

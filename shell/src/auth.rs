@@ -51,6 +51,24 @@ pub struct Backend {
 }
 
 /// 把多行输出压成一行，并截到 limit 个字符（错误日志里够用即可）。
+/// 把一次性配对链接里的 code 打码：它会出现在错误串里，不能进日志或界面。
+fn redact(text: &str) -> String {
+    const MARK: &str = "/auth/connect/";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(idx) = rest.find(MARK) {
+        let (head, tail) = rest.split_at(idx + MARK.len());
+        out.push_str(head);
+        let end = tail
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or(tail.len());
+        out.push_str("<redacted>");
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn snippet(text: &str, limit: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut out: String = flat.chars().take(limit).collect();
@@ -165,7 +183,7 @@ fn collect_output(
 
     if received < 2 {
         return Err(format!(
-            "`opencode {}$ARGS` 已退出，但输出管道 {} 秒内没有关闭（子进程派生的进程仍占着 stdout/stderr），输出不完整（已收到 stdout {} 字节、stderr {} 字节）",
+            "`opencode {}` 已退出，但输出管道 {} 秒内没有关闭（子进程派生的进程仍占着 stdout/stderr），输出不完整（已收到 stdout {} 字节、stderr {} 字节）",
             args.join(" "),
             OUTPUT_TIMEOUT.as_secs(),
             stdout.len(),
@@ -270,6 +288,11 @@ fn port_of(url: &str) -> Option<String> {
 }
 
 pub fn discover() -> Result<Backend, String> {
+    // 所有错误串统一过一遍：配对链接（等同一次性凭据）不能进日志或界面。
+    discover_inner().map_err(|err| redact(&err))
+}
+
+fn discover_inner() -> Result<Backend, String> {
     let status = run(&["service", "status"])
         .map_err(|err| format!("`opencode service status` 执行失败：{err}"))?;
     let base = find_base(&status).ok_or_else(|| {

@@ -36,7 +36,7 @@
 /api/fs/read/specs%5Cworkbench%5Cproduct.md?location[directory]=F%3A%5Copencode%5Cworkbench
 ```
 
-- 返回**原始文本**（不是 JSON），`content-type: text/...`
+- 返回**原始文本**（不是 JSON）。注意 `content-type` 不可靠：`.ts` 文件可能被识别成 `video/mp2t`（MPEG-TS），前端一律按文本读，不要按 content-type 判断。
 - 中文正常（UTF-8），PowerShell 控制台显示乱码只是终端编码问题。
 - 文件不存在：`404 {"_tag":"FileNotFoundError","path":"...","message":"File not found: ..."}`
 
