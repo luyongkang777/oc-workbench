@@ -1,0 +1,22 @@
+[package]
+name = "oc-workbench-shell"
+version = "0.1.0"
+edition = "2021"
+description = "OpenCode 工作台桌面外壳（tao + wry / WebView2）"
+publish = false
+
+[[bin]]
+name = "oc-workbench-shell"
+path = "src/main.rs"
+
+[dependencies]
+tao = "0.37"
+wry = "0.57"
+serde_json = "1"
+tiny_http = "0.12"
+ureq = { version = "2", default-features = false }
+include_dir = "0.7"
+
+# 依赖一次性编译好，debug 也能秒开窗口
+[profile.dev.package."*"]
+opt-level = 1
