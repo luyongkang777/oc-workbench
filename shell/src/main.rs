@@ -133,7 +133,15 @@ fn run() -> Result<(), String> {
     let webview = WebViewBuilder::new()
         .with_url(&url)
         .with_navigation_handler(move |target: String| {
-            let allowed = target == nav_origin || target.starts_with(&format!("{nav_origin}/"));
+            // 允许本站、空白页与 data/about 这类内部页；只拦外部导航。
+            // 不能拦得太死：F5 刷新、渲染进程崩溃自愈都会触发导航，
+            // 拦掉它们等于让整个工作台在重载后不可用。
+            let allowed = target.is_empty()
+                || target == nav_origin
+                || target.starts_with(&format!("{nav_origin}/"))
+                || target.starts_with("about:")
+                || target.starts_with("data:")
+                || target.starts_with("blob:");
             if !allowed {
                 append_log(&format!("[nav] 阻止导航 {target}\n"));
             }
@@ -154,11 +162,9 @@ fn run() -> Result<(), String> {
             };
             append_log(&format!("[ipc] 收到 {kind}\n"));
             let payload = if body == "oc:auth" {
-                // token 只下发一次，重复索取直接忽略。
-                if token_sent.swap(true, Ordering::SeqCst) {
-                    append_log("[ipc] token 已下发过，忽略重复请求\n");
-                    return;
-                }
+                // 页面重载（F5 / 渲染进程自愈）会重新握手，所以允许重复索取；
+                // 来源已经过上面 ipc_origin 校验。
+                token_sent.store(true, Ordering::SeqCst);
                 format!("token:{ipc_token}")
             } else {
                 format!("pong:{body}")

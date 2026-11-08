@@ -489,6 +489,14 @@ fn relay(request: tiny_http::Request, resp: ureq::Response) {
         .map(|v| v.contains("text/event-stream"))
         .unwrap_or(false);
 
+    if is_sse {
+        // tiny_http 的 Response 走 BufWriter + chunked 编码，实测要攒约 8KB 才发出去，
+        // 结果「实时流」变成「一阵一阵」。这里直接拿写端手写响应头（Connection: close
+        // 作为分隔），每读到一块就 flush，保证 SSE 真的实时。
+        relay_sse(request, resp);
+        return;
+    }
+
     let reader = resp.into_reader();
     // SSE 没有 content-length，交给 tiny_http 走 chunked 逐块转发。
     let mut out = Response::new(status, Vec::new(), reader, length, None);
@@ -514,6 +522,45 @@ fn relay(request: tiny_http::Request, resp: ureq::Response) {
         }
     }
     let _ = request.respond(out);
+}
+
+
+/// SSE 专用转发：不经过 tiny_http 的 Response（它会缓冲），直接写裸响应并逐块 flush。
+fn relay_sse(request: tiny_http::Request, resp: ureq::Response) {
+    use std::io::{Read, Write};
+
+    let mut writer = request.into_writer();
+    let head = concat!(
+        "HTTP/1.1 200 OK\r\n",
+        "Content-Type: text/event-stream; charset=utf-8\r\n",
+        "Cache-Control: no-cache, no-transform\r\n",
+        "X-Accel-Buffering: no\r\n",
+        "Connection: close\r\n",
+        "\r\n",
+    );
+    if writer.write_all(head.as_bytes()).is_err() {
+        return;
+    }
+    if writer.flush().is_err() {
+        return;
+    }
+
+    let mut reader = resp.into_reader();
+    let mut buf = [0u8; 4096];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if writer.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+                if writer.flush().is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 #[cfg(test)]
