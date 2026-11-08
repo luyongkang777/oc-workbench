@@ -2,30 +2,32 @@
 //
 // 职责边界：
 //   * 开一个无控制台窗口，加载内嵌前端（dist）并通过本地 HTTP 服务代理 opencode API。
-//   * 找不到 opencode 服务时回退到 Vite dev 地址（OC_WORKBENCH_URL 可覆盖），方便开发。
-//   * IPC 只做最小验证：页面 window.ipc.postMessage('ping')
-//     → 外壳 evaluate_script 回显 window.__ocIpc('pong:ping')。
+//   * 后端不可用时仍然起本地服务（页面可访问，/api 返回 502），界面显示「未连接」，
+//     不白屏。只有显式设置 OC_WORKBENCH_URL 时才加载外部 dev 地址。
+//   * token 不走 HTTP：index.html 里没有任何 token。页面加载后 IPC 发 'oc:auth'，
+//     外壳用 evaluate_script 下发 `window.__ocIpc('token:<token>')`；
+//     其它 IPC 消息仍回显 `pong:<msg>`。
 #![windows_subsystem = "windows"]
 
 mod auth;
 mod server;
+mod static_files;
 
 use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use tao::dpi::LogicalSize;
-use tao::event::{Event, StartCause, WindowEvent};
+use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::WindowBuilder;
 use wry::dpi::{PhysicalPosition, PhysicalSize, Position, Size};
 use wry::{Rect, WebViewBuilder};
 
 const APP_TITLE: &str = "OpenCode 工作台";
-const DEV_URL: &str = "http://127.0.0.1:5273";
 const URL_ENV: &str = "OC_WORKBENCH_URL";
 const LOG_NAME: &str = "gui-error.log";
 
@@ -60,37 +62,49 @@ fn init_com_sta() {
 #[cfg(not(windows))]
 fn init_com_sta() {}
 
-/// 优先自包含启动：内嵌前端 + 本地代理。失败则回退到 dev 地址。
-fn resolve_url() -> String {
-    if let Ok(url) = start_local() {
-        append_log(&format!("[boot] 自包含模式：{url}\n"));
-        return url;
-    }
-
-    let fallback = std::env::var(URL_ENV).unwrap_or_else(|_| DEV_URL.to_string());
-    append_log(&format!("[boot] 回退到 {fallback}\n"));
-    fallback
-}
-
-fn start_local() -> Result<String, String> {
-    // discover 现在返回具体失败原因（命令/退出码/stderr 片段），落盘方便排查。
-    let backend = match auth::discover() {
-        Ok(backend) => backend,
+/// 起内嵌前端 + 本地代理。
+///
+/// 认证失败（opencode 没装/没起/pair 失败）**不阻塞启动**：仍然起本地服务，
+/// 只是 `Ctx.base` 为 None，`/api/*` 一律回 502，前端据此显示「未连接」。
+fn start_local(token: &str) -> Result<String, String> {
+    let (base, cookie) = match auth::discover() {
+        Ok(backend) => {
+            append_log(&format!("[auth] 已连接 {}\n", backend.base));
+            (Some(backend.base), backend.cookie)
+        }
         Err(err) => {
             append_log(&format!("[auth] {err}\n"));
-            return Err(err);
+            (None, String::new())
         }
     };
-    // token 每次启动随机生成，只注入页面，不落盘、不写日志。
-    let token = server::new_token();
+
+    let online = base.is_some();
     let port = server::start(server::Ctx {
-        base: backend.base,
-        cookie: backend.cookie,
-        token,
+        base,
+        cookie,
+        token: token.to_string(),
         port: 0,
     })?;
-    append_log(&format!("[boot] 本地服务端口 {port}，已注入 x-oc-token\n"));
+    append_log(&format!(
+        "[boot] 本地服务端口 {port}（后端{}）\n",
+        if online { "已连接" } else { "未连接，/api 回 502" }
+    ));
     Ok(format!("http://127.0.0.1:{port}/"))
+}
+
+/// 决定页面加载的地址。
+///
+/// 只有显式设置了 OC_WORKBENCH_URL 才用外部地址（给 Vite dev 用）；
+/// 否则永远走本地服务，不允许回退到没人监听的 dev 端口（打包机上那是白屏）。
+fn resolve_url(token: &str) -> Result<String, String> {
+    if let Ok(value) = std::env::var(URL_ENV) {
+        let value = value.trim().to_string();
+        if !value.is_empty() {
+            append_log(&format!("[boot] 使用 {URL_ENV}={value}\n"));
+            return Ok(value);
+        }
+    }
+    start_local(token)
 }
 
 fn run() -> Result<(), String> {
@@ -103,16 +117,40 @@ fn run() -> Result<(), String> {
         .build(&event_loop)
         .map_err(|e| format!("创建窗口失败：{e}"))?;
 
-    let url = resolve_url();
+    // token 由 main 生成，同时给本地服务和 IPC（页面加载后经 'oc:auth' 索取）。
+    let token = server::new_token();
+    let url = resolve_url(&token)?;
 
-    // IPC 回调里只入队，真正回发统一在事件循环主循环做（WebView2 消息泵没转时脚本会被丢）。
+    // IPC 回调里只入队 + 用 proxy 唤醒事件循环，真正的 evaluate_script 在主循环做
+    // （WebView2 消息泵没转时脚本会被丢）。
+    //
+    // 注意：这里**不能**靠 `ControlFlow::WaitUntil` 轮询。tao 0.37 的定时唤醒依赖
+    // WM_PAINT 触发 `process_control_flow`，而 WebView2 占满客户区后父窗口不再重绘，
+    // 事件循环会永远停在 GetMessageW 上（实测 ResumeTimeReached 一次都不来）。
     let pending: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let ipc_queue = pending.clone();
+    let ipc_token = token.clone();
+    let proxy = event_loop.create_proxy();
 
     let webview = WebViewBuilder::new()
         .with_url(&url)
         .with_ipc_handler(move |request: wry::http::Request<String>| {
-            ipc_queue.borrow_mut().push(request.body().clone());
+            let body = request.body().trim().to_string();
+            // 日志里只记种类，绝不落 token。
+            let kind = if body == "oc:auth" {
+                "oc:auth".to_string()
+            } else {
+                format!("其它({} 字节)", body.len())
+            };
+            append_log(&format!("[ipc] 收到 {kind}\n"));
+            // 页面主动索取 token；其余消息原样回显。
+            let payload = if body == "oc:auth" {
+                format!("token:{ipc_token}")
+            } else {
+                format!("pong:{body}")
+            };
+            ipc_queue.borrow_mut().push(payload);
+            let _ = proxy.send_event(());
         })
         .build(&window)
         .map_err(|e| format!("创建 WebView 失败（确认已安装 WebView2 运行时）：{e}"))?;
@@ -138,26 +176,24 @@ fn run() -> Result<(), String> {
                 // 窗口大小变化时 WebView 不会自己跟，必须手动 set_bounds。
                 let _ = webview.set_bounds(view_rect(size.width, size.height));
             }
-            Event::NewEvents(StartCause::ResumeTimeReached { .. }) | Event::MainEventsCleared => {
-                drain_ipc(&webview, &pending);
-            }
+            // IPC handler 用 EventLoopProxy 发来的唤醒信号。
+            Event::UserEvent(()) => drain_ipc(&webview, &pending),
             _ => {}
         }
 
-        // WebView 的 IPC 消息不一定产生 tao 事件，靠定时唤醒保证回显不被饿死。
-        *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50));
+        *control_flow = ControlFlow::Wait;
     });
 
     #[allow(unreachable_code)]
     Ok(())
 }
 
-/// 把排队的 IPC 消息回显给页面：window.__ocIpc('pong:<原消息>')。
+/// 把排队好的 IPC 响应发给页面：`window.__ocIpc('<payload>')`。
+/// payload 已经是最终内容（`token:<token>` 或 `pong:<原消息>`）。
 fn drain_ipc(webview: &wry::WebView, pending: &Rc<RefCell<Vec<String>>>) {
     let messages: Vec<String> = pending.borrow_mut().drain(..).collect();
-    for message in messages {
-        let payload = format!("pong:{message}");
-        let json = serde_json::to_string(&payload).unwrap_or_else(|_| "\"pong:\"".to_string());
+    for payload in messages {
+        let json = serde_json::to_string(&payload).unwrap_or_else(|_| "\"\"".to_string());
         let script = format!("window.__ocIpc && window.__ocIpc({json});");
         if let Err(err) = webview.evaluate_script(&script) {
             append_log(&format!("[ipc] evaluate_script 失败：{err}\n"));

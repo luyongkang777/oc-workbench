@@ -1,0 +1,129 @@
+/* 布局：主体三栏 / 侧栏 / 文件树 */
+
+/* ---------- 主体三栏 ---------- */
+.main {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.sidebar {
+  width: 280px;
+  flex: 0 0 280px;
+  background: #252526;
+  border-right: 1px solid #3c3c3c;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pane-title {
+  height: 30px;
+  line-height: 30px;
+  padding: 0 12px;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #9d9d9d;
+  border-bottom: 1px solid #333;
+  flex: 0 0 auto;
+}
+
+/* 侧栏里替代文件树的提示（等令牌 / 连接失败） */
+.pane-notice {
+  padding: 10px 12px;
+  color: #9d9d9d;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+/* ---------- 文件树 ---------- */
+.tree {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 0 12px;
+}
+
+.tree-root {
+  padding: 2px 12px 8px;
+  color: #8a8a8a;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  line-height: 24px;
+  padding-right: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #cfcfcf;
+}
+
+.tree-item:hover {
+  background: #2a2d2e;
+}
+
+.tree-item.active {
+  background: #094771;
+  color: #ffffff;
+}
+
+.tree-caret {
+  width: 12px;
+  color: #9d9d9d;
+  flex: 0 0 12px;
+  font-size: 10px;
+}
+
+.tree-icon {
+  flex: 0 0 auto;
+  font-size: 12px;
+  filter: saturate(0.6);
+}
+
+.tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-empty {
+  color: #7a7a7a;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.tree-error {
+  color: #f14c4c;
+  font-size: 12px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  word-break: break-all;
+}
+
+.tree-retry {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tree-retry:hover {
+  background: #37373d;
+}

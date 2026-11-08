@@ -1,0 +1,90 @@
+/* 基础：reset / 全局字体 / 顶栏 / 滚动条 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #1e1e1e;
+  color: #cccccc;
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  background: #323233;
+  border-bottom: 1px solid #3c3c3c;
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.brand {
+  font-weight: 600;
+  color: #e6e6e6;
+  letter-spacing: 0.2px;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot.ok {
+  background: #4ec9b0;
+  box-shadow: 0 0 6px rgba(78, 201, 176, 0.6);
+}
+
+.status-dot.bad {
+  background: #f14c4c;
+  box-shadow: 0 0 6px rgba(241, 76, 76, 0.6);
+}
+
+.status-text {
+  color: #a0a0a0;
+  font-size: 12px;
+}
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #424242;
+  border: 2px solid #1e1e1e;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

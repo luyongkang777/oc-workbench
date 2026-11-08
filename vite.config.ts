@@ -65,10 +65,14 @@ export default defineConfig(async ({ command, isPreview }) => {
           changeOrigin: true,
           ws: true,
           configure: (proxy: any) => {
+            // dev 没有外壳的 token 门禁（/api 直连 opencode，用 cookie 认证），
+            // x-oc-token 是工作台私有头，别顺着代理泄漏给上游。
             proxy.on('proxyReq', (proxyReq: any) => {
+              proxyReq.removeHeader('x-oc-token')
               if (auth.cookie) proxyReq.setHeader('cookie', auth.cookie)
             })
             proxy.on('proxyReqWs', (proxyReq: any) => {
+              proxyReq.removeHeader('x-oc-token')
               if (auth.cookie) proxyReq.setHeader('cookie', auth.cookie)
             })
             // SSE 不能被缓冲；只改头，绝对不要 flushHeaders（会把上游 content-type 吃掉）

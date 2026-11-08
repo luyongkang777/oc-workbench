@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import ChatPanel from './components/ChatPanel'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
+import { getAuthState, startAuth, subscribeAuth } from './api/auth'
 import { getInfo, readFile } from './api/client'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
 const PROBE_INTERVAL_MS = 10_000
 
 export default function App() {
+  // 令牌只能经 IPC 拿：ready 之前不发任何 /api 请求，避免先刷一片 401。
+  const auth = useSyncExternalStore(subscribeAuth, getAuthState)
   const [connected, setConnected] = useState(false)
   const [file, setFile] = useState<string | null>(null)
   const [content, setContent] = useState('')
@@ -16,7 +19,13 @@ export default function App() {
   // 每次打开文件的序号：只有最新一次请求的返回才能写进编辑器
   const openSeq = useRef(0)
 
+  // 挂载即发起 IPC 握手；拿不到令牌只影响连接状态，不影响界面渲染。
   useEffect(() => {
+    startAuth()
+  }, [])
+
+  useEffect(() => {
+    if (auth.status !== 'ready') return
     let alive = true
     let inflight = false
     const probe = () => {
@@ -40,7 +49,7 @@ export default function App() {
       alive = false
       window.clearInterval(timer)
     }
-  }, [])
+  }, [auth.status])
 
   useEffect(
     () => () => {
@@ -68,19 +77,35 @@ export default function App() {
     }
   }
 
+  const statusOk = auth.status === 'ready' && connected
+  const statusText =
+    auth.status === 'pending'
+      ? '连接中…'
+      : auth.status === 'failed'
+        ? auth.error
+        : connected
+          ? '已连接'
+          : '未连接'
+
   return (
     <div className="app">
       <header className="topbar">
         <span className="brand">OpenCode 工作台</span>
         <span className="topbar-spacer" />
-        <span className={`status-dot ${connected ? 'ok' : 'bad'}`} />
-        <span className="status-text">{connected ? '已连接' : '未连接'}</span>
+        <span className={`status-dot ${statusOk ? 'ok' : 'bad'}`} />
+        <span className="status-text">{statusText}</span>
       </header>
 
       <div className="main">
         <aside className="sidebar">
           <div className="pane-title">资源管理器</div>
-          <FileTree root={DEFAULT_ROOT} onOpenFile={openFile} />
+          {auth.status === 'ready' ? (
+            <FileTree root={DEFAULT_ROOT} onOpenFile={openFile} />
+          ) : (
+            <div className="pane-notice" role="status">
+              {auth.status === 'pending' ? '正在连接本地服务…' : auth.error}
+            </div>
+          )}
         </aside>
 
         <section className="editor-pane">

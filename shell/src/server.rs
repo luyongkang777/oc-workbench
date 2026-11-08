@@ -1,53 +1,74 @@
-//! 本地 HTTP 服务：静态文件（内嵌 dist）+ `/api` 反向代理（自动注入认证 cookie）。
+//! 本地 HTTP 服务：静态文件（内嵌 dist，见 [`crate::static_files`]）+ `/api` 反向代理
+//! （自动注入认证 cookie）。
 //!
 //! 这样 WebView 只需要加载 `http://127.0.0.1:<本地端口>/`，
 //! 前端所有 `/api/*` 请求同源，不涉及跨域，也不需要 dev server。
 //!
 //! 安全约束（只对 loopback 生效，但 loopback 端口任何本机进程都能扫）：
-//!   * 所有请求校验 `Host` 头必须是 `127.0.0.1:<本地端口>` 或 `localhost:<本地端口>`；
-//!   * `/api/*` 额外校验 `x-oc-token` 头，值等于每次启动随机生成的 token；
-//!   * token 通过注入到 index.html 的 `<head>` 里的脚本交给页面，不落盘。
+//!   * 所有请求校验 `Host` 头必须**精确等于** `127.0.0.1:<本地端口>` 或 `localhost:<本地端口>`；
+//!   * `/api/*` 额外校验 `x-oc-token` 头，值等于每次启动密码学随机生成的 token；
+//!   * token **不经 HTTP 下发**：index.html 里没有 token，页面通过 IPC 向外壳索取；
+//!   * 同时转发数上限 [`MAX_CONCURRENT`]，超出直接 503，避免本机进程刷连接把工作台拖死。
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use include_dir::{include_dir, Dir};
 use tiny_http::{Header, Response, Server, StatusCode};
 
-static DIST: Dir = include_dir!("$CARGO_MANIFEST_DIR/../dist");
+/// 同时处理的请求上限（SSE 长连接也会长期占一个名额）。
+const MAX_CONCURRENT: usize = 64;
 
 #[derive(Clone)]
 pub struct Ctx {
-    pub base: String,
+    /// 上游地址；`None` 表示后端不可用（未安装/认证失败），`/api/*` 直接回 502。
+    pub base: Option<String>,
     pub cookie: String,
-    /// 每次启动随机生成的本地 API token（32 位 hex）。
+    /// 每次启动随机生成的本地 API token（32 位 hex），由 main 生成后同时交给本服务和 IPC。
     pub token: String,
     /// 本地监听端口，start() 拿到真实端口后回填。
     pub port: u16,
 }
 
-/// 生成 32 位 hex token：SystemTime 纳秒 + 进程 pid 走两轮 DefaultHasher。
+/// 生成 32 位 hex token（16 字节密码学随机）。
+///
+/// 只有 getrandom 不可用的极端情况才退化成时间 + pid 派生（弱，但至少不会起不来）。
 pub fn new_token() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id();
+    let mut bytes = [0u8; 16];
+    if getrandom::getrandom(&mut bytes).is_err() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id();
 
-    let mut first = DefaultHasher::new();
-    nanos.hash(&mut first);
-    pid.hash(&mut first);
-    let a = first.finish();
+        let mut first = DefaultHasher::new();
+        nanos.hash(&mut first);
+        pid.hash(&mut first);
+        let a = first.finish();
+        bytes[..8].copy_from_slice(&a.to_le_bytes());
 
-    let mut second = DefaultHasher::new();
-    a.hash(&mut second);
-    nanos.hash(&mut second);
-    pid.hash(&mut second);
-    let b = second.finish();
+        let mut second = DefaultHasher::new();
+        a.hash(&mut second);
+        pid.hash(&mut second);
+        bytes[8..].copy_from_slice(&second.finish().to_le_bytes());
+    }
+    let mut out = String::with_capacity(32);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
 
-    format!("{a:016x}{b:016x}")
+struct ActiveGuard(Arc<AtomicUsize>);
+
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 pub fn start(mut ctx: Ctx) -> Result<u16, String> {
@@ -59,10 +80,21 @@ pub fn start(mut ctx: Ctx) -> Result<u16, String> {
     let port = addr.port();
     ctx.port = port;
 
+    let active = Arc::new(AtomicUsize::new(0));
     thread::spawn(move || {
         for request in server.incoming_requests() {
+            // 并发上限：超了直接 503，不 spawn 线程（SSE 会长期占名额）。
+            if active.load(Ordering::SeqCst) >= MAX_CONCURRENT {
+                let _ = json_error(request, 503, "并发请求过多，请稍后重试");
+                continue;
+            }
+            active.fetch_add(1, Ordering::SeqCst);
             let ctx = ctx.clone();
-            thread::spawn(move || handle(request, &ctx));
+            let guard = ActiveGuard(active.clone());
+            thread::spawn(move || {
+                let _guard = guard;
+                handle(request, &ctx);
+            });
         }
     });
 
@@ -87,9 +119,9 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             );
             return;
         }
-        proxy(request, ctx, &url);
+        proxy(request, ctx, &path, &url);
     } else {
-        static_file(request, &path, &ctx.token);
+        crate::static_files::serve(request, &path);
     }
 }
 
@@ -101,12 +133,23 @@ fn header_value(request: &tiny_http::Request, name: &'static str) -> Option<Stri
         .map(|header| header.value.as_str().to_string())
 }
 
+/// Host 必须精确是 `127.0.0.1:<本地端口>` 或 `localhost:<本地端口>`。
+/// 不能用 starts_with：`127.0.0.1:5273.attacker.tld`、`localhost:52730` 都会漏过。
 fn host_allowed(request: &tiny_http::Request, port: u16) -> bool {
     let Some(host) = header_value(request, "host") else {
         return false;
     };
-    let host = host.trim().to_ascii_lowercase();
-    host.starts_with(&format!("127.0.0.1:{port}")) || host.starts_with(&format!("localhost:{port}"))
+    let Some((name, port_text)) = host.trim().rsplit_once(':') else {
+        return false;
+    };
+    let Ok(given) = port_text.parse::<u16>() else {
+        return false;
+    };
+    if given != port {
+        return false;
+    }
+    let name = name.trim_matches(|c| c == '[' || c == ']');
+    name.eq_ignore_ascii_case("127.0.0.1") || name.eq_ignore_ascii_case("localhost")
 }
 
 fn token_allowed(request: &tiny_http::Request, token: &str) -> bool {
@@ -116,74 +159,35 @@ fn token_allowed(request: &tiny_http::Request, token: &str) -> bool {
     }
 }
 
-/// 把 token 注入 index.html：替换 `<head>` 为 `<head><script>...</script>`；
-/// 找不到 `<head>` 就插到文档最前面。
-fn inject_token(html: &[u8], token: &str) -> Vec<u8> {
-    let text = String::from_utf8_lossy(html);
-    let script = format!("<script>window.__OC_TOKEN=\"{token}\";</script>");
-    let output = match text.find("<head>") {
-        Some(pos) => {
-            let insert_at = pos + "<head>".len();
-            format!("{}{}{}", &text[..insert_at], script, &text[insert_at..])
-        }
-        None => format!("{script}{text}"),
-    };
-    output.into_bytes()
-}
-
-fn static_file(request: tiny_http::Request, path: &str, token: &str) {
-    // 空路径（例如 `GET ?a HTTP/1.1`）没有前导斜杠，直接 404，不能切片。
-    let Some(rel) = path.strip_prefix('/') else {
-        let _ = request.respond(Response::from_string("404 Not Found").with_status_code(404));
-        return;
-    };
-    let rel = if rel.is_empty() { "index.html" } else { rel };
-    let Some(file) = DIST.get_file(rel) else {
-        let _ = request.respond(Response::from_string("404 Not Found").with_status_code(404));
-        return;
-    };
-
-    let data = if rel == "index.html" {
-        inject_token(file.contents(), token)
-    } else {
-        file.contents().to_vec()
-    };
-
-    let header = Header::from_bytes(&b"content-type"[..], mime_of(rel).as_bytes())
+/// 用 JSON 回一个错误（前端会把 body 原样拼进异常信息）。
+fn json_error(request: tiny_http::Request, status: u16, message: &str) -> std::io::Result<()> {
+    let body = serde_json::json!({ "error": message, "status": status }).to_string();
+    let header = Header::from_bytes(&b"content-type"[..], &b"application/json; charset=utf-8"[..])
         .expect("content-type 头构造失败");
-    let response = Response::from_data(data).with_header(header);
-    let _ = request.respond(response);
+    request.respond(
+        Response::from_string(body)
+            .with_status_code(StatusCode(status))
+            .with_header(header),
+    )
 }
 
-fn mime_of(path: &str) -> &'static str {
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".html") {
-        "text/html; charset=utf-8"
-    } else if lower.ends_with(".js") {
-        "text/javascript; charset=utf-8"
-    } else if lower.ends_with(".css") {
-        "text/css; charset=utf-8"
-    } else if lower.ends_with(".json") {
-        "application/json; charset=utf-8"
-    } else if lower.ends_with(".svg") {
-        "image/svg+xml"
-    } else if lower.ends_with(".png") {
-        "image/png"
-    } else if lower.ends_with(".ico") {
-        "image/x-icon"
-    } else if lower.ends_with(".woff2") {
-        "font/woff2"
-    } else {
-        "application/octet-stream"
-    }
-}
+fn proxy(mut request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
+    // 后端不可用（未安装/认证失败）时页面仍要能打开，`/api/*` 统一 502 + JSON。
+    let Some(base) = ctx.base.as_deref() else {
+        let _ = json_error(
+            request,
+            502,
+            "未连接：本地 opencode 后端不可用（未安装或启动时认证失败）",
+        );
+        return;
+    };
 
-fn proxy(mut request: tiny_http::Request, ctx: &Ctx, url: &str) {
     let method = request.method().as_str().to_string();
-    let target = format!("{}{}", ctx.base, url);
+    let target = format!("{base}{url}");
 
     let mut body = Vec::new();
-    if method != "GET" && method != "HEAD" {
+    let has_body = method != "GET" && method != "HEAD";
+    if has_body {
         // 读请求体失败（客户端中断等）时必须报 400，不能拿半个 body 去转发写文件。
         if let Err(err) = std::io::Read::read_to_end(&mut request.as_reader(), &mut body) {
             let text = format!("400 读取请求体失败：{err}");
@@ -204,35 +208,39 @@ fn proxy(mut request: tiny_http::Request, ctx: &Ctx, url: &str) {
         }
     }
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(600))
-        .build();
+    // SSE 是无限长的响应：`.timeout()` 是整请求 deadline，会把长连接在 600 秒时掐断，
+    // 所以 /api/event 单独用只设连接超时的 agent。
+    let is_sse = path == "/api/event" || path.starts_with("/api/event/");
+    let builder = ureq::AgentBuilder::new();
+    let agent = if is_sse {
+        builder.timeout_connect(Duration::from_secs(10)).build()
+    } else {
+        builder.timeout(Duration::from_secs(600)).build()
+    };
+
     let mut call = agent.request(&method, &target).set("cookie", &ctx.cookie);
     for (name, value) in &forwarded {
         call = call.set(name, value);
     }
 
-    let result = if body.is_empty() {
-        call.call()
-    } else {
+    // 用方法而不是 body 长度判断：空 body 的 POST 也要带 Content-Length: 0 发给上游。
+    let result = if has_body {
         call.send_bytes(&body)
+    } else {
+        call.call()
     };
 
     match result {
         Ok(resp) => relay(request, resp),
-        Err(ureq::Error::Status(code, resp)) => {
-            if code == 401 {
-                // 认证过期（配对 token 通常 30 天），提示重启程序
-                let _ = request.respond(
-                    Response::from_string("401 认证失效，请重启工作台").with_status_code(401),
-                );
-            } else {
-                relay(request, resp);
-            }
+        Err(ureq::Error::Status(401, _)) => {
+            // 认证过期（配对 token 通常 30 天），提示重启程序
+            let _ = request
+                .respond(Response::from_string("401 认证失效，请重启工作台").with_status_code(401));
         }
+        Err(ureq::Error::Status(_, resp)) => relay(request, resp),
         Err(err) => {
-            let text = format!("上游服务不可用：{err}");
-            let _ = request.respond(Response::from_string(text).with_status_code(502));
+            let text = format!("未连接：上游服务不可用（{err}）");
+            let _ = json_error(request, 502, &text);
         }
     }
 }
@@ -269,3 +277,7 @@ fn relay(request: tiny_http::Request, resp: ureq::Response) {
     }
     let _ = request.respond(out);
 }
+
+#[cfg(test)]
+#[path = "server_tests.rs"]
+mod tests;

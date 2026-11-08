@@ -9,11 +9,21 @@
 //! 注意：npm 装的 `opencode` 是 .cmd shim，`Command::new("opencode")` 在 Windows 找不到，
 //! 必须走 `cmd /C opencode ...`。
 //!
+//! 每条子命令最多等 5 秒（[`CMD_TIMEOUT`]）：服务锁、UAC 拦截、shim 弹交互都会让
+//! `Command::output()` 永久阻塞，而这段代码跑在事件循环启动之前 —— 卡住就是白窗且无日志。
+//!
 //! 所有失败都返回带原因的错误字符串（命令、io::Error、退出码、stderr 片段），
-//! 由 main 写进 gui-error.log —— 这是排查「为什么没走自包含模式」的唯一线索。
+//! 由 main 写进 gui-error.log —— 这是排查「为什么没连接上后端」的唯一线索。
 
-use std::process::Command;
-use std::time::Duration;
+use std::io::Read;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// 单条 `opencode` 子命令的最长等待时间。
+const CMD_TIMEOUT: Duration = Duration::from_secs(5);
+/// try_wait 轮询间隔。
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub struct Backend {
     pub base: String,
@@ -30,35 +40,108 @@ fn snippet(text: &str, limit: usize) -> String {
     out
 }
 
-/// 跑 `opencode <args>`，返回 stdout+stderr。
-/// 执行失败（找不到命令）或退出码非 0 时返回 Err（含退出码与 stderr 前 200 字符）。
-fn run(args: &[&str]) -> Result<String, String> {
+#[cfg(windows)]
+fn command_for(args: &[&str]) -> Command {
+    let mut cmd = Command::new("cmd");
+    cmd.arg("/C").arg("opencode");
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd
+}
+
+#[cfg(not(windows))]
+fn command_for(args: &[&str]) -> Command {
+    let mut cmd = Command::new("opencode");
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd
+}
+
+/// 杀掉子进程及其整棵树。
+///
+/// Windows 上 `cmd /C opencode` 真正的 node 进程是 cmd.exe 的子进程，
+/// 只 `child.kill()` 会留下孤儿进程继续占着服务锁，所以先 taskkill /T /F。
+fn kill_tree(child: &mut Child) {
     #[cfg(windows)]
-    let output = {
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg("opencode");
-        for arg in args {
-            cmd.arg(arg);
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// 轮询 `try_wait` 等待退出，超时就杀树并返回错误。
+fn wait_with_timeout(child: &mut Child, args: &[&str]) -> Result<ExitStatus, String> {
+    let deadline = Instant::now() + CMD_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(err) => {
+                kill_tree(child);
+                return Err(format!("等待 `opencode {}` 结束失败：{err}", args.join(" ")));
+            }
         }
-        cmd.output()
-    };
+        if Instant::now() >= deadline {
+            kill_tree(child);
+            return Err(format!(
+                "`opencode {}` 超过 {} 秒未返回，已终止（服务锁卡住或弹了需要交互的窗口）",
+                args.join(" "),
+                CMD_TIMEOUT.as_secs()
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
 
-    #[cfg(not(windows))]
-    let output = Command::new("opencode").args(args).output();
+fn read_all<R: Read>(pipe: Option<R>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(mut pipe) = pipe {
+        let _ = pipe.read_to_end(&mut buf);
+    }
+    buf
+}
 
-    let out = output.map_err(|err| {
+/// 跑 `opencode <args>`，返回 stdout+stderr。
+/// 找不到命令、超时、退出码非 0 时返回 Err（含退出码与 stderr 前 200 字符）。
+fn run(args: &[&str]) -> Result<String, String> {
+    let mut cmd = command_for(args);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|err| {
         format!(
             "执行 `opencode {}` 失败：{err}（确认 opencode 已安装并在 PATH 里）",
             args.join(" ")
         )
     })?;
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    // 输出交给两个线程读：子进程写满管道缓冲区会阻塞不退出，主线程的超时判定就失效了。
+    let out_reader = thread::spawn({
+        let pipe = child.stdout.take();
+        move || read_all(pipe)
+    });
+    let err_reader = thread::spawn({
+        let pipe = child.stderr.take();
+        move || read_all(pipe)
+    });
 
-    if !out.status.success() {
-        let code = out
-            .status
+    let status = wait_with_timeout(&mut child, args)?;
+    let stdout = out_reader.join().unwrap_or_default();
+    let stderr = err_reader.join().unwrap_or_default();
+
+    let stdout = String::from_utf8_lossy(&stdout).to_string();
+    let stderr = String::from_utf8_lossy(&stderr).to_string();
+
+    if !status.success() {
+        let code = status
             .code()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "无（被信号终止）".to_string());
