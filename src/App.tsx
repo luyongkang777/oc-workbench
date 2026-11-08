@@ -13,6 +13,7 @@ export default function App() {
   const auth = useSyncExternalStore(subscribeAuth, getAuthState)
   const [connected, setConnected] = useState(false)
   const [reconnecting, setReconnecting] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
   const [file, setFile] = useState<string | null>(null)
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
@@ -107,8 +108,13 @@ export default function App() {
         await retryAuth()
         return
       }
-      // 外壳版本过旧、没有 /api/reconnect 时忽略，靠下面这次探活定状态
-      await reconnect().catch(() => {})
+      // 外壳会回 502 + 具体原因（找不到 opencode、pair 失败等），显示出来别让用户猜。
+      try {
+        await reconnect()
+        if (alive.current) setRetryError(null)
+      } catch (err) {
+        if (alive.current) setRetryError((err as Error).message)
+      }
       await probeNow()
     } finally {
       if (alive.current) setReconnecting(false)
@@ -154,7 +160,9 @@ export default function App() {
             <FileTree root={DEFAULT_ROOT} onOpenFile={openFile} />
           ) : (
             <div className="pane-notice" role="status">
-              {auth.status === 'pending' ? '正在连接本地服务…' : '等待后端连接…'}
+              {auth.status === 'pending'
+                ? '正在连接本地服务…'
+                : (retryError ?? '等待后端连接…')}
             </div>
           )}
         </aside>

@@ -108,7 +108,12 @@ export async function readFile(
   }
 
   const text = await res.text()
+  // 字符数超过字节上限时必然超限，先走快速路径；否则再按 UTF-8 实际字节数判断
+  // （中文/emoji 一个字符占多个字节，只看 length 会放过真正超限的文件）。
   if (text.length > MAX_PREVIEW_BYTES) throw new Error(TOO_LARGE_TEXT)
+  if (new TextEncoder().encode(text).length > MAX_PREVIEW_BYTES) {
+    throw new Error(TOO_LARGE_TEXT)
+  }
   return text
 }
 

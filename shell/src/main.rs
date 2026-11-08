@@ -12,7 +12,9 @@
 #![windows_subsystem = "windows"]
 
 mod auth;
+mod body;
 mod server;
+mod proxy;
 mod static_files;
 
 use std::cell::RefCell;

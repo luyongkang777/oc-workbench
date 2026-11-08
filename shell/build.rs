@@ -10,6 +10,8 @@ fn main() {
     let index = Path::new(&manifest).join("..").join("dist").join("index.html");
 
     println!("cargo:rerun-if-changed=../dist/index.html");
+    // 目录级监听：新增/删除 dist 里的文件也要触发重新编译（否则改了前端不重打包）。
+    println!("cargo:rerun-if-changed=../dist");
 
     if !index.is_file() {
         panic!(
