@@ -10,22 +10,34 @@
 - 2026-11-08 T1 完成：`docs/api-notes.md` 记录 6 个端点真实响应。
   关键结论：认证是 `Set-Cookie: opencode_session_<端口>`（配对链接带 `Accept: text/html` 才给 302）；
   `fs/write` 是 binary body；SSE 无 `event:` 行，类型在 JSON `type` 里。
-- 2026-11-08 T2 完成：Vite + React 18 + TS 骨架，端口 5273；
-  `vite.config.ts` 自动 `opencode pair` → 取 Set-Cookie → 代理注入 cookie（实测 `/api/info` 200）。
-- 2026-11-08 T3 完成：`FileTree.tsx` 懒加载 `/api/fs/list`，目录折叠、文件点击、选中高亮；
-  过滤 node_modules/.git/dist/target 等噪音目录。
-- 2026-11-08 T4 部分完成：`CodeView.tsx` 用 `/api/fs/read` 显示带行号源码（**只读，未接 Monaco、未做保存**）。
-- 2026-11-08 Rust 外壳（`shell/`）编译通过，修复 `EventLoop::new()` 不带 Result、`run()` 缺返回值两处错误。
-- 2026-11-08 **T8 完成（自包含）**：
-  - `npm run build` 出 `dist`（148 KB JS）
-  - Rust 用 `include_dir!` 内嵌 dist + `tiny_http` 起本地服务 + `/api` 反向代理注入 cookie
-  - `auth.rs` 自动 `cmd /C opencode service status` / `opencode pair` 取 cookie
-  - 实测：停掉 Vite 后 exe 仍正常显示三栏、顶部「已连接」、点文件能看源码
-  - 产物 `shell/target/debug/oc-workbench-shell.exe`（2.83 MB）
-- 2026-11-08 踩到的坑（写进技能 opencode-vite-web-client）：
-  1. `Command::new("opencode")` 在 Windows 找不到 npm 的 .cmd shim，必须 `cmd /C opencode`
-  2. 解析服务地址时用 `/` 当终止符会把 `http://` 截断，导致解析失败回退 dev
-  3. Vite watcher 必须忽略 `shell/**`，否则 target 里 exe 被占用就 EBUSY 崩掉
+- 2026-11-08 T2 完成：Vite + React 18 + TS 骨架，端口 5273；dev 代理自动配对并注入 cookie。
+- 2026-11-08 T3 完成：`FileTree.tsx` 懒加载 `/api/fs/list`，过滤 node_modules/dist/target。
+- 2026-11-08 T4 部分完成：`CodeView.tsx` 只读源码（未接 Monaco、未做保存）。
+- 2026-11-08 T8 完成：Rust 内嵌 dist + tiny_http 本地服务 + `/api` 反代，单文件 exe 双击可用。
+- 2026-11-08 提交到 Gitea：`http://192.168.31.8:3000/luyongkang777/oc-workbench`
+  （`main` + `feature/workbench-v0`），随后跑了 6 轮 AI 审核。
+
+## 审核结果（ai-review-gate）
+
+| 轮次 | 结论 | 主要问题 |
+|---|---|---|
+| 1 | FAIL | 本地代理无鉴权；切文件竞态 |
+| 2 | FAIL | token 可从 GET / 白拿；后端离线白屏；子进程无超时 |
+| 3 | FAIL | 启动失败永久 502；>32KB 丢 Content-Length；lock 与 package.json 不一致 |
+| 4 | FAIL | 冷启动抢跑导致文件树永久「加载失败」 |
+| 5 | FAIL | token 只下发一次导致重载后失效；SSE 被缓冲 8KB 不是实时 |
+| 6 | **PASS** | 无 BLOCKER/MAJOR，剩余均为可后续优化的 MINOR |
+
+最终报告：`C:\backup\review-feature_workbench-v0-20261108-230403.md`
+
+## 剩余 MINOR（不阻塞，后续清理）
+
+- `server.rs` 521 行，超过项目自定的 300 行；`proxy` 函数偏长
+- `client.ts` 500KB 限制用 `text.length`（UTF-16 单元）而非字节
+- `reconnect` 失败原因没有显示在界面上，只写日志
+- `/api/reconnect` 在后台 discover 未完成时可能排队超时
+- `auth.rs` 的 `find_base` 只取第一个地址（本地形态没问题，UNCERTAIN）
+- `build.rs` 缺 `rerun-if-changed=../dist`
 
 ## 阻塞
 
