@@ -17,6 +17,7 @@
 
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -24,6 +25,18 @@ use std::time::{Duration, Instant};
 const CMD_TIMEOUT: Duration = Duration::from_secs(5);
 /// try_wait 轮询间隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// 子进程退出后，等 stdout/stderr 两段管道读到 EOF 的最长时间。
+///
+/// 子进程退出 ≠ 管道 EOF：它派生的孙进程（node）会继承 stdout/stderr 并继续持有。
+/// 那种情况下 join 会永久阻塞，把后台 bootstrap 线程和 DISCOVER_LOCK 一起卡死，
+/// 累积下去 64 个并发名额全被占满、所有请求 503。所以这里改成 channel + 超时。
+const OUTPUT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 读管道线程送回主线程的数据来源。
+enum PipeKind {
+    Out,
+    Err,
+}
 /// Windows 的 CREATE_NO_WINDOW：GUI 进程起控制台子进程时不要弹黑窗。
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -120,6 +133,48 @@ fn read_all<R: Read>(pipe: Option<R>) -> Vec<u8> {
     }
     buf
 }
+/// 在 OUTPUT_TIMEOUT 内收齐 stdout/stderr 两段输出。
+///
+/// 收不齐（子进程已退出但管道没 EOF）就拿已收到的部分返回错误：
+/// 半截输出解析出来的地址可能是错的，不能当成成功。
+fn collect_output(
+    receiver: &mpsc::Receiver<(PipeKind, Vec<u8>)>,
+    args: &[&str],
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let deadline = Instant::now() + OUTPUT_TIMEOUT;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut received = 0;
+    while received < 2 {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match receiver.recv_timeout(remaining) {
+            Ok((PipeKind::Out, data)) => {
+                stdout = data;
+                received += 1;
+            }
+            Ok((PipeKind::Err, data)) => {
+                stderr = data;
+                received += 1;
+            }
+            Err(_) => break,
+        }
+    }
+
+    if received < 2 {
+        return Err(format!(
+            "`opencode {}$ARGS` 已退出，但输出管道 {} 秒内没有关闭（子进程派生的进程仍占着 stdout/stderr），输出不完整（已收到 stdout {} 字节、stderr {} 字节）",
+            args.join(" "),
+            OUTPUT_TIMEOUT.as_secs(),
+            stdout.len(),
+            stderr.len()
+        ));
+    }
+
+    Ok((stdout, stderr))
+}
 
 /// 跑 `opencode <args>`，返回 stdout+stderr。
 /// 找不到命令、超时、退出码非 0 时返回 Err（含退出码与 stderr 前 200 字符）。
@@ -137,18 +192,24 @@ fn run(args: &[&str]) -> Result<String, String> {
     })?;
 
     // 输出交给两个线程读：子进程写满管道缓冲区会阻塞不退出，主线程的超时判定就失效了。
-    let out_reader = thread::spawn({
+    // 读到的内容经 channel 送回主线程，主线程用 recv_timeout 计时，不等 join。
+    let (sender, receiver) = mpsc::channel();
+    let out_sender = sender.clone();
+    thread::spawn({
         let pipe = child.stdout.take();
-        move || read_all(pipe)
+        move || {
+            let _ = out_sender.send((PipeKind::Out, read_all(pipe)));
+        }
     });
-    let err_reader = thread::spawn({
+    thread::spawn({
         let pipe = child.stderr.take();
-        move || read_all(pipe)
+        move || {
+            let _ = sender.send((PipeKind::Err, read_all(pipe)));
+        }
     });
 
     let status = wait_with_timeout(&mut child, args)?;
-    let stdout = out_reader.join().unwrap_or_default();
-    let stderr = err_reader.join().unwrap_or_default();
+    let (stdout, stderr) = collect_output(&receiver, args)?;
 
     let stdout = String::from_utf8_lossy(&stdout).to_string();
     let stderr = String::from_utf8_lossy(&stderr).to_string();

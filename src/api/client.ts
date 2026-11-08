@@ -1,10 +1,12 @@
 export type FsEntry = { path: string; type: 'directory' | 'file' }
 
-/** 预览上限：超过 2 MB 的文本不渲染（避免主线程生成上万个 DOM 节点把界面卡死）。 */
-const MAX_PREVIEW_BYTES = 2 * 1024 * 1024
-const TOO_LARGE_TEXT = '文件过大，暂不支持预览'
+/** 预览上限：超过 500 KB 的文本不渲染（避免主线程生成上万个 DOM 节点把界面卡死）。 */
+const MAX_PREVIEW_BYTES = 500 * 1024
+const TOO_LARGE_TEXT = '文件过大，暂不支持预览（>500KB）'
 /** 单次请求的最长等待时间：后端卡住时不能让 UI 永远转圈。 */
 const REQUEST_TIMEOUT_MS = 15_000
+/** 错误信息最多展示多少个字符：别把整坨响应体原样塞进 UI。 */
+const MAX_ERROR_TEXT = 200
 
 function locationQuery(root: string): string {
   return `location[directory]=${encodeURIComponent(root)}`
@@ -19,8 +21,30 @@ function ocToken(): string {
   return typeof injected === 'string' ? injected : ''
 }
 
+/** 把非 2xx 的响应压成一句短消息：JSON 只取 error/message，整体不超过 200 字符。 */
+async function errorText(res: Response): Promise<string> {
+  let detail = ''
+  try {
+    const raw = await res.text()
+    try {
+      const body = JSON.parse(raw) as { error?: unknown; message?: unknown }
+      const field = body.error ?? body.message
+      if (typeof field === 'string') detail = field
+    } catch {
+      // 不是 JSON：退化成原文，下面统一截断
+      detail = raw
+    }
+  } catch {
+    // 响应体读不出来（连接已断）就只报状态码
+  }
+
+  detail = detail.replace(/\s+/g, ' ').trim()
+  const message = detail ? `${res.status} ${detail}` : `${res.status}`
+  return message.length > MAX_ERROR_TEXT ? `${message.slice(0, MAX_ERROR_TEXT - 1)}…` : message
+}
+
 /**
- * 所有请求的统一入口：带 x-oc-token 头，非 2xx 抛错（错误体拼进 message）。
+ * 所有请求的统一入口：带 x-oc-token 头，非 2xx 抛错（错误体只保留一句话）。
  *
  * 15 秒硬超时由内部 AbortController 管；调用方传入的 signal 只用来取消
  * （例如切换文件时放弃上一个请求），两种中止都会让 fetch 立刻 reject。
@@ -45,7 +69,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 
   try {
     const res = await fetch(path, { ...init, headers, signal: controller.signal })
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+    if (!res.ok) throw new Error(await errorText(res))
     return res
   } catch (err) {
     if (timedOut) throw new Error('请求超时')

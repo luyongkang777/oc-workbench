@@ -34,6 +34,11 @@ const INITIAL: AuthState = { status: 'pending', token: '' }
 
 let state: AuthState = INITIAL
 let started = false
+let timer: number | null = null
+// 外壳可能已经装过 __ocIpc（例如 pong 处理器），非 token 消息要继续转交给它
+let baseIpc: ((message: string) => void) | undefined
+// 我们自己装上去的处理函数：重试时据此还原 baseIpc，避免把旧 handler 链成一层套一层
+let installedIpc: ((message: string) => void) | undefined
 const listeners = new Set<() => void>()
 
 function emit(next: AuthState) {
@@ -53,10 +58,9 @@ export function subscribeAuth(listener: () => void): () => void {
   }
 }
 
-/** 幂等：StrictMode 双挂载 / 多处调用都只会握手一次。 */
-export function startAuth(): void {
-  if (started) return
-  started = true
+/** 真正发起一次握手；startAuth（首次）与 retryAuth（重试）都走这里。 */
+function handshake(): void {
+  const w = window as WindowWithIpc
 
   // Vite dev server：没有 window.ipc，也没有本地外壳，token 走空串。
   if (import.meta.env.DEV) {
@@ -64,32 +68,76 @@ export function startAuth(): void {
     return
   }
 
-  const w = window as WindowWithIpc
-  if (!w.ipc?.postMessage) {
+  const ipc = w.ipc
+  if (!ipc?.postMessage) {
     emit({ status: 'failed', token: '', error: AUTH_FAILED_TEXT })
     return
   }
 
-  // __ocIpc 可能已经被外壳初始化脚本装过：保留它，非 token 消息继续转交。
-  const previous = w.__ocIpc
-  const ipc = w.ipc
+  // 只在第一次（或外部把 __ocIpc 换掉时）记住外壳原有处理函数
+  if (w.__ocIpc && w.__ocIpc !== installedIpc) baseIpc = w.__ocIpc
+  const previous = baseIpc
 
-  const timer = window.setTimeout(() => {
+  if (timer !== null) window.clearTimeout(timer)
+  const mine = window.setTimeout(() => {
+    if (timer !== mine) return
+    timer = null
     if (state.status === 'pending') emit({ status: 'failed', token: '', error: AUTH_FAILED_TEXT })
   }, AUTH_TIMEOUT_MS)
+  timer = mine
 
-  w.__ocIpc = (message: string) => {
+  const handler = (message: string) => {
     if (typeof message === 'string' && message.startsWith(TOKEN_PREFIX)) {
       const token = message.slice(TOKEN_PREFIX.length)
-      window.clearTimeout(timer)
+      if (timer === mine) {
+        window.clearTimeout(timer)
+        timer = null
+      }
       w.__OC_TOKEN = token
       // 超时之后才到的令牌同样认：从 failed 恢复成 ready。
       if (state.status !== 'ready' || state.token !== token) emit({ status: 'ready', token })
       return
     }
-    // 其它消息（pong:<msg>）目前没有消费方，原样交给先前安装的处理函数。
+    // 其它消息（pong:<msg>）目前没有消费方，原样交给外壳原有处理函数。
     previous?.(message)
   }
+  installedIpc = handler
+  w.__ocIpc = handler
 
   ipc.postMessage(AUTH_MESSAGE)
+}
+
+/** 幂等：StrictMode 双挂载 / 多处调用都只会握手一次。 */
+export function startAuth(): void {
+  if (started) return
+  started = true
+  handshake()
+}
+
+/**
+ * 重新走一次 IPC 握手，返回握手结束后的状态。
+ *
+ * 用途：auth.status === 'failed'（3 秒内没收到令牌）时点「重试」。这种状态下
+ * 连令牌都没有，直接请求 /api/reconnect 必然 403，所以必须先重新握手。
+ * 令牌到达或再次超时后 resolve，不会永久挂住。
+ */
+export function retryAuth(): Promise<AuthState> {
+  if (!started) {
+    startAuth()
+  } else if (!import.meta.env.DEV) {
+    // 回到 pending，界面显示「连接中…」；随后重新发 oc:auth
+    emit({ ...INITIAL })
+    handshake()
+  }
+
+  if (state.status !== 'pending') return Promise.resolve(state)
+
+  return new Promise((resolve) => {
+    const listener = () => {
+      if (state.status === 'pending') return
+      listeners.delete(listener)
+      resolve(state)
+    }
+    listeners.add(listener)
+  })
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import ChatPanel from './components/ChatPanel'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
-import { getAuthState, startAuth, subscribeAuth } from './api/auth'
+import { getAuthState, retryAuth, startAuth, subscribeAuth } from './api/auth'
 import { getInfo, readFile, reconnect } from './api/client'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
@@ -97,11 +97,16 @@ export default function App() {
     }
   }
 
-  /** 手动重连：先让外壳重新配对，再立刻探活一次决定状态。 */
+  /** 手动重试：没令牌时先重新走 IPC 握手，已有令牌时让外壳重新配对并立刻探活。 */
   async function retryConnect() {
     if (reconnecting) return
     setReconnecting(true)
     try {
+      if (auth.status === 'failed') {
+        // 令牌都没拿到，直接打 /api/reconnect 必然 403；重新握手，等令牌到了再靠探活定状态
+        await retryAuth()
+        return
+      }
       // 外壳版本过旧、没有 /api/reconnect 时忽略，靠下面这次探活定状态
       await reconnect().catch(() => {})
       await probeNow()
@@ -143,11 +148,13 @@ export default function App() {
       <div className="main">
         <aside className="sidebar">
           <div className="pane-title">资源管理器</div>
-          {auth.status === 'ready' ? (
+          {connected ? (
+            // 只在确实连上后端时挂载：否则首屏 /api/fs/list 会先吃 502 并永久停在「加载失败」。
+            // 断开时这里换成提示条，组件随之卸载；再次连上就是一个全新实例，会重新拉一次根目录。
             <FileTree root={DEFAULT_ROOT} onOpenFile={openFile} />
           ) : (
             <div className="pane-notice" role="status">
-              {auth.status === 'pending' ? '正在连接本地服务…' : auth.error}
+              {auth.status === 'pending' ? '正在连接本地服务…' : '等待后端连接…'}
             </div>
           )}
         </aside>

@@ -16,6 +16,7 @@ mod server;
 mod static_files;
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::PathBuf;
@@ -124,19 +125,40 @@ fn run() -> Result<(), String> {
     let ipc_token = token.clone();
     let proxy = event_loop.create_proxy();
 
+    let local_origin = url.trim_end_matches('/').to_string();
+    let nav_origin = local_origin.clone();
+    let ipc_origin = local_origin.clone();
+    let token_sent = Arc::new(AtomicBool::new(false));
+
     let webview = WebViewBuilder::new()
         .with_url(&url)
+        .with_navigation_handler(move |target: String| {
+            let allowed = target == nav_origin || target.starts_with(&format!("{nav_origin}/"));
+            if !allowed {
+                append_log(&format!("[nav] 阻止导航 {target}\n"));
+            }
+            allowed
+        })
         .with_ipc_handler(move |request: wry::http::Request<String>| {
+            let uri = request.uri().to_string();
+            // 只接受本站页面发来的消息；uri 为空时放行（部分平台不提供来源）。
+            if !uri.is_empty() && !uri.starts_with(&ipc_origin) {
+                append_log(&format!("[ipc] 拒绝来源 {uri}\n"));
+                return;
+            }
             let body = request.body().trim().to_string();
-            // 日志里只记种类，绝不落 token。
             let kind = if body == "oc:auth" {
                 "oc:auth".to_string()
             } else {
                 format!("其它({} 字节)", body.len())
             };
             append_log(&format!("[ipc] 收到 {kind}\n"));
-            // 页面主动索取 token；其余消息原样回显。
             let payload = if body == "oc:auth" {
+                // token 只下发一次，重复索取直接忽略。
+                if token_sent.swap(true, Ordering::SeqCst) {
+                    append_log("[ipc] token 已下发过，忽略重复请求\n");
+                    return;
+                }
                 format!("token:{ipc_token}")
             } else {
                 format!("pong:{body}")

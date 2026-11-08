@@ -8,7 +8,8 @@
 //!   * 所有请求校验 `Host` 头必须**精确等于** `127.0.0.1:<本地端口>` 或 `localhost:<本地端口>`；
 //!   * `/api/*` 额外校验 `x-oc-token` 头，值等于每次启动密码学随机生成的 token；
 //!   * token **不经 HTTP 下发**：index.html 里没有 token，页面通过 IPC 向外壳索取；
-//!   * 同时转发数上限 [`MAX_CONCURRENT`]，超出直接 503，避免本机进程刷连接把工作台拖死。
+//!   * 同时转发数上限 [`MAX_CONCURRENT`]，超出直接 503，避免本机进程刷连接把工作台拖死；
+//!   * 转发的请求体最多 [`MAX_BODY`] 字节、最多等 [`BODY_TIMEOUT`] 秒，超限/超时都不占着线程。
 //!
 //! 后端连接是**共享可变状态**（[`Ctx::backend`]）：启动时先起服务、先开窗口，
 //! 由后台线程 [`spawn_bootstrap`] 去 `discover()`，失败每 [`RETRY_INTERVAL`] 重试一次；
@@ -17,6 +18,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -29,6 +31,12 @@ use crate::auth::Backend;
 const MAX_CONCURRENT: usize = 64;
 /// 后台连不上后端时的重试间隔（后端起来后最多这么久就能自动恢复）。
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// 转发给上游的请求体上限：工作台只有小的 JSON 写操作，10MB 足够，超过直接 413。
+const MAX_BODY: usize = 10 * 1024 * 1024;
+/// 读请求体的最长等待：客户端声明了长度却发不完时，不能让它一直占着请求线程。
+const BODY_TIMEOUT: Duration = Duration::from_secs(15);
+/// `/api/reconnect` 只需要一个占位 body（前端可能发 `{}`），给个更小的上限。
+const RECONNECT_BODY_LIMIT: usize = 64 * 1024;
 
 /// 串行化 `discover()`：后台重试和 `/api/reconnect` 可能同时触发，
 /// 并发跑 `opencode pair` 会一次生成多条一次性链接，没必要也不利于排查。
@@ -160,6 +168,64 @@ pub fn new_token() -> String {
     out
 }
 
+/// 读请求体的结果：超限和读失败要回不同的状态码。
+enum BodyRead {
+    Ok(Vec<u8>),
+    TooLarge,
+    Failed(std::io::Error),
+}
+
+/// 带超时和上限地读请求体。
+///
+/// `tiny_http::Request` 的 reader 阻塞在 socket 上，没有公开的读超时或主动关连接的入口，
+/// 所以只能把 `Request` 搬进子线程去读，主线程用 `recv_timeout` 计时：
+///   * 声明了 `Content-Length` 且超过 `limit` → 不用读，直接判超限；
+///   * 读完 → 把 `Request` 还回来（还要用它 respond）；
+///   * 超时 → 返回 `None`。此时 `Request` 还留在卡住的读线程里，连接不会被复用，
+///     主线程立刻释放并发名额；读线程等客户端断开后自己结束。
+fn read_body_with_timeout(
+    request: tiny_http::Request,
+    limit: usize,
+) -> Option<(tiny_http::Request, BodyRead)> {
+    if let Some(length) = request.body_length() {
+        if length > limit {
+            return Some((request, BodyRead::TooLarge));
+        }
+    }
+
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut request = request;
+        let mut request = request;
+        let mut body = Vec::new();
+        // 多读 1 字节用来区分「正好等于上限」和「超过上限」。
+        let mut reader = std::io::Read::take(request.as_reader(), (limit + 1) as u64);
+        let result = match std::io::Read::read_to_end(&mut reader, &mut body) {
+            Ok(_) if body.len() > limit => BodyRead::TooLarge,
+            Ok(_) => BodyRead::Ok(body),
+            Err(err) => BodyRead::Failed(err),
+        };
+        drop(reader);
+        // 主线程已经超时放弃时 send 会失败，Request 随线程结束被丢弃（连接关闭）。
+        let _ = sender.send((request, result));
+    });
+
+    match receiver.recv_timeout(BODY_TIMEOUT) {
+        Ok(pair) => Some(pair),
+        Err(RecvTimeoutError::Timeout) => {
+            crate::append_log(&format!(
+                "[proxy] 读请求体超过 {} 秒仍未结束，放弃该连接\n",
+                BODY_TIMEOUT.as_secs()
+            ));
+            None
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            crate::append_log("[proxy] 读请求体的线程异常退出，放弃该连接\n");
+            None
+        }
+    }
+}
+
 struct ActiveGuard(Arc<AtomicUsize>);
 
 impl Drop for ActiveGuard {
@@ -284,16 +350,27 @@ fn json_error(request: tiny_http::Request, status: u16, message: &str) -> std::i
 /// 失败 502 `{"ok":false,"error":"..."}`（原因照抄 discover 的错误串）。
 ///
 /// 这个端点本身不转发上游，所以后端没连上时也能用；token 校验和其它 `/api/*` 一样。
-fn reconnect(mut request: tiny_http::Request, ctx: &Ctx) {
+fn reconnect(request: tiny_http::Request, ctx: &Ctx) {
     if !request.method().as_str().eq_ignore_ascii_case("POST") {
         let _ = json_error(request, 405, "只支持 POST /api/reconnect");
         return;
     }
 
-    // 前端可能带 `{}` 之类的请求体：读完丢掉，别让连接里残留半截 body。
-    let mut sink = Vec::new();
-    let mut reader = std::io::Read::take(request.as_reader(), 64 * 1024);
-    let _ = std::io::Read::read_to_end(&mut reader, &mut sink);
+    // 前端可能带 `{}` 之类的占位体：照样按上限/超时读完丢掉，别让连接里残留半截 body。
+    let Some((request, body)) = read_body_with_timeout(request, RECONNECT_BODY_LIMIT) else {
+        return;
+    };
+    match body {
+        BodyRead::Ok(_) => {}
+        BodyRead::TooLarge => {
+            let _ = json_error(request, 413, "请求体过大");
+            return;
+        }
+        BodyRead::Failed(err) => {
+            let _ = json_error(request, 400, &format!("读取请求体失败：{err}"));
+            return;
+        }
+    }
 
     match connect_once(&ctx.backend) {
         Ok(base) => {
@@ -310,7 +387,7 @@ fn reconnect(mut request: tiny_http::Request, ctx: &Ctx) {
     }
 }
 
-fn proxy(mut request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
+fn proxy(request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
     // 后端不可用（未安装/认证失败）时页面仍要能打开，`/api/*` 统一 502 + JSON。
     let Some((base, cookie)) = ctx.current_backend() else {
         let _ = json_error(
@@ -323,17 +400,31 @@ fn proxy(mut request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
 
     let method = request.method().as_str().to_string();
     let target = format!("{base}{url}");
-
-    let mut body = Vec::new();
     let has_body = method != "GET" && method != "HEAD";
-    if has_body {
-        // 读请求体失败（客户端中断等）时必须报 400，不能拿半个 body 去转发写文件。
-        if let Err(err) = std::io::Read::read_to_end(&mut request.as_reader(), &mut body) {
-            let text = format!("400 读取请求体失败：{err}");
-            let _ = request.respond(Response::from_string(text).with_status_code(400));
+
+    let mut request = request;
+    let body = if has_body {
+        // 10MB 上限 + 15 秒超时：超大或发一半就停的请求不能一直占着并发名额。
+        let Some((back, result)) = read_body_with_timeout(request, MAX_BODY) else {
             return;
+        };
+        request = back;
+        match result {
+            BodyRead::Ok(body) => body,
+            BodyRead::TooLarge => {
+                let _ = json_error(request, 413, "请求体超过 10MB 上限");
+                return;
+            }
+            BodyRead::Failed(err) => {
+                // 读请求体失败（客户端中断等）时必须报 400，不能拿半个 body 去转发写文件。
+                let text = format!("400 读取请求体失败：{err}");
+                let _ = request.respond(Response::from_string(text).with_status_code(400));
+                return;
+            }
         }
-    }
+    } else {
+        Vec::new()
+    };
 
     let mut forwarded: Vec<(String, String)> = Vec::new();
     for header in request.headers() {

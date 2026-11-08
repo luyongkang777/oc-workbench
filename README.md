@@ -23,6 +23,7 @@ docs/           接口实测笔记
 
 ```powershell
 npm.cmd install
+npm.cmd run build        # 必须先跑：dist 被 gitignore，缺了 cargo build 时 build.rs 会直接 panic
 npm.cmd run dev          # 前端 http://127.0.0.1:5273
 cd shell; cargo build    # 产物 target/debug/oc-workbench-shell.exe
 ```
