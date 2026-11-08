@@ -164,6 +164,26 @@ body {
   color: #f14c4c;
   font-size: 12px;
   padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  word-break: break-all;
+}
+
+.tree-retry {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tree-retry:hover {
+  background: #37373d;
 }
 
 /* ---------- 编辑器 ---------- */

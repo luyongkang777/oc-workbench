@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ChatPanel from './components/ChatPanel'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
 import { getInfo, readFile } from './api/client'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
+const PROBE_INTERVAL_MS = 10_000
 
 export default function App() {
   const [connected, setConnected] = useState(false)
@@ -12,28 +13,58 @@ export default function App() {
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 每次打开文件的序号：只有最新一次请求的返回才能写进编辑器
+  const openSeq = useRef(0)
 
   useEffect(() => {
     let alive = true
-    getInfo()
-      .then(() => alive && setConnected(true))
-      .catch(() => alive && setConnected(false))
+    let inflight = false
+    const probe = () => {
+      // 上一次探活还没回来就不叠加请求，避免后端卡住时请求越堆越多
+      if (inflight) return
+      inflight = true
+      getInfo()
+        .then(() => {
+          if (alive) setConnected(true)
+        })
+        .catch(() => {
+          if (alive) setConnected(false)
+        })
+        .finally(() => {
+          inflight = false
+        })
+    }
+    probe()
+    const timer = window.setInterval(probe, PROBE_INTERVAL_MS)
     return () => {
       alive = false
+      window.clearInterval(timer)
     }
   }, [])
 
+  useEffect(
+    () => () => {
+      // 卸载后到达的 readFile 结果一律丢弃
+      openSeq.current += 1
+    },
+    [],
+  )
+
   async function openFile(relPath: string) {
+    const seq = ++openSeq.current
     setFile(relPath)
     setLoading(true)
     setError(null)
     try {
-      setContent(await readFile(DEFAULT_ROOT, relPath))
+      const text = await readFile(DEFAULT_ROOT, relPath)
+      if (seq !== openSeq.current) return
+      setContent(text)
     } catch (err) {
+      if (seq !== openSeq.current) return
       setContent('')
       setError((err as Error).message)
     } finally {
-      setLoading(false)
+      if (seq === openSeq.current) setLoading(false)
     }
   }
 

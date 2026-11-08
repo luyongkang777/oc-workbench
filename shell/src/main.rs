@@ -73,12 +73,23 @@ fn resolve_url() -> String {
 }
 
 fn start_local() -> Result<String, String> {
-    let backend =
-        auth::discover().ok_or_else(|| "找不到 opencode 服务，或配对链接未拿到 cookie".to_string())?;
+    // discover 现在返回具体失败原因（命令/退出码/stderr 片段），落盘方便排查。
+    let backend = match auth::discover() {
+        Ok(backend) => backend,
+        Err(err) => {
+            append_log(&format!("[auth] {err}\n"));
+            return Err(err);
+        }
+    };
+    // token 每次启动随机生成，只注入页面，不落盘、不写日志。
+    let token = server::new_token();
     let port = server::start(server::Ctx {
         base: backend.base,
         cookie: backend.cookie,
+        token,
+        port: 0,
     })?;
+    append_log(&format!("[boot] 本地服务端口 {port}，已注入 x-oc-token\n"));
     Ok(format!("http://127.0.0.1:{port}/"))
 }
 

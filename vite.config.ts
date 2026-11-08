@@ -44,8 +44,11 @@ async function resolveAuth(): Promise<Auth> {
   }
 }
 
-export default defineConfig(async () => {
-  const auth = await resolveAuth()
+export default defineConfig(async ({ command, isPreview }) => {
+  // 只有 dev server 才参与配对：build / preview（command 也是 serve）走配对会白白
+  // 消耗一次性链接，构建机上没装 opencode 时还会打印误导性告警。
+  const shouldPair = command === 'serve' && !isPreview
+  const auth: Auth = shouldPair ? await resolveAuth() : { cookie: '', target: FALLBACK_TARGET }
 
   return {
     plugins: [react()],

@@ -8,6 +8,9 @@
 //!
 //! 注意：npm 装的 `opencode` 是 .cmd shim，`Command::new("opencode")` 在 Windows 找不到，
 //! 必须走 `cmd /C opencode ...`。
+//!
+//! 所有失败都返回带原因的错误字符串（命令、io::Error、退出码、stderr 片段），
+//! 由 main 写进 gui-error.log —— 这是排查「为什么没走自包含模式」的唯一线索。
 
 use std::process::Command;
 use std::time::Duration;
@@ -17,7 +20,19 @@ pub struct Backend {
     pub cookie: String,
 }
 
-fn run(args: &[&str]) -> String {
+/// 把多行输出压成一行，并截到 limit 个字符（错误日志里够用即可）。
+fn snippet(text: &str, limit: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = flat.chars().take(limit).collect();
+    if flat.chars().count() > limit {
+        out.push_str("...");
+    }
+    out
+}
+
+/// 跑 `opencode <args>`，返回 stdout+stderr。
+/// 执行失败（找不到命令）或退出码非 0 时返回 Err（含退出码与 stderr 前 200 字符）。
+fn run(args: &[&str]) -> Result<String, String> {
     #[cfg(windows)]
     let output = {
         let mut cmd = Command::new("cmd");
@@ -31,14 +46,30 @@ fn run(args: &[&str]) -> String {
     #[cfg(not(windows))]
     let output = Command::new("opencode").args(args).output();
 
-    match output {
-        Ok(out) => format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        ),
-        Err(_) => String::new(),
+    let out = output.map_err(|err| {
+        format!(
+            "执行 `opencode {}` 失败：{err}（确认 opencode 已安装并在 PATH 里）",
+            args.join(" ")
+        )
+    })?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    if !out.status.success() {
+        let code = out
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "无（被信号终止）".to_string());
+        return Err(format!(
+            "`opencode {}` 退出码 {code}，stderr：{}",
+            args.join(" "),
+            snippet(&stderr, 200)
+        ));
     }
+
+    Ok(format!("{stdout}\n{stderr}"))
 }
 
 fn trimmed(text: &str, start: usize) -> String {
@@ -81,11 +112,25 @@ fn port_of(url: &str) -> Option<String> {
     }
 }
 
-pub fn discover() -> Option<Backend> {
-    let base = find_base(&run(&["service", "status"]))?;
-    let port = port_of(&base)?;
+pub fn discover() -> Result<Backend, String> {
+    let status = run(&["service", "status"])
+        .map_err(|err| format!("`opencode service status` 执行失败：{err}"))?;
+    let base = find_base(&status).ok_or_else(|| {
+        format!(
+            "`opencode service status` 输出里没有 http://127.0.0.1:<端口>：{}",
+            snippet(&status, 200)
+        )
+    })?;
+    let port = port_of(&base)
+        .ok_or_else(|| format!("`opencode service status` 给了地址但解析不出端口：{base}"))?;
 
-    let link = find_link(&run(&["pair"]))?;
+    let pair = run(&["pair"]).map_err(|err| format!("`opencode pair` 执行失败：{err}"))?;
+    let link = find_link(&pair).ok_or_else(|| {
+        format!(
+            "`opencode pair` 输出里没有配对链接：{}",
+            snippet(&pair, 200)
+        )
+    })?;
 
     let agent = ureq::AgentBuilder::new()
         .redirects(0)
@@ -96,13 +141,23 @@ pub fn discover() -> Option<Backend> {
     let raw = match agent.get(&link).set("accept", "text/html").call() {
         Ok(resp) => resp.header("set-cookie").map(|v| v.to_string()),
         Err(ureq::Error::Status(_, resp)) => resp.header("set-cookie").map(|v| v.to_string()),
-        Err(_) => None,
-    }?;
+        Err(err) => return Err(format!("打开配对链接失败（{base}）：{err}")),
+    }
+    .ok_or_else(|| format!("配对链接没有返回 set-cookie（{base}）"))?;
 
-    let cookie = raw.split(';').next()?.trim().to_string();
+    let cookie = raw
+        .split(';')
+        .next()
+        .ok_or_else(|| "配对返回的 set-cookie 为空".to_string())?
+        .trim()
+        .to_string();
+    // 只比对 cookie 名，避免把凭据本身写进日志。
+    let cookie_name = cookie.split('=').next().unwrap_or("").to_string();
     if !cookie.starts_with(&format!("opencode_session_{port}=")) {
-        return None;
+        return Err(format!(
+            "cookie 名与服务端口不匹配：期望 opencode_session_{port}=...，实际 {cookie_name}=..."
+        ));
     }
 
-    Some(Backend { base, cookie })
+    Ok(Backend { base, cookie })
 }
