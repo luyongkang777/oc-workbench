@@ -62,7 +62,7 @@
   - 实测：F:\网卡 翻页后列出 2 个历史会话；同目录重选后 AGENTS.md 仍打开
 
 - 2026-11-09 **T10 回复 Markdown 渲染**：
-  - `MarkdownText.tsx`：react-markdown 10 + remark-gfm，默认不渲染原始 HTML（自带 XSS 防护）；链接 target=_blank
+  - `MarkdownText.tsx`：react-markdown 10 + remark-gfm，默认不渲染原始 HTML（自带 XSS 防护）；链接点击经 `oc:open-url:` IPC 交外壳，用系统默认浏览器打开
   - `markdown.css`：标题/列表/行内代码/代码块/表格/引用/分隔线，尺寸按聊天面板压小；覆盖 `.chat-bubble` 的 pre-wrap
   - 用户气泡保持纯文本，只渲染 assistant 回复
   - 实测：网卡会话 12 个 md 块、74 个代码块、27 个表格、99 个列表项全部渲染；构建后 JS 337 KB（gzip 106 KB）
@@ -74,6 +74,13 @@
   - 加 `remark-breaks`：单换行渲染成 `<br>`，不再被 `white-space: normal` 折叠
   - 图片不再自动加载（防远程图片静默外联），渲染成 `[图片：alt]` 占位
   - 实测：测试会话 DOM 1 个安全链接 / 0 个空链接 / 2 个 br / 图片占位；exe 里点链接系统 Edge 打开 example.com
+
+- 2026-11-09 **T10 第二轮审核修复（1 MAJOR + 4 MINOR）**：
+  - MAJOR：`open::that` 会在 Windows 上同步跑 PowerShell 并等它退出（约 1 秒），而调用点在 WebView2 UI 线程 → 点链接卡窗口、极端情况永久无响应。改为 `std::thread::spawn` 子线程，IPC 回调只转发
+  - 链接失败经 `failures` 队列（Arc<Mutex<Vec<String>>>）回主循环下发 `open-url-failed:`，页面顶部提示 4 秒
+  - 协议白名单大小写统一：外壳先 `to_ascii_lowercase` 再比，前端正则收紧成 `^(?:https?:\/\/|mailto:)`（`HTTPS://` 也能打开）
+  - 链接补 `onAuxClick` 拦截：中键不再触发默认导航（之前中键 = 死链）
+  - 修正 progress.md 里 target=_blank 与后续修复说明的矛盾
 
 ## 审核结果（ai-review-gate）
 

@@ -12,18 +12,22 @@ import remarkBreaks from 'remark-breaks'
  * 两个安全/行为约定：
  *   1. 链接不直接导航（wry 对 `target=_blank` 的新窗口请求是直接取消的，点了会像卡死），
  *      改发 `oc:open-url:<url>` 给外壳，由系统默认浏览器打开；dev 模式用 window.open。
+ *      左键和中键都拦，避免中键走 auxclick 触发默认导航。
  *   2. 图片不自动加载，只显示占位文本——避免历史会话里的远程图片静默外联。
  */
 
 // 模块级常量：每次渲染都新建数组/对象会让 react-markdown 反复重建处理器
 const PLUGINS = [remarkGfm, remarkBreaks]
 
-/** 只放行 http/https/mailto；react-markdown 已把 javascript: 等清洗成空，这里再兜一层。 */
+/**
+ * 只放行 http/https/mailto（必须带 //），和外壳 `is_allowed_url` 口径一致；
+ * react-markdown 已把 javascript: 等清洗成空，这里再兜一层。
+ */
 function safeHref(href?: string): string | null {
   if (!href) return null
   const trimmed = href.trim()
   if (!trimmed) return null
-  return /^(https?:|mailto:)/i.test(trimmed) ? trimmed : null
+  return /^(?:https?:\/\/|mailto:)/i.test(trimmed) ? trimmed : null
 }
 
 function openExternal(url: string) {
@@ -45,6 +49,11 @@ const COMPONENTS: Components = {
         href={safe}
         title={safe}
         onClick={(event) => {
+          event.preventDefault()
+          openExternal(safe)
+        }}
+        onAuxClick={(event) => {
+          // 中键不走 click，不拦会触发默认导航（被外壳的导航限制吃掉，等于死链）
           event.preventDefault()
           openExternal(safe)
         }}

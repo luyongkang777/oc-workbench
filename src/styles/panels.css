@@ -290,3 +290,12 @@
   border-color: #0e639c;
   color: #ffffff;
 }
+
+/* 顶部一次性提示条 */
+.app-notice {
+  padding: 4px 12px;
+  background: #2d1b1b;
+  border-bottom: 1px solid #5a1d1d;
+  color: #f48771;
+  font-size: 12px;
+}

@@ -32,6 +32,8 @@ export default function App() {
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 一次性提示（例如打开链接失败），4 秒后自动消失
+  const [notice, setNotice] = useState<string | null>(null)
   // 每次打开文件的序号：只有最新一次请求的返回才能写进编辑器
   const openSeq = useRef(0)
   // 当前在途的读文件请求：切文件时 aborts 它
@@ -93,6 +95,12 @@ export default function App() {
     [],
   )
 
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
   // 选文件夹：外壳通过 IPC 弹原生对话框；dev/浏览器退化成输入框。
   function pickFolder() {
     const w = window as unknown as { ipc?: { postMessage(message: string): void } }
@@ -147,6 +155,11 @@ export default function App() {
   useEffect(
     () =>
       onIpcMessage((message) => {
+        // 外壳用系统浏览器打开链接失败时回这一条。
+        if (message.startsWith('open-url-failed:')) {
+          setNotice('用系统浏览器打开链接失败')
+          return
+        }
         if (message.startsWith('root:')) {
           const saved = message.slice('root:'.length).trim()
           if (saved) applyRoot(saved)
@@ -240,6 +253,8 @@ export default function App() {
           </button>
         ) : null}
       </header>
+
+      {notice ? <div className="app-notice">{notice}</div> : null}
 
       <div className="main">
         <aside className="sidebar">

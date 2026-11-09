@@ -23,7 +23,7 @@ use std::ffi::OsStr;
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tao::dpi::LogicalSize;
@@ -124,6 +124,10 @@ fn run() -> Result<(), String> {
     // 事件循环会永远停在 GetMessageW 上（实测 ResumeTimeReached 一次都不来）。
     let pending: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let ipc_queue = pending.clone();
+    // 跨线程回执：打开链接在子线程做，失败消息经这里回主循环下发页面。
+    let failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    // ipc_handler 和主循环是两个独立 move 闭包，各持一份 Arc。
+    let failures_ipc = failures.clone();
     let ipc_token = token.clone();
     let proxy = event_loop.create_proxy();
 
@@ -159,8 +163,25 @@ fn run() -> Result<(), String> {
             let body = request.body().trim().to_string();
             if let Some(url) = body.strip_prefix("oc:open-url:") {
                 // 页面里的链接不直接导航：wry 会取消新窗口请求，导航器又只放行本站。
-                // 统一交给系统默认浏览器打开，协议白名单在 open_external 里。
-                open_external(url);
+                // 统一交给系统默认浏览器打开。open::that 在 Windows 上会跑 PowerShell
+                // 并等它退出（实测 1 秒级），绝不能在这条 IPC 回调（WebView2 UI 线程）里同步调，
+                // 否则整个窗口会卡住；失败消息经 failures 队列回主循环下发给页面。
+                if !is_allowed_url(url) {
+                    append_log(&format!("[ipc] 忽略不支持的链接协议：{url}\n"));
+                    return;
+                }
+                let url = url.to_string();
+                let failures = failures_ipc.clone();
+                let proxy = proxy.clone();
+                std::thread::spawn(move || {
+                    if let Err(err) = open::that(&url) {
+                        append_log(&format!("[ipc] 打开链接失败：{err}\n"));
+                        if let Ok(mut list) = failures.lock() {
+                            list.push(format!("open-url-failed:{url}"));
+                        }
+                        let _ = proxy.send_event(());
+                    }
+                });
                 return;
             }
             if let Some(root) = body.strip_prefix("oc:save-root:") {
@@ -220,7 +241,20 @@ fn run() -> Result<(), String> {
                 let _ = webview.set_bounds(view_rect(size.width, size.height));
             }
             // IPC handler 用 EventLoopProxy 发来的唤醒信号。
-            Event::UserEvent(()) => drain_ipc(&webview, &pending),
+            Event::UserEvent(()) => {
+                drain_ipc(&webview, &pending);
+                if let Ok(mut list) = failures.lock() {
+                    let items: Vec<String> = list.drain(..).collect();
+                    drop(list);
+                    for payload in items {
+                        let json =
+                            serde_json::to_string(&payload).unwrap_or_else(|_| "\"\"".to_string());
+                        let _ = webview.evaluate_script(&format!(
+                            "window.__ocIpc && window.__ocIpc({json});"
+                        ));
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -301,18 +335,10 @@ fn saved_root() -> Option<String> {
     None
 }
 
-/// 用系统默认程序打开 http/https/mailto 链接；其它协议一律忽略（防注入）。
-fn open_external(url: &str) {
-    let allowed = url.starts_with("http://")
-        || url.starts_with("https://")
-        || url.starts_with("mailto:");
-    if !allowed {
-        append_log(&format!("[ipc] 忽略不支持的链接协议：{url}\n"));
-        return;
-    }
-    if let Err(err) = open::that(url) {
-        append_log(&format!("[ipc] 打开链接失败：{err}\n"));
-    }
+/// 协议白名单（大小写不敏感：页面传来 HTTPS:// 也要认）。
+fn is_allowed_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
 }
 
 fn save_root(root: &str) {
