@@ -267,3 +267,26 @@
   font-size: 10.5px;
   color: #6e6e6e;
 }
+
+/* 资源管理器标题右侧的「打开」 */
+.pane-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pane-action {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #cccccc;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.pane-action:hover {
+  border-color: #0e639c;
+  color: #ffffff;
+}

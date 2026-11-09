@@ -40,6 +40,8 @@ let baseIpc: ((message: string) => void) | undefined
 // 我们自己装上去的处理函数：重试时据此还原 baseIpc，避免把旧 handler 链成一层套一层
 let installedIpc: ((message: string) => void) | undefined
 const listeners = new Set<() => void>()
+// 非 token 消息（例如 folder:...）的订阅者
+const ipcListeners = new Set<(message: string) => void>()
 
 function emit(next: AuthState) {
   state = next
@@ -49,6 +51,14 @@ function emit(next: AuthState) {
 /** 给 useSyncExternalStore 用：状态对象只在变化时替换，引用保持稳定。 */
 export function getAuthState(): AuthState {
   return state
+}
+
+/** 订阅非 token 的 IPC 消息（例如选文件夹的 folder:<path>）。返回取消函数。 */
+export function onIpcMessage(fn: (message: string) => void): () => void {
+  ipcListeners.add(fn)
+  return () => {
+    ipcListeners.delete(fn)
+  }
 }
 
 export function subscribeAuth(listener: () => void): () => void {

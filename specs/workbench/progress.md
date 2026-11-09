@@ -36,6 +36,12 @@
   - 顶栏「审查」按钮在代码视图和审查视图之间切换
   - 实测：临时新建 + 修改文件后，列表和 patch 都正确显示
 
+- 2026-11-09 **打开任意文件夹**：
+  - 外壳：main.rs 加 `oc:pick-folder` IPC 分支，主循环里用 rfd 弹原生「选择文件夹」对话框，选中回 `folder:<path>`、取消回 `folder:`
+  - 前端：auth.ts 加 `onIpcMessage` 订阅非 token 消息；App.tsx 的 root 改为 state（localStorage key `oc-workbench:root`），资源管理器标题加「打开」按钮（有 IPC 走对话框，dev 走 prompt）
+  - 实测：dev 模式 root 切到 F:\opencode\swarm-plugin 后文件树正确切换、刷新后保持；exe 内对话框弹出已截图验证
+  - 依赖：Cargo.toml 加 rfd 0.15
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |

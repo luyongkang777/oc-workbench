@@ -4,10 +4,11 @@ import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
-import { getAuthState, retryAuth, startAuth, subscribeAuth } from './api/auth'
+import { getAuthState, onIpcMessage, retryAuth, startAuth, subscribeAuth } from './api/auth'
 import { getInfo, readFile, reconnect } from './api/client'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
+const ROOT_KEY = 'oc-workbench:root'
 const PROBE_INTERVAL_MS = 10_000
 // 未连上时的快轮询间隔：后端 0.5 秒内就绪时用户感知不到等待。
 const FAST_PROBE_INTERVAL_MS = 1_000
@@ -17,6 +18,7 @@ export default function App() {
   const auth = useSyncExternalStore(subscribeAuth, getAuthState)
   const [connected, setConnected] = useState(false)
   const [view, setView] = useState<'code' | 'diff'>('code')
+  const [root, setRoot] = useState(() => window.localStorage.getItem(ROOT_KEY) || DEFAULT_ROOT)
   const [reconnecting, setReconnecting] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
   const [file, setFile] = useState<string | null>(null)
@@ -84,6 +86,36 @@ export default function App() {
     [],
   )
 
+  // 选文件夹：外壳通过 IPC 弹原生对话框；dev/浏览器退化成输入框。
+  function pickFolder() {
+    const w = window as unknown as { ipc?: { postMessage(message: string): void } }
+    if (w.ipc?.postMessage) {
+      w.ipc.postMessage('oc:pick-folder')
+      return
+    }
+    const value = window.prompt('输入文件夹路径', root)
+    if (value && value.trim()) applyRoot(value.trim())
+  }
+
+  function applyRoot(path: string) {
+    setRoot(path)
+    window.localStorage.setItem(ROOT_KEY, path)
+    setFile(null)
+    setContent('')
+    setError(null)
+  }
+
+  // 外壳选完文件夹会回 folder:<path>；空路径表示取消。
+  useEffect(
+    () =>
+      onIpcMessage((message) => {
+        if (!message.startsWith('folder:')) return
+        const path = message.slice('folder:'.length).trim()
+        if (path) applyRoot(path)
+      }),
+    [],
+  )
+
   async function openFile(relPath: string) {
     const seq = ++openSeq.current
     // 放弃上一个读请求，别让旧响应拖住新文件
@@ -94,7 +126,7 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      const text = await readFile(DEFAULT_ROOT, relPath, controller.signal)
+      const text = await readFile(root, relPath, controller.signal)
       if (seq !== openSeq.current) return
       setContent(text)
     } catch (err) {
@@ -168,11 +200,16 @@ export default function App() {
 
       <div className="main">
         <aside className="sidebar">
-          <div className="pane-title">资源管理器</div>
+          <div className="pane-title">
+            资源管理器
+            <button type="button" className="pane-action" onClick={pickFolder} title="打开任意文件夹">
+              打开
+            </button>
+          </div>
           {connected ? (
             // 只在确实连上后端时挂载：否则首屏 /api/fs/list 会先吃 502 并永久停在「加载失败」。
             // 断开时这里换成提示条，组件随之卸载；再次连上就是一个全新实例，会重新拉一次根目录。
-            <FileTree root={DEFAULT_ROOT} onOpenFile={openFile} />
+            <FileTree root={root} onOpenFile={openFile} />
           ) : (
             <div className="pane-notice" role="status">
               {auth.status === 'pending'
@@ -184,18 +221,18 @@ export default function App() {
 
         <section className="editor-pane">
           {view === 'diff' ? (
-            <ReviewPanel root={DEFAULT_ROOT} connected={connected} />
+            <ReviewPanel root={root} connected={connected} />
           ) : (
             <CodeView path={file} content={content} loading={loading} error={error} />
           )}
         </section>
 
         <aside className="chat-pane">
-          <Chat root={DEFAULT_ROOT} connected={connected} />
+          <Chat root={root} connected={connected} />
         </aside>
       </div>
 
-      <Terminal root={DEFAULT_ROOT} connected={connected} />
+      <Terminal root={root} connected={connected} />
     </div>
   )
 }

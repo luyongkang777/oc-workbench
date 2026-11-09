@@ -168,6 +168,9 @@ fn run() -> Result<(), String> {
                 // 来源已经过上面 ipc_origin 校验。
                 token_sent.store(true, Ordering::SeqCst);
                 format!("token:{ipc_token}")
+            } else if body == "oc:pick-folder" {
+                // 文件对话框是阻塞调用，必须回主循环做（还要 COM STA）。
+                body.clone()
             } else {
                 format!("pong:{body}")
             };
@@ -215,6 +218,20 @@ fn run() -> Result<(), String> {
 fn drain_ipc(webview: &wry::WebView, pending: &Rc<RefCell<Vec<String>>>) {
     let messages: Vec<String> = pending.borrow_mut().drain(..).collect();
     for payload in messages {
+        if payload == "oc:pick-folder" {
+            // 选文件夹：取消时回 "folder:"，页面据此保持原路径。
+            let picked = rfd::FileDialog::new()
+                .set_title("选择要打开的文件夹")
+                .pick_folder();
+            let text = match picked {
+                Some(path) => format!("folder:{}", path.display()),
+                None => "folder:".to_string(),
+            };
+            let json = serde_json::to_string(&text).unwrap_or_else(|_| "\"folder:\"".to_string());
+            let _ = webview
+                .evaluate_script(&format!("window.__ocIpc && window.__ocIpc({json});"));
+            continue;
+        }
         let json = serde_json::to_string(&payload).unwrap_or_else(|_| "\"\"".to_string());
         let script = format!("window.__ocIpc && window.__ocIpc({json});");
         if let Err(err) = webview.evaluate_script(&script) {
