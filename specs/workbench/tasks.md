@@ -80,8 +80,8 @@
 
 ## T11 ✅ 自动拉起 opencode 服务
 
-- 范围：`shell/src/auth.rs`
-- 内容：`service status` 无地址时自动 `service start`（幂等，45 秒窗口轮询）；不需要用户先开命令行
+- 范围：`shell/src/auth.rs`、`src/api/client.ts`
+- 内容：`service status` 无地址时自动 `service start`（幂等，150 秒窗口轮询；`where` 探测命令、start 失败带 stderr）；前端 reconnect 超时 300 秒
 - 验收：双击 exe 直接连上（服务未跑时自动后台启动）；已有服务时不重复启动
 - 完成信号：实测两条路径（2026-11-09）
 

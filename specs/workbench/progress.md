@@ -122,6 +122,14 @@
   - probe 探活次数 3 → 2，前端重连超时 180s → 300s，README 改为「约 2 分钟」
   - 修正 progress 里 `strict=false` 的过时描述
 
+- 2026-11-09 **T11 第四轮审核修复（2 MAJOR + 3 MINOR）**：
+  - MAJOR：`service status` 的 Err 被 `unwrap_or_default()` 吞成「未运行」→ 正常未运行实测是 `stopped` + exit 0，Err 属异常，直接带命令与 stderr 报错（不再空等 150 秒）
+  - MAJOR：`where opencode` 探测无超时（PATH 里有网络共享会挂几分钟）→ 3 秒超时，区分「没找到」与「探测超时」
+  - `run_start` 超时分支先读已产生的 stderr 再拼错误；stderr 读取改 `read` + `from_utf8_lossy`（GBK 不丢）
+  - 启动窗口 120s → 150s（比 CLI 自己的 120s 多 30s 余量）
+  - 文档口径统一：client.ts 注释、tasks.md T11 范围（补 client.ts）、README 改「约 2 分半」
+  - 实测：真实环境正常；status 失败立即报错且不执行 start；PATH 无 opencode 立即报「未安装」
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |

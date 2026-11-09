@@ -15,7 +15,7 @@ OpenCode 工作台：Rust + WebView2 桌面外壳，内嵌前端，自带本地 
 ## 运行原理
 
 1. 启动时执行 `opencode service status` 找服务；**服务没跑就自动 `opencode service start`**
-   （后台拉起，最多等约 2 分钟——与 opencode 自己的启动预算对齐；`service start` 幂等，已有服务时立刻返回，不会重复启动）
+   （后台拉起，最多等约 2 分半——比 opencode 自己的 2 分钟启动预算多留 30 秒；`service start` 幂等，已有服务时立刻返回，不会重复启动）
 2. 执行 `opencode pair` 拿一次性配对链接，用 `Accept: text/html` 换到 `Set-Cookie`
 3. 起本地 HTTP 服务（`127.0.0.1:<随机端口>`）：静态页面 + `/api` 反代（自动注入 cookie）
 4. WebView2 加载本地页面；页面通过 IPC 向外壳要 API token（token 不走 HTTP，外部进程拿不到）
