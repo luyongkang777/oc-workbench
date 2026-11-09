@@ -109,8 +109,18 @@ function handshake(): void {
       return
     }
     // 其它消息（folder:<path> / root:<path>）先分发给订阅者，再交给外壳原有处理函数。
-    for (const fn of ipcListeners) fn(message)
-    previous?.(message)
+    for (const fn of ipcListeners) {
+      try {
+        fn(message)
+      } catch (err) {
+        console.error('IPC 消息处理失败', err)
+      }
+    }
+    try {
+      previous?.(message)
+    } catch (err) {
+      console.error('外壳 IPC 处理器失败', err)
+    }
   }
   installedIpc = handler
   w.__ocIpc = handler

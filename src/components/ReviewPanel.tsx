@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchDiff, fetchStatus, type FileDiff, type FileStatus } from '../api/vcs'
 
 type Props = {
@@ -43,7 +43,12 @@ export default function ReviewPanel({ root, connected }: Props) {
   const genRef = useRef(0)
 
   const reload = useCallback(async () => {
-    if (!connected) return
+    if (!connected) {
+      // 断开时不能把 loading 卡在 true：旧请求的 finally 会因代际不匹配跳过复位。
+      genRef.current += 1
+      setLoading(false)
+      return
+    }
     const gen = ++genRef.current
     setLoading(true)
     try {
@@ -65,6 +70,11 @@ export default function ReviewPanel({ root, connected }: Props) {
   }, [connected, root])
 
   useEffect(() => {
+    // root 换了先清空旧目录的数据：新目录加载慢或失败时，不能还挂着旧仓库的改动。
+    setStatus([])
+    setDiffs([])
+    setSelected(null)
+    setError(null)
     void reload()
     return () => {
       genRef.current += 1

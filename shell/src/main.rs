@@ -261,22 +261,56 @@ fn view_rect(width: u32, height: u32) -> Rect {
 
 const ROOT_NAME: &str = "root.txt";
 
-/// exe 同目录 root.txt 里保存的上次根目录（trim 后非空才算）。
+/// 主存储位置：%LOCALAPPDATA%\\oc-workbench\\root.txt。
+/// exe 可能装在 Program Files 等只读目录，所以主位置不放 exe 旁边。
+fn root_file() -> Option<PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
+    let dir = base.join("oc-workbench");
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir.join(ROOT_NAME))
+}
+
+/// 上次打开的根目录：先读 %LOCALAPPDATA%，再回退 exe 同目录（老版本留下的）。
+/// 目录已不存在时返回 None，页面就不会被拉到一个失效路径。
 fn saved_root() -> Option<String> {
-    let path = std::env::current_exe().ok()?.parent()?.join(ROOT_NAME);
-    let text = std::fs::read_to_string(path).ok()?;
-    let trimmed = text.trim().to_string();
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    let mut candidates = Vec::new();
+    if let Some(path) = root_file() {
+        candidates.push(path);
+    }
+    if let Some(path) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(ROOT_NAME)))
+    {
+        candidates.push(path);
+    }
+    for path in candidates {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let trimmed = text.trim().to_string();
+        if !trimmed.is_empty() && std::path::Path::new(&trimmed).is_dir() {
+            return Some(trimmed);
+        }
+    }
+    None
 }
 
 fn save_root(root: &str) {
-    let Some(dir) = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
-    else {
-        return;
-    };
-    let _ = std::fs::write(dir.join(ROOT_NAME), root);
+    let mut saved = false;
+    if let Some(path) = root_file() {
+        saved = std::fs::write(&path, root).is_ok();
+    }
+    if !saved {
+        if let Some(dir) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
+        {
+            saved = std::fs::write(dir.join(ROOT_NAME), root).is_ok();
+        }
+    }
+    if !saved {
+        append_log(&format!("[ipc] 保存根目录失败（root.txt 不可写）：{root}\n"));
+    }
 }
 
 fn log_path() -> PathBuf {

@@ -4,7 +4,7 @@ export type SessionInfo = {
   id: string
   title?: string
   time?: { created?: number; updated?: number }
-  directory?: string
+  location?: { directory?: string }
 }
 
 export type MessagePart = {
@@ -43,12 +43,19 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T
 }
 
-/** 会话列表（只取顶层会话，不含 subagent 子会话）。 */
-export async function listSessions(limit = 20): Promise<SessionInfo[]> {
+/** 会话列表（只取顶层会话，不含 subagent 子会话）；给了 root 就只留该目录的。 */
+export async function listSessions(limit = 20, root?: string): Promise<SessionInfo[]> {
   const data = await call<{ data?: SessionInfo[] } | SessionInfo[]>(
     `/api/session?limit=${limit}&order=desc&parentID=null`,
   )
-  return Array.isArray(data) ? data : (data.data ?? [])
+  const list = Array.isArray(data) ? data : (data.data ?? [])
+  // 后端返回的是 location.directory；按目录隔离会话，location 缺失的老会话保守放行。
+  if (!root) return list
+  const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
+  return list.filter((session) => {
+    const dir = session.location?.directory
+    return !dir || norm(dir) === norm(root)
+  })
 }
 
 export async function createSession(root: string, title?: string): Promise<SessionInfo> {

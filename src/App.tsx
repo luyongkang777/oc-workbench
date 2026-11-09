@@ -98,8 +98,17 @@ export default function App() {
   }
 
   function applyRoot(path: string) {
+    // 让在途的读文件请求失效：旧目录的内容不能写进新目录的视图
+    openSeq.current += 1
+    readAbort.current?.abort()
+    readAbort.current = null
+    setLoading(false)
     setRoot(path)
-    window.localStorage.setItem(ROOT_KEY, path)
+    try {
+      window.localStorage.setItem(ROOT_KEY, path)
+    } catch {
+      // 存储不可用只影响 dev 刷新恢复，不影响本次切换
+    }
     // exe 外壳把它落到 root.txt（localStorage 按端口分区，跨不了启动）。
     const w = window as unknown as { ipc?: { postMessage(message: string): void } }
     w.ipc?.postMessage(`oc:save-root:${path}`)
@@ -237,7 +246,7 @@ export default function App() {
         </section>
 
         <aside className="chat-pane">
-          <Chat root={root} connected={connected} />
+          <Chat key={root} root={root} connected={connected} />
         </aside>
       </div>
 

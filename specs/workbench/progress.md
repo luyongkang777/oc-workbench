@@ -42,6 +42,16 @@
   - 实测：dev 模式 root 切到 F:\opencode\swarm-plugin 后文件树正确切换、刷新后保持；exe 内对话框弹出已截图验证
   - 依赖：Cargo.toml 加 rfd 0.15
 
+- 2026-11-09 **第 2 轮审核修复（1 MAJOR + 7 MINOR）**：
+  - MAJOR：切换目录后 Chat 仍绑旧目录会话 → `<Chat key={root}>` 重挂载 + `listSessions` 按 `location.directory` 过滤（后端字段是 `location.directory`，不是 `directory`）
+  - ReviewPanel：root 变化先清空旧目录数据；断开时复位 loading（旧请求 finally 会被代际跳过）
+  - applyRoot：递增 openSeq + abort 在途读文件，防止旧目录内容污染新视图
+  - root 持久化改到 `%LOCALAPPDATA%\oc-workbench\root.txt`（exe 可能在只读目录），exe 同目录仅作回退；保存失败记日志
+  - saved_root 校验目录存在（is_dir），失效路径不下发
+  - IPC 分发逐个 try/catch，localStorage 写入容错
+  - 自查发现：StrictMode 双跑 effect + booted 守卫会让 Chat 列表永久为空，已去掉 booted 改 alive 代际
+  - 实测：切目录后 Chat 显示目标目录会话（workbench →「Workbench shell...」/ swarm-plugin →「工作台会话」）；root.txt 写入 LOCALAPPDATA 并在重启后读回
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |

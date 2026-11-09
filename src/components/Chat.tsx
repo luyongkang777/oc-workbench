@@ -56,7 +56,6 @@ export default function Chat({ root, connected }: Props) {
   const currentRef = useRef<string | null>(null)
   const refreshTimer = useRef<number | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const booted = useRef(false)
 
   currentRef.current = currentID
 
@@ -81,14 +80,15 @@ export default function Chat({ root, connected }: Props) {
     [reloadMessages],
   )
 
-  // 首次连上：拉会话列表；为空就建一个，省掉用户多点一步。
+  // 连上（或 root 变化触发重挂载）时拉本目录的会话列表；为空就建一个，省掉用户多点一步。
+  // 不用 booted 守卫：StrictMode 会把 effect 跑两遍，守卫会让第二遍直接跳过、
+  // 而第一遍的结果又被 alive 丢弃，导致列表永远为空。
   useEffect(() => {
-    if (!connected || booted.current) return
-    booted.current = true
+    if (!connected) return
     let alive = true
     ;(async () => {
       try {
-        let list = await listSessions()
+        let list = await listSessions(20, root)
         if (list.length === 0) {
           const session = await createSession(root, '工作台会话')
           list = [session]
