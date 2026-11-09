@@ -97,7 +97,7 @@
 - 2026-11-09 **自动拉起 opencode 服务**：
   - 需求：双击 exe 即可用，不再需要先开命令行跑 opencode。
   - `auth.rs`：`service status` 拿不到地址时自动 `service start`（45 秒窗口，500ms 轮询 status）；
-    `run_with_timeout` 泛化命令超时（冷启动比普通子命令慢），管道收集窗口同步放宽。
+    `wait_with_timeout` 增加超时参数（冷启动比普通子命令慢），`run_start` 用 `strict=false`：跳过管道完整性校验、超时只结束直接子进程。
   - 若 `service start` 报错或超时，返回带原因的日志，外层仍每 5 秒重试。
   - 实测：①有服务时 exe 启动不重启服务（PID 不变）；②假 shim 模拟「status 无地址」→ 调用序列 status→start→pair。
 
@@ -106,6 +106,13 @@
   - status 的 Err 不再一律吞掉：命令本身起不来（没装/不在 PATH）直接返回诊断，只有「未运行」才继续 start
   - `run_start`：超时不 taskkill 整树（避免杀掉刚拉起的服务），管道收不齐也不算失败（服务可能持有 stdout/stderr）
   - 前端 reconnect 超时从 15 秒放宽到 90 秒（覆盖服务自动拉起窗口）
+
+- 2026-11-09 **T11 第二轮审核修复（1 MAJOR + 4 MINOR）**：
+  - MAJOR：「opencode 没装」判定永远不命中（`cmd` 本身能 spawn 成功，真正失败是退出码 9009 + stderr「不是内部或外部命令」）→ `command_missing()` 按退出码/本地化文案识别，实测 58ms 直接返回、不执行 start
+  - `run_start` 改为 `Stdio::null()` 独立实现：不再起读管道线程（服务 detach 后管道永不关闭会泄漏线程/句柄），超时只结束直接子进程
+  - 自动启动后先 `probe_ready`（3 次、2s 超时）再 pair，避免服务刚监听时首轮必然失败
+  - 前端 reconnect 超时放宽到 180 秒（含排队等 discover 锁的时间）
+  - 修正 progress 里 `run_with_timeout` 的错误函数名
 
 ## 审核结果（ai-review-gate）
 

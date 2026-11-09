@@ -129,7 +129,6 @@ fn wait_with_timeout(
     child: &mut Child,
     args: &[&str],
     timeout: Duration,
-    kill_tree_on_timeout: bool,
 ) -> Result<ExitStatus, String> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -142,14 +141,7 @@ fn wait_with_timeout(
             }
         }
         if Instant::now() >= deadline {
-            // 启动命令（service start）超时只能结束直接子进程：它可能已经把服务作为
-            // 后代拉起来了，整树 taskkill 会把刚启动的服务一起杀掉。
-            if kill_tree_on_timeout {
-                kill_tree(child);
-            } else {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+            kill_tree(child);
             return Err(format!(
                 "`opencode {}` 超过 {} 秒未返回，已终止（服务锁卡住或弹了需要交互的窗口）",
                 args.join(" "),
@@ -174,10 +166,7 @@ fn read_all<R: Read>(pipe: Option<R>) -> Vec<u8> {
 fn collect_output(
     receiver: &mpsc::Receiver<(PipeKind, Vec<u8>)>,
     args: &[&str],
-    strict: bool,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    // 管道收尾固定 5 秒。`service start` 拉起的服务会继承并持有 stdout/stderr，
-    // 管道可能永远不关，所以那种调用传 strict=false，只用已收到的输出。
     let deadline = Instant::now() + OUTPUT_TIMEOUT;
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -200,7 +189,7 @@ fn collect_output(
         }
     }
 
-    if received < 2 && strict {
+    if received < 2 {
         return Err(format!(
             "`opencode {}` 已退出，但输出管道 {} 秒内没有关闭（子进程派生的进程仍占着 stdout/stderr），输出不完整（已收到 stdout {} 字节、stderr {} 字节）",
             args.join(" "),
@@ -216,16 +205,10 @@ fn collect_output(
 /// 跑 `opencode <args>`，返回 stdout+stderr。
 /// 找不到命令、超时、退出码非 0 时返回 Err（含退出码与 stderr 前 200 字符）。
 fn run(args: &[&str]) -> Result<String, String> {
-    run_inner(args, CMD_TIMEOUT, true)
+    run_inner(args, CMD_TIMEOUT)
 }
 
-/// 启动服务专用：超时只结束直接子进程，管道收不齐也不算失败。
-/// `opencode service start` 把服务 detach 到后台后，stdout/stderr 可能被它继续持有。
-fn run_start(args: &[&str], timeout: Duration) -> Result<String, String> {
-    run_inner(args, timeout, false)
-}
-
-fn run_inner(args: &[&str], timeout: Duration, strict: bool) -> Result<String, String> {
+fn run_inner(args: &[&str], timeout: Duration) -> Result<String, String> {
     let mut cmd = command_for(args);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -255,8 +238,8 @@ fn run_inner(args: &[&str], timeout: Duration, strict: bool) -> Result<String, S
         }
     });
 
-    let status = wait_with_timeout(&mut child, args, timeout, strict)?;
-    let (stdout, stderr) = collect_output(&receiver, args, strict)?;
+    let status = wait_with_timeout(&mut child, args, timeout)?;
+    let (stdout, stderr) = collect_output(&receiver, args)?;
 
     let stdout = String::from_utf8_lossy(&stdout).to_string();
     let stderr = String::from_utf8_lossy(&stderr).to_string();
@@ -274,6 +257,74 @@ fn run_inner(args: &[&str], timeout: Duration, strict: bool) -> Result<String, S
     }
 
     Ok(format!("{stdout}\n{stderr}"))
+}
+
+/// 启动后台服务：不需要它的输出（地址从 `service status` 轮询取），
+/// 直接接 Stdio::null()——服务 detach 后若还持有管道，读线程会永久阻塞并泄漏线程/句柄。
+/// 超时只结束直接子进程：服务可能已被它 detach 出去，taskkill 整树会把服务一起杀掉。
+fn run_start(args: &[&str], timeout: Duration) -> Result<(), String> {
+    let mut cmd = command_for(args);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = cmd.spawn().map_err(|err| {
+        format!(
+            "执行 `opencode {}` 失败：{err}（确认 opencode 已安装并在 PATH 里）",
+            args.join(" ")
+        )
+    })?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                let code = status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "无".to_string());
+                return Err(format!("`opencode {}` 退出码 {code}", args.join(" ")));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("等待 `opencode {}` 结束失败：{err}", args.join(" ")));
+            }
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "`opencode {}` 超过 {} 秒未返回（服务锁卡住或弹了需要交互的窗口）",
+                args.join(" "),
+                timeout.as_secs()
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Windows 上 `cmd /C <不存在的命令>` 以 9009 退出，stderr 是本地化的「不是内部或外部命令」。
+fn command_missing(err: &str) -> bool {
+    err.contains("退出码 9009")
+        || err.contains("不是内部或外部命令")
+        || err.contains("is not recognized")
+        || err.contains("not found")
+}
+
+/// 自动启动后探活：服务可能已经写了地址但还没准备好接请求。
+/// 失败不阻塞，交给后面的 pair 报真实错误。
+fn probe_ready(base: &str) {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(2))
+        .build();
+    for _ in 0..3 {
+        match agent.get(&format!("{base}/api/info")).call() {
+            // 401/403 等状态码说明端口已经在服务
+            Ok(_) | Err(ureq::Error::Status(_, _)) => return,
+            Err(_) => thread::sleep(Duration::from_millis(500)),
+        }
+    }
 }
 
 fn trimmed(text: &str, start: usize) -> String {
@@ -327,30 +378,26 @@ fn discover_inner() -> Result<Backend, String> {
     let mut status = match run(&["service", "status"]) {
         Ok(text) => text,
         Err(err) => {
-            // 命令本身起不来（没装 / 不在 PATH）：直接返回诊断，别白等启动窗口
-            if err.contains("确认 opencode 已安装") {
+            // opencode 没装 / 不在 PATH：直接返回诊断，别白等启动窗口
+            if command_missing(&err) {
                 return Err(err);
             }
             // 服务未运行时 status 可能以非 0 退出：继续走自动启动
             String::new()
         }
     };
+    let mut auto_started = false;
     if find_base(&status).is_none() {
         // 「启动 + 等就绪」共用同一个截止时间：start 耗掉的时间也算在里面，
         // 否则两个 45 秒窗口会叠加成 90 秒以上，discover 锁被长期占住。
         let deadline = Instant::now() + SERVICE_START_TIMEOUT;
-        let started = run_start(&["service", "start"], SERVICE_START_TIMEOUT);
-        if let Ok(text) = &started {
-            if find_base(text).is_some() {
-                status = text.clone();
-            }
-        }
+        let start_err = run_start(&["service", "start"], SERVICE_START_TIMEOUT).err();
+        auto_started = true;
         while find_base(&status).is_none() {
             if Instant::now() >= deadline {
-                let detail = match &started {
-                    Ok(text) => snippet(text, 200),
-                    Err(err) => err.clone(),
-                };
+                let detail = start_err
+                    .clone()
+                    .unwrap_or_else(|| "`opencode service status` 仍没有地址".to_string());
                 return Err(format!(
                     "服务未运行，自动执行 `opencode service start` 后约 {} 秒内仍未就绪（{}）",
                     SERVICE_START_TIMEOUT.as_secs(),
@@ -367,9 +414,12 @@ fn discover_inner() -> Result<Backend, String> {
             snippet(&status, 200)
         )
     })?;
+    // 刚拉起的服务可能已监听但还没准备好：先短探活，避免首轮 pair 必然失败
+    if auto_started {
+        probe_ready(&base);
+    }
     let port = port_of(&base)
         .ok_or_else(|| format!("`opencode service status` 给了地址但解析不出端口：{base}"))?;
-
     let pair = run(&["pair"]).map_err(|err| format!("`opencode pair` 执行失败：{err}"))?;
     // 解析失败时**不回显 pair 原文**：那是一枚 5 分钟有效的一次性配对链接，
     // 不能因为格式变化就把它写进 gui-error.log（后台每 5 秒重试会反复写）。
