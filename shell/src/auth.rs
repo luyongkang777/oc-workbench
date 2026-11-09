@@ -31,8 +31,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// 那种情况下 join 会永久阻塞，把后台 bootstrap 线程和 DISCOVER_LOCK 一起卡死，
 /// 累积下去 64 个并发名额全被占满、所有请求 503。所以这里改成 channel + 超时。
 const OUTPUT_TIMEOUT: Duration = Duration::from_secs(5);
-/// 服务未运行时的自动启动等待窗口（冷启动要起 node + 初始化）。
-const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(45);
+/// 服务未运行时的自动启动等待窗口：与 opencode CLI 自己的启动预算（promiseTimeout 120s）对齐。
+const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(120);
 /// 自动启动后轮询 `service status` 的间隔。
 const START_POLL: Duration = Duration::from_millis(500);
 
@@ -259,57 +259,94 @@ fn run_inner(args: &[&str], timeout: Duration) -> Result<String, String> {
     Ok(format!("{stdout}\n{stderr}"))
 }
 
-/// 启动后台服务：不需要它的输出（地址从 `service status` 轮询取），
-/// 直接接 Stdio::null()——服务 detach 后若还持有管道，读线程会永久阻塞并泄漏线程/句柄。
+/// 启动后台服务：地址从 `service status` 轮询取，stdout 直接丢弃；
+/// stderr 落临时文件（用读线程会在服务 detach 后永久阻塞、泄漏线程/句柄）。
 /// 超时只结束直接子进程：服务可能已被它 detach 出去，taskkill 整树会把服务一起杀掉。
 fn run_start(args: &[&str], timeout: Duration) -> Result<(), String> {
+    let err_path = std::env::temp_dir().join(format!(
+        "oc-workbench-start-{}.err",
+        std::process::id()
+    ));
+    let err_file = std::fs::File::create(&err_path).ok();
+
     let mut cmd = command_for(args);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    cmd.stdin(Stdio::null()).stdout(Stdio::null());
+    match err_file {
+        Some(file) => {
+            cmd.stderr(Stdio::from(file));
+        }
+        None => {
+            cmd.stderr(Stdio::null());
+        }
+    }
+
     let mut child = cmd.spawn().map_err(|err| {
         format!(
             "执行 `opencode {}` 失败：{err}（确认 opencode 已安装并在 PATH 里）",
             args.join(" ")
         )
     })?;
+
     let deadline = Instant::now() + timeout;
-    loop {
+    let result = loop {
         match child.try_wait() {
-            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) if status.success() => break Ok(()),
             Ok(Some(status)) => {
                 let code = status
                     .code()
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "无".to_string());
-                return Err(format!("`opencode {}` 退出码 {code}", args.join(" ")));
+                let detail = std::fs::read_to_string(&err_path)
+                    .map(|text| snippet(&text, 200))
+                    .unwrap_or_default();
+                break Err(if detail.is_empty() {
+                    format!("`opencode {}` 退出码 {code}", args.join(" "))
+                } else {
+                    format!("`opencode {}` 退出码 {code}，stderr：{detail}", args.join(" "))
+                });
             }
             Ok(None) => {}
             Err(err) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("等待 `opencode {}` 结束失败：{err}", args.join(" ")));
+                break Err(format!("等待 `opencode {}` 结束失败：{err}", args.join(" ")));
             }
         }
         if Instant::now() >= deadline {
+            // 只结束直接子进程；服务若已被 detach 出去就让它继续跑，外层用 status 判断
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!(
+            break Err(format!(
                 "`opencode {}` 超过 {} 秒未返回（服务锁卡住或弹了需要交互的窗口）",
                 args.join(" "),
                 timeout.as_secs()
             ));
         }
         thread::sleep(POLL_INTERVAL);
-    }
+    };
+
+    let _ = std::fs::remove_file(&err_path);
+    result
 }
 
-/// Windows 上 `cmd /C <不存在的命令>` 以 9009 退出，stderr 是本地化的「不是内部或外部命令」。
-fn command_missing(err: &str) -> bool {
-    err.contains("退出码 9009")
-        || err.contains("不是内部或外部命令")
-        || err.contains("is not recognized")
-        || err.contains("not found")
+/// opencode 是否可用：用 `where` 探测（与系统语言无关，只看退出码）。
+/// 不要靠 stderr 文案判断——中文 Windows 上是 GBK 字节，lossy 解码后匹配不到。
+fn opencode_available() -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let status = Command::new("where")
+            .arg("opencode")
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        matches!(status, Ok(s) if s.success())
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
 }
 
 /// 自动启动后探活：服务可能已经写了地址但还没准备好接请求。
@@ -318,7 +355,7 @@ fn probe_ready(base: &str) {
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(2))
         .build();
-    for _ in 0..3 {
+    for _ in 0..2 {
         match agent.get(&format!("{base}/api/info")).call() {
             // 401/403 等状态码说明端口已经在服务
             Ok(_) | Err(ureq::Error::Status(_, _)) => return,
@@ -373,39 +410,41 @@ pub fn discover() -> Result<Backend, String> {
 }
 
 fn discover_inner() -> Result<Backend, String> {
+    // opencode 没装 / 不在 PATH：先探测，别白等启动窗口
+    if !opencode_available() {
+        return Err("找不到 `opencode` 命令：请确认已安装并在 PATH 里".to_string());
+    }
     // 服务没跑时自动拉起：用户只双击 exe，不再需要先开命令行跑 opencode。
     // `service start` 是幂等的——已有服务会立刻返回现有地址，不会重复启动。
-    let mut status = match run(&["service", "status"]) {
-        Ok(text) => text,
-        Err(err) => {
-            // opencode 没装 / 不在 PATH：直接返回诊断，别白等启动窗口
-            if command_missing(&err) {
-                return Err(err);
-            }
-            // 服务未运行时 status 可能以非 0 退出：继续走自动启动
-            String::new()
-        }
-    };
+    let mut status = run(&["service", "status"]).unwrap_or_default();
     let mut auto_started = false;
     if find_base(&status).is_none() {
         // 「启动 + 等就绪」共用同一个截止时间：start 耗掉的时间也算在里面，
-        // 否则两个 45 秒窗口会叠加成 90 秒以上，discover 锁被长期占住。
+        // 否则两个窗口会叠加，discover 锁被长期占住。
         let deadline = Instant::now() + SERVICE_START_TIMEOUT;
-        let start_err = run_start(&["service", "start"], SERVICE_START_TIMEOUT).err();
         auto_started = true;
-        while find_base(&status).is_none() {
-            if Instant::now() >= deadline {
-                let detail = start_err
-                    .clone()
-                    .unwrap_or_else(|| "`opencode service status` 仍没有地址".to_string());
-                return Err(format!(
-                    "服务未运行，自动执行 `opencode service start` 后约 {} 秒内仍未就绪（{}）",
-                    SERVICE_START_TIMEOUT.as_secs(),
-                    detail
-                ));
+        match run_start(&["service", "start"], SERVICE_START_TIMEOUT) {
+            Ok(()) => {
+                // 先查一次再进循环：start 刚成功时旧 status 里可能还没有地址
+                status = run(&["service", "status"]).unwrap_or_default();
+                while find_base(&status).is_none() {
+                    if Instant::now() >= deadline {
+                        return Err(format!(
+                            "服务已启动，但 {} 秒内 `service status` 仍没有地址",
+                            SERVICE_START_TIMEOUT.as_secs()
+                        ));
+                    }
+                    thread::sleep(START_POLL);
+                    status = run(&["service", "status"]).unwrap_or_default();
+                }
             }
-            thread::sleep(START_POLL);
-            status = run(&["service", "status"]).unwrap_or_default();
+            Err(err) => {
+                // 启动命令失败：服务可能其实已在跑（例如端口占用但服务已存在），先查一次
+                status = run(&["service", "status"]).unwrap_or_default();
+                if find_base(&status).is_none() {
+                    return Err(format!("自动启动服务失败：{err}"));
+                }
+            }
         }
     }
     let base = find_base(&status).ok_or_else(|| {

@@ -97,7 +97,7 @@
 - 2026-11-09 **自动拉起 opencode 服务**：
   - 需求：双击 exe 即可用，不再需要先开命令行跑 opencode。
   - `auth.rs`：`service status` 拿不到地址时自动 `service start`（45 秒窗口，500ms 轮询 status）；
-    `wait_with_timeout` 增加超时参数（冷启动比普通子命令慢），`run_start` 用 `strict=false`：跳过管道完整性校验、超时只结束直接子进程。
+    `wait_with_timeout` 增加超时参数（冷启动比普通子命令慢）；`run_start` 独立实现：`Stdio::null`、不起读管道线程、stderr 落临时文件、超时只结束直接子进程。
   - 若 `service start` 报错或超时，返回带原因的日志，外层仍每 5 秒重试。
   - 实测：①有服务时 exe 启动不重启服务（PID 不变）；②假 shim 模拟「status 无地址」→ 调用序列 status→start→pair。
 
@@ -113,6 +113,14 @@
   - 自动启动后先 `probe_ready`（3 次、2s 超时）再 pair，避免服务刚监听时首轮必然失败
   - 前端 reconnect 超时放宽到 180 秒（含排队等 discover 锁的时间）
   - 修正 progress 里 `run_with_timeout` 的错误函数名
+
+- 2026-11-09 **T11 第三轮审核修复（2 MAJOR + 7 MINOR）**：
+  - MAJOR：`command_missing` 靠 stderr 文案判断，中文 Windows 上是 GBK 字节（lossy 后匹配不到）→ 改用 `where opencode` 探测（与语言无关），找不到直接报错不空等
+  - MAJOR：`run_start` 丢 stderr 且失败后仍等满窗口 → stderr 落临时文件（不起读线程），非 0 退出立即返回原因；discover 收到 Err 先查一次 status（端口占用但服务已在跑的情况）
+  - 启动窗口 45s → 120s，对齐 opencode CLI 的 promiseTimeout
+  - start 成功后先查一次 status 再进轮询（刚成功不被判超时）
+  - probe 探活次数 3 → 2，前端重连超时 180s → 300s，README 改为「约 2 分钟」
+  - 修正 progress 里 `strict=false` 的过时描述
 
 ## 审核结果（ai-review-gate）
 

@@ -9,7 +9,7 @@ const REQUEST_TIMEOUT_MS = 15_000
  * 重新配对的等待上限：外壳可能要现场拉起服务（约 45 秒）
  * 且请求可能先排队等后台 discover 跑完，留足两份时间。
  */
-const RECONNECT_TIMEOUT_MS = 180_000
+const RECONNECT_TIMEOUT_MS = 300_000
 /** 错误信息最多展示多少个字符：别把整坨响应体原样塞进 UI。 */
 const MAX_ERROR_TEXT = 200
 
