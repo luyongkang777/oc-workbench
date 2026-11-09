@@ -6,6 +6,18 @@ export type SessionInfo = {
   time?: { created?: number; updated?: number; busy?: number; idle?: number }
   location?: { directory?: string }
   model?: { id?: string; providerID?: string; variant?: string }
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * 工作台自己建的会话都在 metadata 里打这个标记。
+ * 下拉列表默认只列带标记的会话：opencode CLI、审核脚本自动建的 review/任务会话
+ * 会混进同一个目录，切会话时不需要看到它们。
+ */
+export const WORKBENCH_SOURCE = 'oc-workbench'
+
+export function isWorkbenchSession(session: SessionInfo): boolean {
+  return session.metadata?.source === WORKBENCH_SOURCE
 }
 
 export type MessagePart = {
@@ -98,7 +110,13 @@ export async function createSession(
 ): Promise<SessionInfo> {
   const data = await call<{ data?: SessionInfo }>('/api/session', {
     method: 'POST',
-    body: JSON.stringify({ title, model, location: { directory: root } }),
+    // metadata 原样存到服务端并在列表接口返回，用它区分「工作台会话」和外部会话
+    body: JSON.stringify({
+      title,
+      model,
+      location: { directory: root },
+      metadata: { source: WORKBENCH_SOURCE },
+    }),
   })
   const session = data.data
   if (!session?.id) throw new Error('创建会话失败：响应里没有 id')

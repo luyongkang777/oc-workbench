@@ -42,6 +42,14 @@ $env:OC_WORKBENCH_URL = "http://127.0.0.1:5273"
 npm.cmd run build          # 生成 dist（缺了 cargo build 会直接报错提示）
 cd shell
 cargo build --release      # 产物 shell/target/release/oc-workbench-shell.exe
+
+打包后必须确认 **exe 的修改时间晚于 dist/index.html**（exe 是编译期把 dist 嵌进去的）：
+
+```powershell
+Get-Item dist\index.html, shell\target\release\oc-workbench-shell.exe | Select-Object LastWriteTime
+```
+
+反过来就说明 exe 里是旧前端：重新 `npm run build`，再 `cargo build --release`。
 ```
 
 ## 目录
