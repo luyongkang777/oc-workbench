@@ -157,6 +157,12 @@ fn run() -> Result<(), String> {
                 return;
             }
             let body = request.body().trim().to_string();
+            if let Some(url) = body.strip_prefix("oc:open-url:") {
+                // 页面里的链接不直接导航：wry 会取消新窗口请求，导航器又只放行本站。
+                // 统一交给系统默认浏览器打开，协议白名单在 open_external 里。
+                open_external(url);
+                return;
+            }
             if let Some(root) = body.strip_prefix("oc:save-root:") {
                 // 记住这次打开的根目录（exe 同目录 root.txt），下次启动经 root:<path> 恢复。
                 // 本地端口每次启动都变，localStorage 按 origin 分区跨不了启动，只能落盘。
@@ -293,6 +299,20 @@ fn saved_root() -> Option<String> {
         }
     }
     None
+}
+
+/// 用系统默认程序打开 http/https/mailto 链接；其它协议一律忽略（防注入）。
+fn open_external(url: &str) {
+    let allowed = url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("mailto:");
+    if !allowed {
+        append_log(&format!("[ipc] 忽略不支持的链接协议：{url}\n"));
+        return;
+    }
+    if let Err(err) = open::that(url) {
+        append_log(&format!("[ipc] 打开链接失败：{err}\n"));
+    }
 }
 
 fn save_root(root: &str) {

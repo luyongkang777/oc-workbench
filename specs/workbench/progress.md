@@ -67,6 +67,14 @@
   - 用户气泡保持纯文本，只渲染 assistant 回复
   - 实测：网卡会话 12 个 md 块、74 个代码块、27 个表格、99 个列表项全部渲染；构建后 JS 337 KB（gzip 106 KB）
 
+- 2026-11-09 **T10 轮审核修复（1 MAJOR + 4 MINOR）**：
+  - MAJOR：`target=_blank` 在 wry 里被直接取消（没有 new_window_req_handler），链接全是死链 → 改为点击经 `oc:open-url:` IPC 交给外壳，用 open crate 调系统默认浏览器打开（协议白名单 http/https/mailto）
+  - 空 `href`（`[x]()` / `javascript:` 被清洗）不再渲染成死链接，只显示文字
+  - `MarkdownText` 加 `memo`，remark 插件与 components 提到模块级常量（流式期间旧消息跳过同步解析）
+  - 加 `remark-breaks`：单换行渲染成 `<br>`，不再被 `white-space: normal` 折叠
+  - 图片不再自动加载（防远程图片静默外联），渲染成 `[图片：alt]` 占位
+  - 实测：测试会话 DOM 1 个安全链接 / 0 个空链接 / 2 个 br / 图片占位；exe 里点链接系统 Edge 打开 example.com
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |

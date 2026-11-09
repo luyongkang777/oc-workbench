@@ -17,6 +17,7 @@ tiny_http = "0.12"
 ureq = { version = "2", default-features = false }
 include_dir = "0.7"
 rfd = "0.15"
+open = "5"
 getrandom = "0.2"
 
 # 依赖一次性编译好，debug 也能秒开窗口
