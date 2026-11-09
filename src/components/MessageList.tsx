@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import MarkdownText from './MarkdownText'
 import type { ChatMessage, MessagePart } from '../api/chat'
 
 type ToolInfo = {
@@ -144,7 +145,9 @@ export default function MessageList({ messages }: { messages: ChatMessage[] }) {
 
           {turn.texts.length > 0 ? (
             <div className="chat-msg assistant">
-              <div className="chat-bubble">{turn.texts.join('\n\n')}</div>
+              <div className="chat-bubble">
+                <MarkdownText text={turn.texts.join('\n\n')} />
+              </div>
             </div>
           ) : null}
 

@@ -71,12 +71,18 @@
 - 验收：对话框选目录后文件树切换；重启 exe 后自动回到上次目录；会话按 `location.directory` 隔离
 - 完成信号：exe 内完整闭环实测通过（2026-11-09）
 
+## T10 ✅ 回复 Markdown 渲染
+
+- 范围：`src/components/MarkdownText.tsx`、`src/components/MessageList.tsx`、`src/styles/markdown.css`、`package.json`
+- 内容：react-markdown + remark-gfm 渲染 agent 回复（标题/列表/代码块/表格/引用/链接）；默认不渲染原始 HTML（自带 XSS 防护）；用户气泡仍显示纯文本
+- 验收：历史会话里的标题、代码块、表格按样式渲染；`<script>` 类内容只显示成文字
+- 完成信号：实测网卡会话 74 个代码块 / 27 个表格全部渲染（2026-11-09）
+
 ## 待评估
 
 - LSP 接入（Monaco + typescript-language-server）
 - 内置浏览器 / 图片预览
 - 多窗口（每个会话一个窗口）
 - 交互式终端（需要 x-opencode-ticket + WebSocket 代理）
-- 回复 Markdown 渲染
 - 401 自动重连
 - 会话列表深翻页（当前 12 页封顶，240 条以上目录可能漏）

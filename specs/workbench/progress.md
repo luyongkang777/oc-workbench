@@ -61,6 +61,12 @@
   - Terminal 加 `key={root}`，切目录后重建会话和输出
   - 实测：F:\网卡 翻页后列出 2 个历史会话；同目录重选后 AGENTS.md 仍打开
 
+- 2026-11-09 **T10 回复 Markdown 渲染**：
+  - `MarkdownText.tsx`：react-markdown 10 + remark-gfm，默认不渲染原始 HTML（自带 XSS 防护）；链接 target=_blank
+  - `markdown.css`：标题/列表/行内代码/代码块/表格/引用/分隔线，尺寸按聊天面板压小；覆盖 `.chat-bubble` 的 pre-wrap
+  - 用户气泡保持纯文本，只渲染 assistant 回复
+  - 实测：网卡会话 12 个 md 块、74 个代码块、27 个表格、99 个列表项全部渲染；构建后 JS 337 KB（gzip 106 KB）
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |
