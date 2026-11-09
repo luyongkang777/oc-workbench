@@ -5,6 +5,8 @@ const MAX_PREVIEW_BYTES = 500 * 1024
 const TOO_LARGE_TEXT = '文件过大，暂不支持预览（>500KB）'
 /** 单次请求的最长等待时间：后端卡住时不能让 UI 永远转圈。 */
 const REQUEST_TIMEOUT_MS = 15_000
+/** 重新配对的等待上限：外壳可能要现场拉起 opencode 服务（约 45 秒窗口）。 */
+const RECONNECT_TIMEOUT_MS = 90_000
 /** 错误信息最多展示多少个字符：别把整坨响应体原样塞进 UI。 */
 const MAX_ERROR_TEXT = 200
 
@@ -49,7 +51,12 @@ async function errorText(res: Response): Promise<string> {
  * 15 秒硬超时由内部 AbortController 管；调用方传入的 signal 只用来取消
  * （例如切换文件时放弃上一个请求），两种中止都会让 fetch 立刻 reject。
  */
-async function request(path: string, init?: RequestInit): Promise<Response> {
+async function request(
+  path: string,
+  init?: RequestInit,
+  // 个别请求（reconnect）要等外壳自动拉起服务，比普通接口慢得多
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
   const headers = new Headers(init?.headers)
   const token = ocToken()
   // 空令牌不发头：dev 模式下 /api 由 Vite 代理，不经过外壳的 token 校验。
@@ -61,7 +68,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
   const timer = window.setTimeout(() => {
     timedOut = true
     controller.abort()
-  }, REQUEST_TIMEOUT_MS)
+  }, timeoutMs)
   const onCancel = () => controller.abort()
   // 调用方传进来的 signal 已经中止过：直接当取消处理，别真发请求
   if (init?.signal?.aborted) controller.abort()
@@ -124,5 +131,5 @@ export async function getInfo(): Promise<unknown> {
 
 /** 让外壳重新执行一次认证（重新 pair），用于「未连接」时的手动重试。 */
 export async function reconnect(): Promise<void> {
-  await request('/api/reconnect', { method: 'POST' })
+  await request('/api/reconnect', { method: 'POST' }, RECONNECT_TIMEOUT_MS)
 }

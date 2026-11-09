@@ -101,6 +101,12 @@
   - 若 `service start` 报错或超时，返回带原因的日志，外层仍每 5 秒重试。
   - 实测：①有服务时 exe 启动不重启服务（PID 不变）；②假 shim 模拟「status 无地址」→ 调用序列 status→start→pair。
 
+- 2026-11-09 **T11 审核修复（1 MAJOR + 4 MINOR）**：
+  - MAJOR：两个 45 秒窗口叠加（start 45s + 轮询再 45s，管道 5s）→ 改成先取 deadline，start 和轮询共用；实测 start 卡 60 秒时总等待 45.1 秒
+  - status 的 Err 不再一律吞掉：命令本身起不来（没装/不在 PATH）直接返回诊断，只有「未运行」才继续 start
+  - `run_start`：超时不 taskkill 整树（避免杀掉刚拉起的服务），管道收不齐也不算失败（服务可能持有 stdout/stderr）
+  - 前端 reconnect 超时从 15 秒放宽到 90 秒（覆盖服务自动拉起窗口）
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |
