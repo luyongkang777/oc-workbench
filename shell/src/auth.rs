@@ -31,6 +31,10 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// 那种情况下 join 会永久阻塞，把后台 bootstrap 线程和 DISCOVER_LOCK 一起卡死，
 /// 累积下去 64 个并发名额全被占满、所有请求 503。所以这里改成 channel + 超时。
 const OUTPUT_TIMEOUT: Duration = Duration::from_secs(5);
+/// 服务未运行时的自动启动等待窗口（冷启动要起 node + 初始化）。
+const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(45);
+/// 自动启动后轮询 `service status` 的间隔。
+const START_POLL: Duration = Duration::from_millis(500);
 
 /// 读管道线程送回主线程的数据来源。
 enum PipeKind {
@@ -121,8 +125,12 @@ fn kill_tree(child: &mut Child) {
 }
 
 /// 轮询 `try_wait` 等待退出，超时就杀树并返回错误。
-fn wait_with_timeout(child: &mut Child, args: &[&str]) -> Result<ExitStatus, String> {
-    let deadline = Instant::now() + CMD_TIMEOUT;
+fn wait_with_timeout(
+    child: &mut Child,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<ExitStatus, String> {
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
@@ -137,7 +145,7 @@ fn wait_with_timeout(child: &mut Child, args: &[&str]) -> Result<ExitStatus, Str
             return Err(format!(
                 "`opencode {}` 超过 {} 秒未返回，已终止（服务锁卡住或弹了需要交互的窗口）",
                 args.join(" "),
-                CMD_TIMEOUT.as_secs()
+                timeout.as_secs()
             ));
         }
         thread::sleep(POLL_INTERVAL);
@@ -158,8 +166,10 @@ fn read_all<R: Read>(pipe: Option<R>) -> Vec<u8> {
 fn collect_output(
     receiver: &mpsc::Receiver<(PipeKind, Vec<u8>)>,
     args: &[&str],
+    timeout: Duration,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
-    let deadline = Instant::now() + OUTPUT_TIMEOUT;
+    // 命令本身等得久时，管道也要按同样尺度等，否则冷启动会被误判成「输出不完整」。
+    let deadline = Instant::now() + timeout.max(OUTPUT_TIMEOUT);
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
     let mut received = 0;
@@ -185,7 +195,7 @@ fn collect_output(
         return Err(format!(
             "`opencode {}` 已退出，但输出管道 {} 秒内没有关闭（子进程派生的进程仍占着 stdout/stderr），输出不完整（已收到 stdout {} 字节、stderr {} 字节）",
             args.join(" "),
-            OUTPUT_TIMEOUT.as_secs(),
+            timeout.max(OUTPUT_TIMEOUT).as_secs(),
             stdout.len(),
             stderr.len()
         ));
@@ -197,6 +207,11 @@ fn collect_output(
 /// 跑 `opencode <args>`，返回 stdout+stderr。
 /// 找不到命令、超时、退出码非 0 时返回 Err（含退出码与 stderr 前 200 字符）。
 fn run(args: &[&str]) -> Result<String, String> {
+    run_with_timeout(args, CMD_TIMEOUT)
+}
+
+/// 同 [`run`]，但可以给更长的等待时间（例如冷启动 `service start`）。
+fn run_with_timeout(args: &[&str], timeout: Duration) -> Result<String, String> {
     let mut cmd = command_for(args);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -226,8 +241,8 @@ fn run(args: &[&str]) -> Result<String, String> {
         }
     });
 
-    let status = wait_with_timeout(&mut child, args)?;
-    let (stdout, stderr) = collect_output(&receiver, args)?;
+    let status = wait_with_timeout(&mut child, args, timeout)?;
+    let (stdout, stderr) = collect_output(&receiver, args, timeout)?;
 
     let stdout = String::from_utf8_lossy(&stdout).to_string();
     let stderr = String::from_utf8_lossy(&stderr).to_string();
@@ -293,8 +308,38 @@ pub fn discover() -> Result<Backend, String> {
 }
 
 fn discover_inner() -> Result<Backend, String> {
-    let status = run(&["service", "status"])
-        .map_err(|err| format!("`opencode service status` 执行失败：{err}"))?;
+    // 服务没跑时自动拉起：用户只双击 exe，不再需要先开命令行跑 opencode。
+    // `service start` 是幂等的——已有服务会立刻返回现有地址，不会重复启动。
+    let mut status = run(&["service", "status"]).unwrap_or_default();
+    if find_base(&status).is_none() {
+        let started = run_with_timeout(&["service", "start"], SERVICE_START_TIMEOUT);
+        // start 的输出里通常就带地址；没有就轮询 status 等它写出来。
+        let deadline = Instant::now() + SERVICE_START_TIMEOUT;
+        loop {
+            if let Ok(text) = &started {
+                if find_base(text).is_some() {
+                    status = text.clone();
+                    break;
+                }
+            }
+            status = run(&["service", "status"]).unwrap_or_default();
+            if find_base(&status).is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let detail = match &started {
+                    Ok(text) => snippet(text, 200),
+                    Err(err) => err.clone(),
+                };
+                return Err(format!(
+                    "服务未运行，自动执行 `opencode service start` 后 {} 秒内仍未就绪（{}）",
+                    SERVICE_START_TIMEOUT.as_secs(),
+                    detail
+                ));
+            }
+            thread::sleep(START_POLL);
+        }
+    }
     let base = find_base(&status).ok_or_else(|| {
         format!(
             "`opencode service status` 输出里没有 http://127.0.0.1:<端口>：{}",

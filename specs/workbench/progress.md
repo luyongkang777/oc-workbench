@@ -94,6 +94,13 @@
 - 累计修复：第 1 轮 1 MAJOR + 4 MINOR（死链/空 href/memo/换行/图片外联）→ 第 2 轮 1 MAJOR + 4 MINOR（同步阻塞/大小写/中键/失败提示/文档矛盾）→ 第 3 轮 1 MAJOR + 2 MINOR（右键误开/提示计时/回执日志）→ PASS
 - 未阻塞项：页面重载瞬间到达的失败回执可能丢（已记日志），不影响合并
 
+- 2026-11-09 **自动拉起 opencode 服务**：
+  - 需求：双击 exe 即可用，不再需要先开命令行跑 opencode。
+  - `auth.rs`：`service status` 拿不到地址时自动 `service start`（45 秒窗口，500ms 轮询 status）；
+    `run_with_timeout` 泛化命令超时（冷启动比普通子命令慢），管道收集窗口同步放宽。
+  - 若 `service start` 报错或超时，返回带原因的日志，外层仍每 5 秒重试。
+  - 实测：①有服务时 exe 启动不重启服务（PID 不变）；②假 shim 模拟「status 无地址」→ 调用序列 status→start→pair。
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |
