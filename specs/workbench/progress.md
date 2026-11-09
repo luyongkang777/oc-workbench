@@ -52,6 +52,15 @@
   - 自查发现：StrictMode 双跑 effect + booted 守卫会让 Chat 列表永久为空，已去掉 booted 改 alive 代际
   - 实测：切目录后 Chat 显示目标目录会话（workbench →「Workbench shell...」/ swarm-plugin →「工作台会话」）；root.txt 写入 LOCALAPPDATA 并在重启后读回
 
+- 2026-11-09 **第 3 轮审核修复（1 MAJOR + 5 MINOR）**：
+  - MAJOR：`listSessions` 原先只取全局最新 20 条再客户端过滤，排在 20 名之后的目录（如 F:\网卡 第 157 名）会误判为「无会话」并反复新建垃圾会话 → 改为按 `cursor.next` 最多翻 12 页收集
+  - 去掉「空列表自动建会话」：改由发消息 /「+ 新会话」时创建，消除 StrictMode 双跑和连接抖动下的重复建会话
+  - 列表刷新时保留用户当前会话（`prev` 仍在列表中就不切换）
+  - root 初始化 `localStorage.getItem` 加 try/catch（禁用存储时不再白屏）
+  - `applyRoot` 同路径只补持久化，不清编辑器状态（选同一目录不再关掉当前文件）
+  - Terminal 加 `key={root}`，切目录后重建会话和输出
+  - 实测：F:\网卡 翻页后列出 2 个历史会话；同目录重选后 AGENTS.md 仍打开
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |

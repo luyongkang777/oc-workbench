@@ -18,7 +18,14 @@ export default function App() {
   const auth = useSyncExternalStore(subscribeAuth, getAuthState)
   const [connected, setConnected] = useState(false)
   const [view, setView] = useState<'code' | 'diff'>('code')
-  const [root, setRoot] = useState(() => window.localStorage.getItem(ROOT_KEY) || DEFAULT_ROOT)
+  const [root, setRoot] = useState(() => {
+    try {
+      return window.localStorage.getItem(ROOT_KEY) || DEFAULT_ROOT
+    } catch {
+      // localStorage 被禁用时不能白屏，退回默认目录
+      return DEFAULT_ROOT
+    }
+  })
   const [reconnecting, setReconnecting] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
   const [file, setFile] = useState<string | null>(null)
@@ -97,7 +104,25 @@ export default function App() {
     if (value && value.trim()) applyRoot(value.trim())
   }
 
+  // IPC 订阅是空依赖，闭包里的 root 永远是首帧值，所以用 ref 跟踪最新目录。
+  const rootRef = useRef(root)
+  rootRef.current = root
+
+  const normPath = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
+
   function applyRoot(path: string) {
+    // 同一目录：只补刷新持久化，不清掉正在看的文件（选同一文件夹/重试都会走到这）。
+    if (normPath(rootRef.current) === normPath(path)) {
+      try {
+        window.localStorage.setItem(ROOT_KEY, path)
+      } catch {
+        // 忽略：仅影响 dev 刷新恢复
+      }
+      const same = window as unknown as { ipc?: { postMessage(message: string): void } }
+      same.ipc?.postMessage(`oc:save-root:${path}`)
+      return
+    }
+    rootRef.current = path
     // 让在途的读文件请求失效：旧目录的内容不能写进新目录的视图
     openSeq.current += 1
     readAbort.current?.abort()
@@ -250,7 +275,7 @@ export default function App() {
         </aside>
       </div>
 
-      <Terminal root={root} connected={connected} />
+      <Terminal key={root} root={root} connected={connected} />
     </div>
   )
 }

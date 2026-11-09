@@ -88,14 +88,13 @@ export default function Chat({ root, connected }: Props) {
     let alive = true
     ;(async () => {
       try {
-        let list = await listSessions(20, root)
-        if (list.length === 0) {
-          const session = await createSession(root, '工作台会话')
-          list = [session]
-        }
+        const list = await listSessions(20, root)
         if (!alive) return
+        // 不自动建会话：目录没有历史会话时保持空列表，发消息或点「+ 新会话」时再创建，
+        // 免得 StrictMode 双跑 / 连接抖动时反复产生空的「工作台会话」。
         setSessions(list)
-        setCurrentID(list[0]?.id ?? null)
+        // 重连后列表刷新时保留用户正在看的会话，别强行跳到最新一条。
+        setCurrentID((prev) => (prev && list.some((s) => s.id === prev) ? prev : (list[0]?.id ?? null)))
       } catch (err) {
         if (alive) setError((err as Error).message)
       }

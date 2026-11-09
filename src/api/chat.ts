@@ -44,18 +44,39 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** 会话列表（只取顶层会话，不含 subagent 子会话）；给了 root 就只留该目录的。 */
+/**
+ * 会话列表（顶层会话，不含 subagent 子会话）。
+ *
+ * 后端不支持按目录过滤，且默认只给全局最新的 limit 条；某个目录的最新会话可能排在
+ * 第 100 名之后，只取一页再客户端过滤会把它的历史会话全部漏掉，所以这里按
+ * cursor.next 翻页收集，最多 MAX_PAGES 页兜底。
+ */
+const MAX_PAGES = 12
+
 export async function listSessions(limit = 20, root?: string): Promise<SessionInfo[]> {
-  const data = await call<{ data?: SessionInfo[] } | SessionInfo[]>(
-    `/api/session?limit=${limit}&order=desc&parentID=null`,
-  )
-  const list = Array.isArray(data) ? data : (data.data ?? [])
-  // 后端返回的是 location.directory；按目录隔离会话，location 缺失的老会话保守放行。
-  if (!root) return list
+  const matches: SessionInfo[] = []
   const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
-  return list.filter((session) => {
-    const dir = session.location?.directory
-    return !dir || norm(dir) === norm(root)
-  })
+  const wanted = root ? norm(root) : null
+  let cursor: string | undefined
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const params = new URLSearchParams({ limit: String(limit), order: 'desc', parentID: 'null' })
+    if (cursor) params.set('cursor', cursor)
+    const data = await call<{ data?: SessionInfo[]; cursor?: { next?: string } } | SessionInfo[]>(
+      `/api/session?${params.toString()}`
+    )
+    const list = Array.isArray(data) ? data : (data.data ?? [])
+    if (!wanted) return list
+    for (const session of list) {
+      const dir = session.location?.directory
+      // location 缺失的老会话保守放行，避免历史数据凭空消失
+      if (!dir || norm(dir) === wanted) matches.push(session)
+    }
+    cursor = Array.isArray(data) ? undefined : data.cursor?.next
+    if (!cursor || list.length === 0) break
+  }
+
+  return matches
 }
 
 export async function createSession(root: string, title?: string): Promise<SessionInfo> {
