@@ -2,7 +2,7 @@
 
 ## 当前任务
 
-**T6 终端** — 状态：未开始（下一步）
+**T7 diff 审查** — 状态：未开始（下一步）
 
 ## 记录
 
@@ -22,6 +22,13 @@
   - `src/components/Chat.tsx`：会话切换、消息列表、工具卡片、Enter 发送
   - 实测（dev 模式 + 浏览器自动化）：新建会话 → 发「只回复 OK」→ 收到「好的」
   - 修掉一个 dev 代理问题：浏览器给同源 POST 带的 `Origin: 5273` 被 opencode 当跨站拒掉（401），代理转发现已去掉 Origin/Referer
+
+- 2026-11-09 **T6 完成**：底部命令终端。
+  - `src/api/terminal.ts`：创建一次性 PTY（`POST /api/experimental/session/<sid>/terminal`）+ 轮询 snapshot
+  - `src/components/Terminal.tsx`：输入命令、流式输出、退出码、可折叠
+  - 实测：`echo hello-terminal` / `git status --short` / 中文 `echo 中文测试` 都正常
+  - 关键结论：PTY 的 WebSocket 需要 `x-opencode-ticket`（配对链接返回的 token），我们的客户端只有 cookie，
+    所以用 REST snapshot 做「命令终端」（一条条执行），不是交互式 shell
 
 ## 审核结果（ai-review-gate）
 

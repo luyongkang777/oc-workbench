@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Chat from './components/Chat'
+import Terminal from './components/Terminal'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
 import { getAuthState, retryAuth, startAuth, subscribeAuth } from './api/auth'
@@ -180,6 +181,8 @@ export default function App() {
           <Chat root={DEFAULT_ROOT} connected={connected} />
         </aside>
       </div>
+
+      <Terminal root={DEFAULT_ROOT} connected={connected} />
     </div>
   )
 }
