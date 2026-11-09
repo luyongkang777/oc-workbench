@@ -203,3 +203,19 @@
   - 用户提问复制原文；助手回复复制 Markdown 原文（`texts.join('\\n\\n')`，和渲染内容一致）
   - `panels.css`：气泡外套 `.chat-bubble-wrap`（定位按钮），`.chat-copy` 常显 0.42 透明度、hover/focus 变亮
   - 实测：点用户气泡复制到剪贴板 38412 字符（完整 review 提示词）；点助手气泡 2956 字符（Markdown 原文），按钮显示「已复制」
+
+- 2026-11-09 **复制按钮审核修复**（集群审核 1 MAJOR + 9 MINOR）：
+  - MAJOR：`.chat-copy` 常显 0.42 透明度且 absolute 压在气泡首行上，用户消息首行结尾约 2 个汉字被半透明块常驻覆盖（对比度约 2.8:1）。改为 `opacity:0` + `pointer-events:none`，只在 `:hover` / `:focus-visible` 时恢复可见可点，默认态不遮挡也不吃拖选
+  - 极短消息（单字）按钮比气泡宽、溢出到气泡外：`.chat-bubble-wrap` 加 `min-width:36px`（按钮 34px + right 2px）
+  - `done` 状态不随 `text` 变化复位：流式输出时「已复制」会贴到新增长的内容上 → 加 `useEffect(() => setState('idle'), [text])`
+  - timer 在 `await` 之后才建立，卸载窗口内会留下悬挂 timer → 加 `alive` ref，await 回来先判、timer 回调再判
+  - textarea 兜底清理移到 `finally`（异常时不再把隐藏节点留在 body 上），并 `readOnly` + 复制结束归还焦点
+  - 按钮补 `aria-label`（随状态切换，读屏能播「已复制 / 复制失败」）；`.chat-copy` 加 `font-family:inherit`、`white-space:nowrap`；`.done` 成功色对齐项目既有 `#4ec9b0`
+  - 验证：`tsc --noEmit` 通过、`vite build` 通过；无头 Edge 实测 380px 面板下默认态 `opacity:0 / pointer-events:none`，助手首行零重叠，单字气泡溢出 0px
+
+- 2026-11-09 **复制按钮移到右下角 + 右键菜单**（用户反馈：别在最顶上）：
+  - `.chat-copy` 从 `top:2px` 改为 `bottom:2px`，按钮落到底部右下角，不再压首行；残留遮挡只剩最后一行末尾，且 hover 才出现
+  - 气泡支持右键：`onContextMenu` 弹 `.chat-menu`（fixed 定位 + 视口边界收拢），菜单项「复制这条消息」，复制后短暂显示「已复制」再关闭；点空白 / 滚动 / Esc 关闭
+  - 选中一段文字时右键不拦截，保留浏览器原生菜单（「复制选区」仍可用）
+  - `.chat-bubble-wrap` 的 `min-width` 36 → 46px，覆盖「已复制」最宽状态（44px + right 2px）；失败文案从「复制失败」缩成「失败」避免按钮变宽出框（`aria-label` 仍是完整的「复制失败」）
+  - 实测：无头 Edge 380px 面板下三处按钮均 `bottom/right` 间距 2px、完全落在气泡内；`tsc` + `vite build` 通过

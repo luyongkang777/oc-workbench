@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import MarkdownText from './MarkdownText'
 import type { ChatMessage, MessagePart } from '../api/chat'
 
@@ -136,50 +137,125 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     // 权限被拒时走下面的兜底
   }
+  const area = document.createElement('textarea')
+  area.value = text
+  area.readOnly = true
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  const prev = document.activeElement as HTMLElement | null
   try {
-    const area = document.createElement('textarea')
-    area.value = text
-    area.style.position = 'fixed'
-    area.style.opacity = '0'
-    document.body.appendChild(area)
     area.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(area)
-    return ok
+    return document.execCommand('copy')
   } catch {
     return false
+  } finally {
+    // 无论成败都要摘掉隐藏 textarea，否则它会留在 body 上并持有焦点
+    area.remove()
+    try {
+      prev?.focus()
+    } catch {
+      // 原焦点元素可能已经被卸载
+    }
   }
 }
 
-/** 气泡右上角的复制按钮，成功后 1.2 秒内显示「已复制」。 */
+/** 气泡右下角的复制按钮，成功后 1.2 秒内显示「已复制」。 */
 function CopyButton({ text, title }: { text: string; title: string }) {
   const [state, setState] = useState<'idle' | 'done' | 'fail'>('idle')
   const timer = useRef<number | null>(null)
+  const alive = useRef(true)
 
-  useEffect(() => () => {
-    if (timer.current) window.clearTimeout(timer.current)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      if (timer.current) window.clearTimeout(timer.current)
+    }
   }, [])
+
+  // 流式输出时 text 会继续变化，上一轮的「已复制」不能贴到新内容上
+  useEffect(() => setState('idle'), [text])
 
   async function onClick() {
     const ok = await copyText(text)
+    if (!alive.current) return
     setState(ok ? 'done' : 'fail')
     if (timer.current) window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => setState('idle'), 1200)
+    timer.current = window.setTimeout(() => {
+      if (alive.current) setState('idle')
+    }, 1200)
   }
+
+  const label = state === 'done' ? '已复制' : state === 'fail' ? '复制失败' : title
 
   return (
     <button
       type="button"
       className={`chat-copy ${state}`}
+      aria-label={label}
       title={title}
       onClick={() => void onClick()}
     >
-      {state === 'done' ? '已复制' : state === 'fail' ? '复制失败' : '复制'}
+      {state === 'done' ? '已复制' : state === 'fail' ? '失败' : '复制'}
     </button>
   )
 }
+type CopyMenuState = {
+  x: number
+  y: number
+  text: string
+  done: boolean
+}
+
 export default function MessageList({ messages }: { messages: ChatMessage[] }) {
   const turns = useMemo(() => groupTurns(messages), [messages])
+  const [menu, setMenu] = useState<CopyMenuState | null>(null)
+  const menuTimer = useRef<number | null>(null)
+
+  // 点别处、滚动、按 Esc 都关掉右键菜单
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
+  useEffect(() => () => {
+    if (menuTimer.current) window.clearTimeout(menuTimer.current)
+  }, [])
+
+  function openMenu(e: ReactMouseEvent, text: string) {
+    // 已经选中一段文字时保留浏览器原生菜单，别抢走「复制选区」
+    if ((window.getSelection()?.toString() ?? '').trim()) return
+    e.preventDefault()
+    setMenu({
+      x: Math.min(e.clientX, window.innerWidth - 148),
+      y: Math.min(e.clientY, window.innerHeight - 44),
+      text,
+      done: false,
+    })
+  }
+
+  async function copyFromMenu() {
+    if (!menu) return
+    const ok = await copyText(menu.text)
+    if (!ok) {
+      setMenu(null)
+      return
+    }
+    setMenu((current) => (current ? { ...current, done: true } : current))
+    menuTimer.current = window.setTimeout(() => setMenu(null), 600)
+  }
 
   if (turns.length === 0) {
     return <div className="chat-placeholder">还没有消息，直接在下面输入</div>
@@ -191,7 +267,10 @@ export default function MessageList({ messages }: { messages: ChatMessage[] }) {
         <div className="chat-turn" key={turn.id}>
           {turn.user ? (
             <div className="chat-msg user">
-              <div className="chat-bubble-wrap">
+              <div
+                className="chat-bubble-wrap"
+                onContextMenu={(e) => openMenu(e, turn.user ?? '')}
+              >
                 <div className="chat-bubble">{turn.user}</div>
                 <CopyButton text={turn.user} title="复制这条提问" />
               </div>
@@ -200,7 +279,10 @@ export default function MessageList({ messages }: { messages: ChatMessage[] }) {
 
           {turn.texts.length > 0 ? (
             <div className="chat-msg assistant">
-              <div className="chat-bubble-wrap">
+              <div
+                className="chat-bubble-wrap"
+                onContextMenu={(e) => openMenu(e, turn.texts.join('\n\n'))}
+              >
                 <div className="chat-bubble">
                   <MarkdownText text={turn.texts.join('\n\n')} />
                 </div>
@@ -212,6 +294,19 @@ export default function MessageList({ messages }: { messages: ChatMessage[] }) {
           <ToolGroup tools={turn.tools} />
         </div>
       ))}
+
+      {menu ? (
+        <div
+          className="chat-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button type="button" className="chat-menu-item" onClick={() => void copyFromMenu()}>
+            {menu.done ? '已复制' : '复制这条消息'}
+          </button>
+        </div>
+      ) : null}
     </>
   )
 }

@@ -241,6 +241,8 @@
 .chat-bubble-wrap {
   position: relative;
   max-width: 92%;
+  /* 至少容得下右下角按钮最宽的状态（「已复制」44px + 右边距 2px），否则短消息上按钮会出框 */
+  min-width: 46px;
 }
 
 .chat-bubble {
@@ -255,33 +257,69 @@
 
 .chat-copy {
   position: absolute;
-  top: 2px;
+  bottom: 2px;
   right: 2px;
   padding: 1px 6px;
   border: 1px solid #3c3c3c;
   border-radius: 3px;
   background: rgba(37, 37, 38, 0.92);
   color: #cccccc;
+  font-family: inherit;
   font-size: 10px;
   line-height: 16px;
+  white-space: nowrap;
   cursor: pointer;
-  opacity: 0.42;
+  /* 默认不可见也不可点，避免浮层常驻压住气泡文字、吞掉拖选 */
+  opacity: 0;
+  pointer-events: none;
   transition: opacity 0.12s;
 }
 
 .chat-bubble-wrap:hover .chat-copy,
 .chat-copy:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .chat-copy.done {
-  color: #89d185;
-  border-color: #2f6b2f;
+  color: #4ec9b0;
+  border-color: #2f5f55;
 }
 
 .chat-copy.fail {
   color: #f48771;
   border-color: #7a2f2f;
+}
+
+/* ---------- 气泡右键菜单 ---------- */
+.chat-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 136px;
+  padding: 4px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+
+.chat-menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-menu-item:hover {
+  background: #094771;
+  color: #ffffff;
 }
 
 .chat-msg.user .chat-bubble {
