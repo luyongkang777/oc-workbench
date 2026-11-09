@@ -64,12 +64,19 @@
 - 验收：双击 exe 能打开界面并连上后端
 - 完成信号：无需手动开终端
 
+## T9 ✅ 打开任意文件夹
+
+- 范围：`shell/src/main.rs`（IPC）、`src/api/auth.ts`、`src/App.tsx`、`src/styles/panels.css`
+- 内容：资源管理器标题「打开」按钮 → rfd 原生对话框 → `folder:<path>` 回传 → 文件树/Chat/Terminal 整体切目录；root 存 `%LOCALAPPDATA%\oc-workbench\root.txt` 跨启动恢复
+- 验收：对话框选目录后文件树切换；重启 exe 后自动回到上次目录；会话按 `location.directory` 隔离
+- 完成信号：exe 内完整闭环实测通过（2026-11-09）
+
 ## 待评估
 
 - LSP 接入（Monaco + typescript-language-server）
 - 内置浏览器 / 图片预览
 - 多窗口（每个会话一个窗口）
 - 交互式终端（需要 x-opencode-ticket + WebSocket 代理）
-- 打开任意文件夹（当前 root 写死）
 - 回复 Markdown 渲染
 - 401 自动重连
+- 会话列表深翻页（当前 12 页封顶，240 条以上目录可能漏）
