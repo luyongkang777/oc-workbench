@@ -75,10 +75,16 @@ export default defineConfig(async ({ command, isPreview }) => {
             // x-oc-token 是工作台私有头，别顺着代理泄漏给上游。
             proxy.on('proxyReq', (proxyReq: any) => {
               proxyReq.removeHeader('x-oc-token')
+              // 浏览器给同源 POST 带的 Origin 是 5273，opencode 会当跨站拒掉（401）
+              proxyReq.removeHeader('origin')
+              proxyReq.removeHeader('referer')
               if (auth.cookie) proxyReq.setHeader('cookie', auth.cookie)
             })
             proxy.on('proxyReqWs', (proxyReq: any) => {
               proxyReq.removeHeader('x-oc-token')
+              // 浏览器给同源 POST 带的 Origin 是 5273，opencode 会当跨站拒掉（401）
+              proxyReq.removeHeader('origin')
+              proxyReq.removeHeader('referer')
               if (auth.cookie) proxyReq.setHeader('cookie', auth.cookie)
             })
             // SSE 不能被缓冲；只改头，绝对不要 flushHeaders（会把上游 content-type 吃掉）

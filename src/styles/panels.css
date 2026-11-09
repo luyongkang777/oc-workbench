@@ -151,3 +151,119 @@
 .tree-retry:hover {
   background: #37373d;
 }
+
+/* ---------- 会话列表 ---------- */
+.chat-session-toggle,
+.chat-new {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #cccccc;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.chat-session-toggle:hover,
+.chat-new:hover {
+  border-color: #0e639c;
+  color: #ffffff;
+}
+
+.chat-sessions {
+  max-height: 180px;
+  overflow: auto;
+  border-bottom: 1px solid #333;
+  background: #1f1f1f;
+}
+
+.chat-session-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-session-item:hover {
+  background: #2a2d2e;
+}
+
+.chat-session-item.active {
+  background: #094771;
+  color: #ffffff;
+}
+
+.chat-session-time {
+  color: #7a7a7a;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+/* ---------- 消息 ---------- */
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-msg.user {
+  align-items: flex-end;
+}
+
+.chat-bubble {
+  max-width: 92%;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-msg.user .chat-bubble {
+  background: #094771;
+  color: #ffffff;
+}
+
+.chat-msg.assistant .chat-bubble {
+  background: #2a2a2a;
+  color: #d4d4d4;
+}
+
+.chat-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 92%;
+  padding: 4px 8px;
+  border: 1px solid #3c3c3c;
+  border-left: 3px solid #0e639c;
+  background: #232323;
+  font-size: 11.5px;
+  color: #b0b0b0;
+}
+
+.chat-tool-name {
+  color: #9cdcfe;
+}
+
+.chat-tool-status {
+  color: #7a7a7a;
+}
+
+.chat-meta {
+  font-size: 10.5px;
+  color: #6e6e6e;
+}

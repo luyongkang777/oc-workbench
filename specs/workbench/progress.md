@@ -2,7 +2,7 @@
 
 ## 当前任务
 
-**T5 会话面板** — 状态：未开始（下一步）
+**T6 终端** — 状态：未开始（下一步）
 
 ## 记录
 
@@ -16,6 +16,12 @@
 - 2026-11-08 T8 完成：Rust 内嵌 dist + tiny_http 本地服务 + `/api` 反代，单文件 exe 双击可用。
 - 2026-11-08 提交到 Gitea：`http://192.168.31.8:3000/luyongkang777/oc-workbench`
   （`main` + `feature/workbench-v0`），随后跑了 9 轮 AI 审核。
+
+- 2026-11-09 **T5 完成**：会话面板可用。
+  - `src/api/chat.ts`：会话列表/新建/历史/发消息，SSE 用 fetch 流解析（EventSource 不能带 `x-oc-token`）
+  - `src/components/Chat.tsx`：会话切换、消息列表、工具卡片、Enter 发送
+  - 实测（dev 模式 + 浏览器自动化）：新建会话 → 发「只回复 OK」→ 收到「好的」
+  - 修掉一个 dev 代理问题：浏览器给同源 POST 带的 `Origin: 5273` 被 opencode 当跨站拒掉（401），代理转发现已去掉 Origin/Referer
 
 ## 审核结果（ai-review-gate）
 

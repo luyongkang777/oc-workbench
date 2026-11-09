@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import ChatPanel from './components/ChatPanel'
+import Chat from './components/Chat'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
 import { getAuthState, retryAuth, startAuth, subscribeAuth } from './api/auth'
@@ -177,7 +177,7 @@ export default function App() {
         </section>
 
         <aside className="chat-pane">
-          <ChatPanel connected={connected} />
+          <Chat root={DEFAULT_ROOT} connected={connected} />
         </aside>
       </div>
     </div>
