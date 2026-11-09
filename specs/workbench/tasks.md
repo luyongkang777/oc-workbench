@@ -85,6 +85,13 @@
 - 验收：双击 exe 直接连上（服务未跑时自动后台启动）；已有服务时不重复启动
 - 完成信号：实测两条路径（2026-11-09）
 
+## T12 ✅ 模型选择 + 停止对话
+
+- 范围：`src/api/chat.ts`、`src/components/Chat.tsx`、`src/components/ChatHeader.tsx`、`src/components/ChatInput.tsx`、`src/hooks/useChatEvents.ts`、`src/styles/panels.css`
+- 内容：会话头部加模型下拉（`GET /api/model` + `/api/model/default` 兜底，切换走 `POST /api/session/<id>/model`）；生成中「发送」变「停止」（`POST /api/session/<id>/interrupt`），用 `time.busy > time.idle` 判断生成中
+- 验收：切换模型后会话 model 字段变化；耗时任务生成中出现「停止」，点击后 `outcome: interrupted`
+- 完成信号：dev 实测通过（2026-11-09），68 个模型可筛选
+
 ## 待评估
 
 - LSP 接入（Monaco + typescript-language-server）

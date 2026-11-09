@@ -3,8 +3,9 @@
 export type SessionInfo = {
   id: string
   title?: string
-  time?: { created?: number; updated?: number }
+  time?: { created?: number; updated?: number; busy?: number; idle?: number }
   location?: { directory?: string }
+  model?: { id?: string; providerID?: string; variant?: string }
 }
 
 export type MessagePart = {
@@ -22,6 +23,15 @@ export type ChatMessage = {
   content?: MessagePart[]
   time?: { created?: number; completed?: number }
   model?: { id?: string; providerID?: string }
+}
+
+/** 可选模型（GET /api/model）。id + providerID 是切模型时要传的键。 */
+export type ModelInfo = {
+  id: string
+  modelID?: string
+  providerID: string
+  name?: string
+  variants?: { id: string }[]
 }
 
 function token(): string {
@@ -43,7 +53,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (text ? JSON.parse(text) : undefined) as T
 }
 
-/** 会话列表（只取顶层会话，不含 subagent 子会话）；给了 root 就只留该目录的。 */
 /**
  * 会话列表（顶层会话，不含 subagent 子会话）。
  *
@@ -79,10 +88,14 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
   return matches
 }
 
-export async function createSession(root: string, title?: string): Promise<SessionInfo> {
+export async function createSession(
+  root: string,
+  title?: string,
+  model?: { id: string; providerID: string },
+): Promise<SessionInfo> {
   const data = await call<{ data?: SessionInfo }>('/api/session', {
     method: 'POST',
-    body: JSON.stringify({ title, location: { directory: root } }),
+    body: JSON.stringify({ title, model, location: { directory: root } }),
   })
   const session = data.data
   if (!session?.id) throw new Error('创建会话失败：响应里没有 id')
@@ -102,6 +115,63 @@ export async function sendPrompt(sessionID: string, text: string): Promise<void>
     method: 'POST',
     body: JSON.stringify({ text }),
   })
+}
+
+/** 当前目录可用的模型列表（只保留有 id + providerID 的）。 */
+export async function listModels(root: string): Promise<ModelInfo[]> {
+  const data = await call<{ data?: ModelInfo[] } | ModelInfo[]>(
+    `/api/model?location%5Bdirectory%5D=${encodeURIComponent(root)}`,
+  )
+  const list = Array.isArray(data) ? data : (data.data ?? [])
+  return list.filter((model) => model.id && model.providerID)
+}
+
+/** 默认模型：会话自己没记 model 时用它兜底显示。 */
+export async function getDefaultModel(root: string): Promise<ModelInfo | null> {
+  try {
+    const data = await call<{ data?: ModelInfo }>(
+      `/api/model/default?location%5Bdirectory%5D=${encodeURIComponent(root)}`,
+    )
+    const model = data?.data
+    return model?.id && model.providerID ? model : null
+  } catch {
+    return null
+  }
+}
+
+/** 切换会话使用的模型。 */
+export async function switchModel(
+  sessionID: string,
+  model: { id: string; providerID: string },
+): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}/model`, {
+    method: 'POST',
+    body: JSON.stringify({ model }),
+  })
+}
+
+/** 单个会话（用来判断 busy/idle）。 */
+export async function getSession(sessionID: string): Promise<SessionInfo> {
+  const data = await call<{ data?: SessionInfo }>(
+    `/api/session/${encodeURIComponent(sessionID)}`,
+  )
+  return data.data ?? ({} as SessionInfo)
+}
+
+/** 中断正在生成的回复；返回后端是否确实中断了。 */
+export async function interruptSession(sessionID: string): Promise<boolean> {
+  const data = await call<{ interrupted?: boolean }>(
+    `/api/session/${encodeURIComponent(sessionID)}/interrupt`,
+    { method: 'POST' },
+  )
+  return data?.interrupted ?? false
+}
+
+/** 会话是否正在生成：busy 时间戳晚于 idle。 */
+export function isSessionBusy(session: SessionInfo): boolean {
+  const busy = session.time?.busy ?? 0
+  const idle = session.time?.idle ?? 0
+  return busy > idle
 }
 
 /**

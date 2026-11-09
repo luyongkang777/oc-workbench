@@ -299,3 +299,119 @@
   color: #f48771;
   font-size: 12px;
 }
+
+/* ---------- 模型选择 ---------- */
+.model-picker {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.model-toggle {
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #cccccc;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.model-toggle:hover {
+  border-color: #0e639c;
+  color: #ffffff;
+}
+
+.model-menu {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  z-index: 30;
+  width: 280px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.model-filter {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  background: #1e1e1e;
+  border: none;
+  border-bottom: 1px solid #333;
+  color: #cccccc;
+  font-size: 12px;
+  outline: none;
+}
+
+.model-list {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.model-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-item:hover {
+  background: #2a2d2e;
+}
+
+.model-item.active {
+  background: #094771;
+  color: #ffffff;
+}
+
+.model-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-provider {
+  flex: 0 0 auto;
+  color: #7a7a7a;
+  font-size: 10.5px;
+}
+
+.model-empty {
+  padding: 10px;
+  color: #6e6e6e;
+  font-size: 12px;
+}
+
+.chat-session-empty {
+  padding: 8px 12px;
+  color: #6e6e6e;
+  font-size: 12px;
+}
+
+/* 生成中的「停止」按钮 */
+.chat-send.stop {
+  background: #5a1d1d;
+  border-color: #7a2e2e;
+  color: #ffd7d7;
+}
+
+.chat-send.stop:hover {
+  background: #6d2222;
+  border-color: #a03a3a;
+}

@@ -130,6 +130,14 @@
   - 文档口径统一：client.ts 注释、tasks.md T11 范围（补 client.ts）、README 改「约 2 分半」
   - 实测：真实环境正常；status 失败立即报错且不执行 start；PATH 无 opencode 立即报「未安装」
 
+- 2026-11-09 **T12 模型选择 + 停止对话**：
+  - `chat.ts`：`listModels` / `getDefaultModel` / `switchModel` / `interruptSession` / `getSession` / `isSessionBusy`；`createSession` 支持传 model
+  - `ChatHeader.tsx`：会话下拉 + 模型下拉（筛选、68 个模型、当前项高亮）+ 新会话；从 Chat.tsx 拆出
+  - `ChatInput.tsx`：生成中「发送」变「停止」，从 Chat.tsx 拆出
+  - `hooks/useChatEvents.ts`：SSE 订阅 + 250ms 合并刷新，从 Chat.tsx 拆出
+  - 生成中判定：`time.busy > time.idle`，running 期间 800ms 轮询会话状态（不用 idle 消息判断，避免旧 idle 误判）
+  - 实测：切模型后会话 model = iceman-free；ping 任务生成中出现「停止」，点击后 outcome=interrupted
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |
