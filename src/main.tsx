@@ -6,6 +6,7 @@ import './styles/panels.css'
 import './styles/editor.css'
 import './styles/terminal.css'
 import './styles/diff.css'
+import './styles/tools.css'
 
 const el = document.getElementById('root')
 if (!el) throw new Error('找不到 #root')

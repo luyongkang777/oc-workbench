@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import MessageList from './MessageList'
 import {
   createSession,
   listMessages,
@@ -245,25 +246,7 @@ export default function Chat({ root, connected }: Props) {
             {connected ? '还没有消息，直接在下面输入' : '等待后端连接…'}
           </div>
         ) : (
-          messages.map((message) => {
-            if (message.type === 'idle') return null
-            const isUser = message.type === 'user'
-            const text = isUser ? (message.text ?? '') : partText(message.content)
-            const tools = isUser ? [] : toolParts(message.content)
-            if (!text && tools.length === 0) return null
-            return (
-              <div key={message.id} className={`chat-msg ${isUser ? 'user' : 'assistant'}`}>
-                {text ? <div className="chat-bubble">{text}</div> : null}
-                {tools.map((part, index) => (
-                  <div className="chat-tool" key={`${message.id}-tool-${index}`}>
-                    <span className="chat-tool-name">{part.tool ?? part.name ?? '工具'}</span>
-                    <span className="chat-tool-status">{part.state?.status ?? ''}</span>
-                  </div>
-                ))}
-                {!isUser && text ? <div className="chat-meta">{message.model?.id ?? ''}</div> : null}
-              </div>
-            )
-          })
+          <MessageList messages={messages} />
         )}
       </div>
 
