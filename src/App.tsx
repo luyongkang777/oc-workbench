@@ -100,15 +100,24 @@ export default function App() {
   function applyRoot(path: string) {
     setRoot(path)
     window.localStorage.setItem(ROOT_KEY, path)
+    // exe 外壳把它落到 root.txt（localStorage 按端口分区，跨不了启动）。
+    const w = window as unknown as { ipc?: { postMessage(message: string): void } }
+    w.ipc?.postMessage(`oc:save-root:${path}`)
     setFile(null)
     setContent('')
     setError(null)
   }
 
-  // 外壳选完文件夹会回 folder:<path>；空路径表示取消。
+  // 外壳消息：root:<path> 是启动时随令牌下发的上次根目录；
+  // folder:<path> 是对话框选完的结果，空路径表示取消。
   useEffect(
     () =>
       onIpcMessage((message) => {
+        if (message.startsWith('root:')) {
+          const saved = message.slice('root:'.length).trim()
+          if (saved) applyRoot(saved)
+          return
+        }
         if (!message.startsWith('folder:')) return
         const path = message.slice('folder:'.length).trim()
         if (path) applyRoot(path)

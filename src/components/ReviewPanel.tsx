@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { fetchDiff, fetchStatus, type FileDiff, type FileStatus } from '../api/vcs'
 
 type Props = {
@@ -39,12 +39,16 @@ export default function ReviewPanel({ root, connected }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // root 变化或组件卸载后，在途请求的结果一律丢弃（防止旧目录 diff 覆盖新目录）
+  const genRef = useRef(0)
 
   const reload = useCallback(async () => {
     if (!connected) return
+    const gen = ++genRef.current
     setLoading(true)
     try {
       const [nextStatus, nextDiffs] = await Promise.all([fetchStatus(root), fetchDiff(root)])
+      if (gen !== genRef.current) return
       setStatus(nextStatus)
       setDiffs(nextDiffs)
       setError(null)
@@ -53,14 +57,18 @@ export default function ReviewPanel({ root, connected }: Props) {
         return nextDiffs[0]?.file ?? null
       })
     } catch (err) {
+      if (gen !== genRef.current) return
       setError((err as Error).message)
     } finally {
-      setLoading(false)
+      if (gen === genRef.current) setLoading(false)
     }
   }, [connected, root])
 
   useEffect(() => {
     void reload()
+    return () => {
+      genRef.current += 1
+    }
   }, [reload])
 
   const current = diffs.find((item) => item.file === selected)

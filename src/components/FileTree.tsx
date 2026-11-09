@@ -60,6 +60,7 @@ export default function FileTree({ root, onOpenFile }: Props) {
 
   useEffect(() => {
     const gen = ++genRef.current
+    setSelected('')
     setChildren({})
     setExpanded({})
     setLoadingMap({})

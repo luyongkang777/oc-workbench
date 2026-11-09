@@ -108,7 +108,8 @@ function handshake(): void {
       if (state.status !== 'ready' || state.token !== token) emit({ status: 'ready', token })
       return
     }
-    // 其它消息（pong:<msg>）目前没有消费方，原样交给外壳原有处理函数。
+    // 其它消息（folder:<path> / root:<path>）先分发给订阅者，再交给外壳原有处理函数。
+    for (const fn of ipcListeners) fn(message)
     previous?.(message)
   }
   installedIpc = handler

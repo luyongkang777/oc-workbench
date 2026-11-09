@@ -157,6 +157,12 @@ fn run() -> Result<(), String> {
                 return;
             }
             let body = request.body().trim().to_string();
+            if let Some(root) = body.strip_prefix("oc:save-root:") {
+                // 记住这次打开的根目录（exe 同目录 root.txt），下次启动经 root:<path> 恢复。
+                // 本地端口每次启动都变，localStorage 按 origin 分区跨不了启动，只能落盘。
+                save_root(root);
+                return;
+            }
             let kind = if body == "oc:auth" {
                 "oc:auth".to_string()
             } else {
@@ -175,6 +181,12 @@ fn run() -> Result<(), String> {
                 format!("pong:{body}")
             };
             ipc_queue.borrow_mut().push(payload);
+            if body == "oc:auth" {
+                // 上次打开的根目录随令牌一起下发；没有保存过就不发。
+                if let Some(root) = saved_root() {
+                    ipc_queue.borrow_mut().push(format!("root:{root}"));
+                }
+            }
             let _ = proxy.send_event(());
         })
         .build(&window)
@@ -245,6 +257,26 @@ fn view_rect(width: u32, height: u32) -> Rect {
         position: Position::Physical(PhysicalPosition::new(0, 0)),
         size: Size::Physical(PhysicalSize::new(width.max(1), height.max(1))),
     }
+}
+
+const ROOT_NAME: &str = "root.txt";
+
+/// exe 同目录 root.txt 里保存的上次根目录（trim 后非空才算）。
+fn saved_root() -> Option<String> {
+    let path = std::env::current_exe().ok()?.parent()?.join(ROOT_NAME);
+    let text = std::fs::read_to_string(path).ok()?;
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() { None } else { Some(trimmed) }
+}
+
+fn save_root(root: &str) {
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.to_path_buf()))
+    else {
+        return;
+    };
+    let _ = std::fs::write(dir.join(ROOT_NAME), root);
 }
 
 fn log_path() -> PathBuf {
