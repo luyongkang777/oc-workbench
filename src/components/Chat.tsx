@@ -10,6 +10,8 @@ import {
   getSession,
   interruptSession,
   isSessionBusy,
+  isWorkbenchSession,
+  isWorkbenchTerminal,
   listMessages,
   listSessions,
   sendPrompt,
@@ -31,6 +33,8 @@ export default function Chat({ root, connected }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
+  // 下拉默认只列工作台会话，这项打开后连外部会话一起列
+  const [showAllSessions, setShowAllSessions] = useState(false)
 
   const currentRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -60,7 +64,14 @@ export default function Chat({ root, connected }: Props) {
         if (!alive) return
         setSessions(list)
         // 重连后列表刷新时保留用户正在看的会话，别强行跳到最新一条。
-        setCurrentID((prev) => (prev && list.some((s) => s.id === prev) ? prev : (list[0]?.id ?? null)))
+        // 优先落到工作台自己建的会话上：同目录里 CLI/审核脚本建的会话不该抢默认视图。
+        setCurrentID((prev) => {
+          if (prev && list.some((s) => s.id === prev)) return prev
+          const own = list.find(isWorkbenchSession)
+          // 回退时也要跳过终端会话：否则 current 会落到「工作台终端」上，
+          // 它既不该出现在下拉里，也不该接收聊天消息。
+          return own?.id ?? list.find((item) => !isWorkbenchTerminal(item))?.id ?? null
+        })
       } catch (err) {
         if (alive) setError((err as Error).message)
       }
@@ -172,11 +183,27 @@ export default function Chat({ root, connected }: Props) {
   }
 
   const current = sessions.find((session) => session.id === currentID)
+  // 下拉默认只列工作台会话；当前正在看的会话即使是外部会话也保留，
+  // 否则顶部标题和高亮会消失。
+  const ownSessions = sessions.filter(
+    (session) => isWorkbenchSession(session) || session.id === currentID,
+  )
+  // 终端会话既不是用户会话、也不该被算成「外部会话」：默认视图和计数都跳过它
+  const hiddenCount = sessions.filter(
+    (session) =>
+      !isWorkbenchSession(session) && !isWorkbenchTerminal(session) && session.id !== currentID,
+  ).length
+  const visibleSessions = showAllSessions
+    ? sessions.filter((session) => !isWorkbenchTerminal(session))
+    : ownSessions
 
   return (
     <div className="chat">
       <ChatHeader
-        sessions={sessions}
+        sessions={visibleSessions}
+        hiddenCount={hiddenCount}
+        showAll={showAllSessions}
+        onToggleShowAll={() => setShowAllSessions((value) => !value)}
         current={current}
         expanded={expanded}
         models={modelsApi.models}

@@ -17,6 +17,10 @@ type Props = {
   onPickSession: (id: string) => void
   onNewSession: () => void
   onPickModel: (model: ModelInfo) => void
+  /** 被「只显示工作台会话」过滤掉的外部会话数量 */
+  hiddenCount: number
+  showAll: boolean
+  onToggleShowAll: () => void
 }
 
 export function shortTitle(session: SessionInfo): string {
@@ -46,6 +50,9 @@ export default function ChatHeader({
   onPickSession,
   onNewSession,
   onPickModel,
+  hiddenCount,
+  showAll,
+  onToggleShowAll,
 }: Props) {
   const [modelsOpen, setModelsOpen] = useState(false)
   const [filter, setFilter] = useState('')
@@ -169,6 +176,11 @@ export default function ChatHeader({
               </button>
             ))
           )}
+          {hiddenCount > 0 || showAll ? (
+            <button type="button" className="chat-session-more" onClick={onToggleShowAll}>
+              {showAll ? '只显示工作台会话' : `显示全部会话（另有 ${hiddenCount} 条外部会话）`}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </>

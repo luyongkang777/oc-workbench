@@ -210,6 +210,22 @@
   font-size: 11px;
   flex: 0 0 auto;
 }
+.chat-session-more {
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid #333;
+  color: #7a9cc6;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-session-more:hover {
+  background: #2a2d2e;
+  color: #9fc3ef;
+}
 
 /* ---------- 消息 ---------- */
 .chat-msg {

@@ -1,3 +1,5 @@
+import { WORKBENCH_SOURCE } from './chat'
+
 /** 终端（T6）：在指定会话下创建一次性 PTY，轮询 snapshot 拿输出。 */
 
 export type TerminalSnapshot = {
@@ -37,7 +39,12 @@ export async function ensureTerminalSession(root: string): Promise<string> {
 
   const res = await req('/api/session', {
     method: 'POST',
-    body: JSON.stringify({ title: '工作台终端', location: { directory: root } }),
+    // 打上工作台标记并标明是终端会话：下拉列表不会把它当用户会话或外部会话列出
+    body: JSON.stringify({
+      title: '工作台终端',
+      location: { directory: root },
+      metadata: { source: WORKBENCH_SOURCE, kind: 'terminal' },
+    }),
   })
   if (!res.ok) throw new Error(`创建终端会话失败：${res.status} ${await res.text()}`)
   const json = (await res.json()) as { data?: { id?: string } }

@@ -189,3 +189,11 @@
 ## 阻塞
 
 （无）
+
+- 2026-11-09 **会话下拉只列工作台会话**（用户反馈：同目录里 CLI/审核脚本的会话全列出来，不需要）：
+  - `chat.ts`：建会话时带 `metadata: { source: 'oc-workbench' }`；新增 `isWorkbenchSession`（排除终端会话）、`isWorkbenchTerminal`
+  - `terminal.ts`：终端会话带 `metadata: { source, kind: 'terminal' }`，既不算用户会话，也不占「外部会话」计数
+  - `Chat.tsx`：下拉默认只列工作台会话（当前会话即使是外部会话也保留）；默认选中优先工作台会话，回退时跳过终端会话
+  - `ChatHeader.tsx`：下拉底部「显示全部会话（另有 N 条外部会话）」/「只显示工作台会话」切换，N 为 0 时不出按钮
+  - 实测：workbench 目录 28 条 → 默认 2 条；「显示全部」多出 26 条；终端会话不出现在列表也不计入 N
+  - 数据迁移：按标题「工作台会话」「工作台终端」给历史会话补 metadata（`PATCH /api/session/<id>`，服务端支持并保留，实测切模型/发消息不会冲掉）

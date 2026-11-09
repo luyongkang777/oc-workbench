@@ -16,8 +16,16 @@ export type SessionInfo = {
  */
 export const WORKBENCH_SOURCE = 'oc-workbench'
 
+/** 工作台里由用户发起的会话（终端会话带 kind: 'terminal'，不算用户会话）。 */
 export function isWorkbenchSession(session: SessionInfo): boolean {
-  return session.metadata?.source === WORKBENCH_SOURCE
+  return (
+    session.metadata?.source === WORKBENCH_SOURCE && session.metadata?.kind !== 'terminal'
+  )
+}
+
+/** 终端也会在工作台里建会话，带这个 kind，切换会话时不该被当成用户会话列出来。 */
+export function isWorkbenchTerminal(session: SessionInfo): boolean {
+  return session.metadata?.source === WORKBENCH_SOURCE && session.metadata?.kind === 'terminal'
 }
 
 export type MessagePart = {
