@@ -53,7 +53,9 @@ const COMPONENTS: Components = {
           openExternal(safe)
         }}
         onAuxClick={(event) => {
-          // 中键不走 click，不拦会触发默认导航（被外壳的导航限制吃掉，等于死链）
+          // auxclick 对中键（1）和右键（2）都会触发；只拦中键（不走 click，否则是死链），
+          // 右键必须放行，否则想复制链接时会意外拉起浏览器。
+          if (event.button !== 1) return
           event.preventDefault()
           openExternal(safe)
         }}

@@ -33,7 +33,9 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // 一次性提示（例如打开链接失败），4 秒后自动消失
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ text: string; id: number } | null>(null)
+  // 同一句提示连续触发时 id 变化，effect 会重建定时器（否则第二次提示会被旧定时器提前清掉）
+  const showNotice = (text: string) => setNotice({ text, id: Date.now() + Math.random() })
   // 每次打开文件的序号：只有最新一次请求的返回才能写进编辑器
   const openSeq = useRef(0)
   // 当前在途的读文件请求：切文件时 aborts 它
@@ -157,7 +159,7 @@ export default function App() {
       onIpcMessage((message) => {
         // 外壳用系统浏览器打开链接失败时回这一条。
         if (message.startsWith('open-url-failed:')) {
-          setNotice('用系统浏览器打开链接失败')
+          showNotice('用系统浏览器打开链接失败')
           return
         }
         if (message.startsWith('root:')) {
@@ -254,7 +256,7 @@ export default function App() {
         ) : null}
       </header>
 
-      {notice ? <div className="app-notice">{notice}</div> : null}
+      {notice ? <div className="app-notice">{notice.text}</div> : null}
 
       <div className="main">
         <aside className="sidebar">

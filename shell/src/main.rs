@@ -249,9 +249,12 @@ fn run() -> Result<(), String> {
                     for payload in items {
                         let json =
                             serde_json::to_string(&payload).unwrap_or_else(|_| "\"\"".to_string());
-                        let _ = webview.evaluate_script(&format!(
+                        // 页面可能正在重载/__ocIpc 还没装：记日志，别静默吞掉
+                        if let Err(err) = webview.evaluate_script(&format!(
                             "window.__ocIpc && window.__ocIpc({json});"
-                        ));
+                        )) {
+                            append_log(&format!("[ipc] 下发失败回执失败：{err}\n"));
+                        }
                     }
                 }
             }
