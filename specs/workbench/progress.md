@@ -2,7 +2,7 @@
 
 ## 当前任务
 
-**T7 diff 审查** — 状态：未开始（下一步）
+**T8 收尾** — 状态：未开始（下一步）
 
 ## 记录
 
@@ -29,6 +29,12 @@
   - 实测：`echo hello-terminal` / `git status --short` / 中文 `echo 中文测试` 都正常
   - 关键结论：PTY 的 WebSocket 需要 `x-opencode-ticket`（配对链接返回的 token），我们的客户端只有 cookie，
     所以用 REST snapshot 做「命令终端」（一条条执行），不是交互式 shell
+
+- 2026-11-09 **T7 完成**：工作区改动审查。
+  - `src/api/vcs.ts`：`/api/vcs/status` + `/api/vcs/diff?mode=working`（working 已包含未跟踪文件）
+  - `src/components/ReviewPanel.tsx`：左侧变更列表（A/M/D + 增删数），右侧 patch 着色（+ 绿 / - 红 / @@ 蓝）
+  - 顶栏「审查」按钮在代码视图和审查视图之间切换
+  - 实测：临时新建 + 修改文件后，列表和 patch 都正确显示
 
 ## 审核结果（ai-review-gate）
 

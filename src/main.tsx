@@ -5,6 +5,7 @@ import './styles/base.css'
 import './styles/panels.css'
 import './styles/editor.css'
 import './styles/terminal.css'
+import './styles/diff.css'
 
 const el = document.getElementById('root')
 if (!el) throw new Error('找不到 #root')

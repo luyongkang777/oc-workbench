@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Chat from './components/Chat'
+import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
@@ -15,6 +16,7 @@ export default function App() {
   // 令牌只能经 IPC 拿：ready 之前不发任何 /api 请求，避免先刷一片 401。
   const auth = useSyncExternalStore(subscribeAuth, getAuthState)
   const [connected, setConnected] = useState(false)
+  const [view, setView] = useState<'code' | 'diff'>('code')
   const [reconnecting, setReconnecting] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
   const [file, setFile] = useState<string | null>(null)
@@ -143,6 +145,13 @@ export default function App() {
       <header className="topbar">
         <span className="brand">OpenCode 工作台</span>
         <span className="topbar-spacer" />
+        <button
+          type="button"
+          className={`review-toggle${view === 'diff' ? ' active' : ''}`}
+          onClick={() => setView((v) => (v === 'diff' ? 'code' : 'diff'))}
+        >
+          审查
+        </button>
         <span className={`status-dot ${statusOk ? 'ok' : 'bad'}`} />
         <span className="status-text">{statusText}</span>
         {showRetry ? (
@@ -174,7 +183,11 @@ export default function App() {
         </aside>
 
         <section className="editor-pane">
-          <CodeView path={file} content={content} loading={loading} error={error} />
+          {view === 'diff' ? (
+            <ReviewPanel root={DEFAULT_ROOT} connected={connected} />
+          ) : (
+            <CodeView path={file} content={content} loading={loading} error={error} />
+          )}
         </section>
 
         <aside className="chat-pane">
