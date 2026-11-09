@@ -336,6 +336,9 @@
   background: #252526;
   border: 1px solid #3c3c3c;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  /* 面板在 .chat-header 内，会继承 uppercase + 字距，这里整体重置 */
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .model-filter {
@@ -414,4 +417,70 @@
 .chat-send.stop:hover {
   background: #6d2222;
   border-color: #a03a3a;
+}
+
+/* 三个按钮的宽度分配：会话名可缩、模型占中间剩余、新会话不缩 */
+.chat-session-toggle {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 38%;
+}
+
+.model-picker {
+  flex: 1 1 auto;
+  min-width: 90px;
+}
+
+.model-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+.model-toggle-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-toggle-caret {
+  flex: 0 0 auto;
+  color: #7a7a7a;
+}
+
+.chat-new {
+  flex: 0 0 auto;
+}
+
+.model-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-provider {
+  flex: 0 0 auto;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-retry {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  color: #f48771;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
 }

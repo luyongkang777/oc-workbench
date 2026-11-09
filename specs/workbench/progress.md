@@ -138,6 +138,18 @@
   - 生成中判定：`time.busy > time.idle`，running 期间 800ms 轮询会话状态（不用 idle 消息判断，避免旧 idle 误判）
   - 实测：切模型后会话 model = iceman-free；ping 任务生成中出现「停止」，点击后 outcome=interrupted
 
+- 2026-11-09 **T12 审核修复（2 MAJOR + 7 MINOR）+ 用户反馈排版**：
+  - 用户反馈：顶部三个按钮挤在一起、模型名被截断、「破甲」模型全部同名（`shortModel` 把「破甲 · DeepSeek 官方」截成「破甲」）→ 去掉字符串截断，交给 CSS 省略 + title；header 加 gap，宽度按 会话 38% / 模型 flex 1 / 新会话 auto 分配
+  - 模型下拉继承 `.chat-header` 的 uppercase + 0.6px 字距（模型名变形）→ `.model-menu` 统一重置
+  - MAJOR：模型显示不跟随会话（无 model 的会话沿用上一个选的）→ `useChatModels` 记 `defaultModel`，切换时按 会话 model > 默认模型 > 空
+  - MAJOR：`running` 是全局布尔，切走再切回丢「停止」→ `useChatRunning` 用 `runningID` 绑定会话，切会话按 busy 初始化，轮询只查该会话，连续失败 5 次放弃
+  - 切模型先请求成功再改 UI（失败不再显示错误模型）；同 id+provider 保留原 variant（实测 high 不再被改成 default）
+  - 生成中按 Enter 不再发送（保留草稿）
+  - `interrupt` 返回 false 时不清 running，再查一次 busy
+  - 模型列表加 loading / 加载失败点击重试 / 空列表三种状态
+  - Chat.tsx 拆到 215 行（模型/运行状态各一个 hook）
+  - 实测：切会话再切回「停止」仍在；variant 保留 high；生成中 Enter 不发；破甲模型显示全名
+
 ## 审核结果（ai-review-gate）
 
 | 轮次 | 结论 | 主要问题 |

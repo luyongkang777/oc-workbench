@@ -25,6 +25,9 @@ export type ChatMessage = {
   model?: { id?: string; providerID?: string }
 }
 
+/** 切模型/建会话时传的模型引用。variant 是推理档位（high/max…），不传后端会给 default。 */
+export type ModelRef = { id: string; providerID: string; variant?: string }
+
 /** 可选模型（GET /api/model）。id + providerID 是切模型时要传的键。 */
 export type ModelInfo = {
   id: string
@@ -91,7 +94,7 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
 export async function createSession(
   root: string,
   title?: string,
-  model?: { id: string; providerID: string },
+  model?: ModelRef,
 ): Promise<SessionInfo> {
   const data = await call<{ data?: SessionInfo }>('/api/session', {
     method: 'POST',
@@ -140,10 +143,7 @@ export async function getDefaultModel(root: string): Promise<ModelInfo | null> {
 }
 
 /** 切换会话使用的模型。 */
-export async function switchModel(
-  sessionID: string,
-  model: { id: string; providerID: string },
-): Promise<void> {
+export async function switchModel(sessionID: string, model: ModelRef): Promise<void> {
   await call(`/api/session/${encodeURIComponent(sessionID)}/model`, {
     method: 'POST',
     body: JSON.stringify({ model }),

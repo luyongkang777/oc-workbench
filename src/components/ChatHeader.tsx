@@ -8,6 +8,9 @@ type Props = {
   current: SessionInfo | undefined
   expanded: boolean
   models: ModelInfo[]
+  modelsLoading?: boolean
+  modelsError?: string | null
+  onRetryModels?: () => void
   currentModel: ModelKey | null
   connected: boolean
   onToggleSessions: () => void
@@ -29,17 +32,14 @@ function formatTime(ms?: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-/** 去掉模型名里的「 · 厂商」尾巴，按钮上放得下 */
-function shortModel(name: string): string {
-  const cut = name.indexOf(' · ')
-  return cut > 0 ? name.slice(0, cut) : name
-}
-
 export default function ChatHeader({
   sessions,
   current,
   expanded,
   models,
+  modelsLoading,
+  modelsError,
+  onRetryModels,
   currentModel,
   connected,
   onToggleSessions,
@@ -66,11 +66,9 @@ export default function ChatHeader({
   const active = currentModel
     ? models.find((m) => m.id === currentModel.id && m.providerID === currentModel.providerID)
     : undefined
-  const modelLabel = active?.name
-    ? shortModel(active.name)
-    : currentModel
-      ? shortModel(currentModel.id)
-      : '选择模型'
+  // 用完整 name：很多模型的区别只在「 · 后缀」（例如「破甲 · DeepSeek 官方」），
+  // 截断会把它们全变成同一个词。放不下交给 CSS 省略 + title 提示。
+  const modelLabel = active?.name ?? active?.id ?? currentModel?.id ?? '选择模型'
 
   const keyword = filter.trim().toLowerCase()
   const visible = keyword
@@ -98,7 +96,8 @@ export default function ChatHeader({
             title={active?.name ?? modelLabel}
             onClick={() => setModelsOpen((v) => !v)}
           >
-            {modelLabel} ▾
+            <span className="model-toggle-text">{modelLabel}</span>
+            <span className="model-toggle-caret">▾</span>
           </button>
           {modelsOpen ? (
             <div className="model-menu">
@@ -110,8 +109,14 @@ export default function ChatHeader({
                 autoFocus
               />
               <div className="model-list">
-                {visible.length === 0 ? (
-                  <div className="model-empty">{models.length === 0 ? '加载模型列表…' : '没有匹配的模型'}</div>
+                {modelsError ? (
+                  <button type="button" className="model-retry" onClick={() => onRetryModels?.()}>
+                    模型列表加载失败，点击重试
+                  </button>
+                ) : modelsLoading && models.length === 0 ? (
+                  <div className="model-empty">加载模型列表…</div>
+                ) : visible.length === 0 ? (
+                  <div className="model-empty">{models.length === 0 ? '没有可用模型' : '没有匹配的模型'}</div>
                 ) : (
                   visible.map((model) => {
                     const isActive =
@@ -129,7 +134,7 @@ export default function ChatHeader({
                           setFilter('')
                         }}
                       >
-                        <span className="model-name">{shortModel(model.name ?? model.id)}</span>
+                        <span className="model-name">{model.name ?? model.id}</span>
                         <span className="model-provider">{model.providerID}</span>
                       </button>
                     )
