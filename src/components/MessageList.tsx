@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import MarkdownText from './MarkdownText'
 import type { ChatMessage, MessagePart } from '../api/chat'
 
@@ -126,6 +126,58 @@ function ToolGroup({ tools }: { tools: ToolInfo[] }) {
   )
 }
 
+/** 复制文本：优先 Clipboard API，失败退回 execCommand（WebView2 里两条路都能用）。 */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // 权限被拒时走下面的兜底
+  }
+  try {
+    const area = document.createElement('textarea')
+    area.value = text
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.appendChild(area)
+    area.select()
+    const ok = document.execCommand('copy')
+    document.body.removeChild(area)
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/** 气泡右上角的复制按钮，成功后 1.2 秒内显示「已复制」。 */
+function CopyButton({ text, title }: { text: string; title: string }) {
+  const [state, setState] = useState<'idle' | 'done' | 'fail'>('idle')
+  const timer = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current)
+  }, [])
+
+  async function onClick() {
+    const ok = await copyText(text)
+    setState(ok ? 'done' : 'fail')
+    if (timer.current) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setState('idle'), 1200)
+  }
+
+  return (
+    <button
+      type="button"
+      className={`chat-copy ${state}`}
+      title={title}
+      onClick={() => void onClick()}
+    >
+      {state === 'done' ? '已复制' : state === 'fail' ? '复制失败' : '复制'}
+    </button>
+  )
+}
 export default function MessageList({ messages }: { messages: ChatMessage[] }) {
   const turns = useMemo(() => groupTurns(messages), [messages])
 
@@ -139,14 +191,20 @@ export default function MessageList({ messages }: { messages: ChatMessage[] }) {
         <div className="chat-turn" key={turn.id}>
           {turn.user ? (
             <div className="chat-msg user">
-              <div className="chat-bubble">{turn.user}</div>
+              <div className="chat-bubble-wrap">
+                <div className="chat-bubble">{turn.user}</div>
+                <CopyButton text={turn.user} title="复制这条提问" />
+              </div>
             </div>
           ) : null}
 
           {turn.texts.length > 0 ? (
             <div className="chat-msg assistant">
-              <div className="chat-bubble">
-                <MarkdownText text={turn.texts.join('\n\n')} />
+              <div className="chat-bubble-wrap">
+                <div className="chat-bubble">
+                  <MarkdownText text={turn.texts.join('\n\n')} />
+                </div>
+                <CopyButton text={turn.texts.join('\n\n')} title="复制这条回复（Markdown 原文）" />
               </div>
             </div>
           ) : null}

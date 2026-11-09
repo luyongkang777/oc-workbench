@@ -197,3 +197,9 @@
   - `ChatHeader.tsx`：下拉底部「显示全部会话（另有 N 条外部会话）」/「只显示工作台会话」切换，N 为 0 时不出按钮
   - 实测：workbench 目录 28 条 → 默认 2 条；「显示全部」多出 26 条；终端会话不出现在列表也不计入 N
   - 数据迁移：按标题「工作台会话」「工作台终端」给历史会话补 metadata（`PATCH /api/session/<id>`，服务端支持并保留，实测切模型/发消息不会冲掉）
+
+- 2026-11-09 **消息气泡加复制按钮**（用户反馈）：
+  - `MessageList.tsx`：新增 `copyText`（Clipboard API，失败退回 `execCommand`）和 `CopyButton`（成功显示「已复制」1.2 秒、失败显示「复制失败」，定时器卸载时清理）
+  - 用户提问复制原文；助手回复复制 Markdown 原文（`texts.join('\\n\\n')`，和渲染内容一致）
+  - `panels.css`：气泡外套 `.chat-bubble-wrap`（定位按钮），`.chat-copy` 常显 0.42 透明度、hover/focus 变亮
+  - 实测：点用户气泡复制到剪贴板 38412 字符（完整 review 提示词）；点助手气泡 2956 字符（Markdown 原文），按钮显示「已复制」
