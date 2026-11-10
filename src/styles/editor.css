@@ -30,6 +30,53 @@
   background: #252526;
 }
 
+/* 文件信息条：大小 / 行数 / 编码 / 预览切换 */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 12px;
+  flex: 0 0 auto;
+  background: #252526;
+  border-bottom: 1px solid #2b2b2b;
+  color: #8a8a8a;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.editor-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.editor-modes {
+  display: inline-flex;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.editor-modes button {
+  height: 20px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  color: #9d9d9d;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.editor-modes button:hover {
+  background: #2a2d2e;
+  color: #d4d4d4;
+}
+
+.editor-modes button.active {
+  background: #094771;
+  color: #ffffff;
+}
+
 .editor-empty {
   flex: 1;
   display: flex;
@@ -56,6 +103,23 @@
   white-space: pre-wrap;
 }
 
+/* 读取失败时的重试按钮（stat 超时/权限等） */
+.editor-retry {
+  margin-top: 10px;
+  height: 22px;
+  padding: 0 12px;
+  font-size: 12px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #555;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.editor-retry:hover {
+  background: #37373d;
+}
+
 .code-scroll {
   flex: 1;
   overflow: auto;
@@ -64,7 +128,8 @@
 
 .code-block {
   margin: 0;
-  padding: 8px 0 24px;
+  /* 纵向 padding 必须为 0：虚拟滚动按「行数 × 19px」算，任何 padding 都会让位置恒偏 */
+  padding: 0;
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
   font-size: 12.5px;
   line-height: 19px;
@@ -72,6 +137,8 @@
 
 .code-line {
   display: flex;
+  height: 19px;
+  line-height: 19px;
   white-space: pre;
 }
 
@@ -90,6 +157,15 @@
 .code-text {
   flex: 1;
   color: #d4d4d4;
+}
+
+/* 还没加载回来的行：只占位，不闪一块色 */
+.code-text.pending {
+  color: transparent;
+}
+
+.code-failed {
+  color: #f48771;
 }
 
 /* ---------- 会话 ---------- */
@@ -158,12 +234,113 @@
 }
 
 .chat-input-wrap {
+  position: relative;
   flex: 0 0 auto;
-  padding: 10px;
+  padding: 8px 10px 10px;
   border-top: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 拖文件进来时整块提示一下，松手即加入附件 */
+.chat-input-wrap.dragging {
+  outline: 1px dashed #0e639c;
+  outline-offset: -4px;
+  background: rgba(14, 99, 156, 0.08);
+}
+
+.chat-input-row {
   display: flex;
   gap: 8px;
   align-items: flex-end;
+}
+
+/* ---------- 待发送附件 ---------- */
+.chat-attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-attach {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  background: #1e1e1e;
+  overflow: hidden;
+}
+
+.chat-attach-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chat-attach-name {
+  padding: 2px 4px;
+  color: #cccccc;
+  font-size: 9.5px;
+  line-height: 1.3;
+  text-align: center;
+  word-break: break-all;
+}
+
+.chat-attach-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-bottom-left-radius: 4px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #dddddd;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.chat-attach-remove:hover {
+  background: #a03a3a;
+  color: #ffffff;
+}
+
+.chat-attach-add {
+  flex: 0 0 auto;
+  height: 60px;
+  padding: 0 10px;
+  background: #2a2d2e;
+  border: 1px solid #3c3c3c;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-attach-add:hover:not(:disabled) {
+  background: #37373d;
+}
+
+.chat-attach-add:disabled {
+  color: #6e6e6e;
+  cursor: default;
+}
+
+.chat-attach-notice {
+  color: #d7b06a;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .chat-input {
@@ -193,4 +370,417 @@
   background: #333;
   color: #777;
   cursor: default;
+}
+
+/* ---------- 消息里的附件 ---------- */
+.chat-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.chat-files:last-child {
+  margin-bottom: 0;
+}
+
+.chat-file-img {
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  background: #1e1e1e;
+  line-height: 0;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.chat-file-img:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.chat-file-img img {
+  display: block;
+  max-width: min(260px, 60vw);
+  max-height: 200px;
+  object-fit: contain;
+}
+
+.chat-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.chat-file-chip-icon {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.chat-file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 图片放大 ---------- */
+.chat-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+
+.chat-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+  cursor: default;
+}
+
+.chat-lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  padding: 4px 10px;
+  border: 1px solid #555;
+  border-radius: 3px;
+  background: #252526;
+  color: #dddddd;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-lightbox-close:hover {
+  background: #37373d;
+}
+
+/* ---------- 斜杠命令菜单 ---------- */
+.chat-slash-menu {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% + 2px);
+  z-index: 40;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.chat-slash-list {
+  max-height: 240px;
+  overflow: auto;
+  padding: 3px;
+}
+
+.chat-slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-slash-item:hover {
+  background: #2a2d2e;
+}
+
+.chat-slash-item.active {
+  background: #094771;
+  color: #ffffff;
+}
+
+.chat-slash-name {
+  flex: 0 0 132px;
+  overflow: hidden;
+  color: #9fc3ef;
+  font-family: Consolas, 'Cascadia Mono', monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-slash-item.active .chat-slash-name {
+  color: #cfe3ff;
+}
+
+.chat-slash-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #8a8a8a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-slash-item.active .chat-slash-desc {
+  color: #cfe3ff;
+}
+
+.chat-slash-item.disabled {
+  opacity: 0.55;
+}
+
+.chat-slash-badge {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid #4a4a4a;
+  border-radius: 3px;
+  color: #9a9a9a;
+  font-size: 9.5px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.chat-slash-item.active .chat-slash-badge {
+  border-color: #6b8fbf;
+  color: #cfe3ff;
+}
+
+.chat-slash-notice {
+  padding: 5px 8px;
+  border-top: 1px solid #333;
+  background: #2a2418;
+  color: #d7b06a;
+  font-size: 11px;
+}
+
+.chat-slash-back {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-bottom: 1px solid #333;
+  background: #1e1e1e;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-slash-back:hover {
+  background: #2a2d2e;
+}
+
+.chat-slash-head {
+  padding: 5px 8px 2px;
+  color: #7a7a7a;
+  font-size: 10.5px;
+}
+
+.chat-slash-empty {
+  padding: 8px;
+  color: #6e6e6e;
+  font-size: 12px;
+}
+
+/* ---------- Markdown 预览 / 图片 / 十六进制 ---------- */
+.editor-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 24px 40px;
+  background: #1e1e1e;
+}
+
+.editor-preview .md {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.editor-note {
+  margin: 12px;
+  padding: 8px 10px;
+  border-left: 3px solid #0e639c;
+  background: #1e2a33;
+  color: #a8c7dd;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.editor-image {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 16px;
+  background: #1e1e1e;
+}
+
+.editor-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #2a2a2a;
+}
+
+.editor-hex {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 24px;
+}
+
+.hex-dump {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 18px;
+  color: #d4d4d4;
+}
+
+/* ---------- 跳转到行 ---------- */
+.editor-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editor-jump-input {
+  width: 86px;
+  height: 18px;
+  padding: 0 6px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #d4d4d4;
+  font-size: 11px;
+  outline: none;
+}
+
+.editor-jump-input:focus {
+  border-color: #0e639c;
+}
+
+/* 数字输入框的上下箭头在 18px 高度里太挤 */
+.editor-jump-input::-webkit-inner-spin-button,
+.editor-jump-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.editor-jump-btn {
+  height: 18px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.editor-jump-btn:hover {
+  background: #37373d;
+}
+
+/* 跳转后的目标行短暂高亮 */
+.code-line.flash {
+  background: #3a3a1e;
+}
+
+/* 视口首行实时行号 */
+.editor-current-line {
+  color: #7f9db9;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 整文件搜索 ---------- */
+.editor-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  background: #252526;
+  border-bottom: 1px solid #2b2b2b;
+}
+
+.editor-search-input {
+  flex: 1 1 auto;
+  max-width: 460px;
+  height: 20px;
+  padding: 0 8px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #d4d4d4;
+  font-size: 11px;
+  outline: none;
+}
+
+.editor-search-input:focus {
+  border-color: #0e639c;
+}
+
+.editor-search-count {
+  color: #9d9d9d;
+  font-size: 11px;
+  min-width: 64px;
+}
+
+.editor-search-count.error {
+  color: #f48771;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-search-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 18px;
+  font-size: 11px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #444;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.editor-search-btn:hover:not(:disabled) {
+  background: #37373d;
+}
+
+.editor-search-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 命中片段与当前命中行 */
+.code-hit {
+  background: #613214;
+  color: #ffd7a8;
+  padding: 0;
+}
+
+.code-line.match {
+  background: #1f2a33;
 }

@@ -1,8 +1,5 @@
 export type FsEntry = { path: string; type: 'directory' | 'file' }
 
-/** 预览上限：超过 500 KB 的文本不渲染（避免主线程生成上万个 DOM 节点把界面卡死）。 */
-const MAX_PREVIEW_BYTES = 500 * 1024
-const TOO_LARGE_TEXT = '文件过大，暂不支持预览（>500KB）'
 /** 单次请求的最长等待时间：后端卡住时不能让 UI 永远转圈。 */
 const REQUEST_TIMEOUT_MS = 15_000
 /**
@@ -102,29 +99,25 @@ export async function listDir(root: string, relPath?: string): Promise<FsEntry[]
   return data.data ?? []
 }
 
-/** 读文本文件。relPath 按 / 或 \ 分段编码，避免整段被编码掉。 */
-export async function readFile(
-  root: string,
-  relPath: string,
+/**
+ * 请求外壳自己的本地接口（`/local/*`）：与 `/api/*` 同一套 token / 超时 / 错误处理。
+ *
+ * 本地接口直接读磁盘，不经过 opencode；大文件的 `stat` 要扫一遍建行索引，
+ * 所以允许调用方放宽超时（默认仍是 15 秒）。
+ */
+export async function localRequest<T>(
+  path: string,
   signal?: AbortSignal,
-): Promise<string> {
-  const encoded = relPath.split(/[\\/]+/).map(encodeURIComponent).join('/')
-  const res = await request(`/api/fs/read/${encoded}?${locationQuery(root)}`, { signal })
+  timeoutMs?: number,
+): Promise<T> {
+  const res = await request(path, { signal, cache: 'no-store' }, timeoutMs)
+  return (await res.json()) as T
+}
 
-  // 有 Content-Length 就先拦，省掉把整份大文件读进内存。
-  const declared = Number(res.headers.get('content-length') ?? '')
-  if (Number.isFinite(declared) && declared > MAX_PREVIEW_BYTES) {
-    throw new Error(TOO_LARGE_TEXT)
-  }
-
-  const text = await res.text()
-  // 字符数超过字节上限时必然超限，先走快速路径；否则再按 UTF-8 实际字节数判断
-  // （中文/emoji 一个字符占多个字节，只看 length 会放过真正超限的文件）。
-  if (text.length > MAX_PREVIEW_BYTES) throw new Error(TOO_LARGE_TEXT)
-  if (new TextEncoder().encode(text).length > MAX_PREVIEW_BYTES) {
-    throw new Error(TOO_LARGE_TEXT)
-  }
-  return text
+/** 本地接口的二进制响应（图片预览）。 */
+export async function localRequestBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const res = await request(path, { signal, cache: 'no-store' })
+  return await res.blob()
 }
 
 /** 服务信息，用来判断后端是否连上。 */

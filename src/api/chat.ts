@@ -34,6 +34,31 @@ export type MessagePart = {
   tool?: string
   name?: string
   state?: { status?: string }
+  /** reasoning 段用它判断是否还在思考：有 created 没 completed = 进行中 */
+  time?: { created?: number; completed?: number }
+}
+
+/**
+ * 用户消息里的附件（图片/文件）。
+ *
+ * 发出去时用 `PromptFile`（`uri` 是 data URL），服务端存下来后回显成
+ * `MessageFile`：base64 在 `data` 里，`mime` 标明类型，`name` 是原文件名。
+ */
+export type MessageFile = {
+  /** base64（不带 `data:` 前缀） */
+  data?: string
+  mime?: string
+  name?: string
+  uri?: string
+  source?: { type?: string; uri?: string }
+  description?: string
+}
+
+/** 发送附件：opencode 只认 `uri`，实测 data URL 可直接用。 */
+export type PromptFile = {
+  uri: string
+  name?: string
+  source?: { type: 'uri'; uri: string }
 }
 
 export type ChatMessage = {
@@ -41,20 +66,65 @@ export type ChatMessage = {
   type: string
   text?: string
   content?: MessagePart[]
+  files?: MessageFile[]
   time?: { created?: number; completed?: number }
   model?: { id?: string; providerID?: string }
+}
+
+/** 表单选项（question 工具里的一个可选项）。 */
+export type FormOption = {
+  value: string
+  label: string
+  description?: string
+}
+
+/** 表单字段：question 工具的单选是 string + options，多选是 multiselect。 */
+export type FormField = {
+  key: string
+  title: string
+  description?: string
+  /** string | number | integer | boolean | multiselect | select | external */
+  type: string
+  options?: FormOption[]
+  custom?: boolean
+  placeholder?: string
+  default?: unknown
+}
+
+export type FormInfo = {
+  id: string
+  sessionID: string
+  title?: string
+  metadata?: Record<string, unknown>
+  fields: FormField[]
+  state: { status: string; answer?: Record<string, unknown>; message?: string }
+}
+
+/** 可切换的 agent（GET /api/agent）。 */
+export type AgentInfo = {
+  id: string
+  name?: string
+  description?: string
+  mode?: string
+  hidden?: boolean
+}
+
+/** 斜杠命令（GET /api/command，服务端配置的命令）。 */
+export type CommandInfo = {
+  name: string
+  description?: string
 }
 
 /** 切模型/建会话时传的模型引用。variant 是推理档位（high/max…），不传后端会给 default。 */
 export type ModelRef = { id: string; providerID: string; variant?: string }
 
-/** 可选模型（GET /api/model）。id + providerID 是切模型时要传的键。 */
+/** 可选模型（GET /api/model）。id + providerID 是切模型时要传的键；variants 是推理档位。 */
 export type ModelInfo = {
   id: string
   modelID?: string
   providerID: string
   name?: string
-  variants?: { id: string }[]
+  variants?: { id: string; name?: string; settings?: Record<string, unknown> }[]
 }
 
 function token(): string {
@@ -138,11 +208,108 @@ export async function listMessages(sessionID: string): Promise<ChatMessage[]> {
   return data.data ?? []
 }
 
-/** 发一条用户消息；返回后内容会通过 SSE 陆续推过来。 */
-export async function sendPrompt(sessionID: string, text: string): Promise<void> {
+/** 从当前会话分叉（复制完整历史）。 */
+export async function forkSession(sessionID: string): Promise<SessionInfo> {
+  const data = await call<{ data?: SessionInfo }>(
+    `/api/session/${encodeURIComponent(sessionID)}/fork`,
+    { method: 'POST', body: JSON.stringify({}) },
+  )
+  const session = data.data
+  if (!session?.id) throw new Error('fork 失败：响应里没有 id')
+  return session
+}
+
+/** 会话里等待答复的表单（question 工具）。只返回 pending 的。 */
+export async function listForms(sessionID: string): Promise<FormInfo[]> {
+  const data = await call<{ data?: FormInfo[] } | FormInfo[]>(
+    `/api/session/${encodeURIComponent(sessionID)}/form`,
+  )
+  const list = Array.isArray(data) ? data : (data.data ?? [])
+  return list.filter((form) => form?.id && Array.isArray(form.fields))
+}
+
+/** 提表单答案：answer 是 { 字段 key: 值 }，多选传字符串数组。 */
+export async function replyForm(
+  sessionID: string,
+  formID: string,
+  answer: Record<string, unknown>,
+): Promise<void> {
+  await call(
+    `/api/session/${encodeURIComponent(sessionID)}/form/${encodeURIComponent(formID)}/reply`,
+    { method: 'POST', body: JSON.stringify({ answer }) },
+  )
+}
+
+/** 跳过（取消）表单：模型会收到取消原因。 */
+export async function cancelForm(
+  sessionID: string,
+  formID: string,
+  message?: string,
+): Promise<void> {
+  const query = message ? `?message=${encodeURIComponent(message)}` : ''
+  await call(
+    `/api/session/${encodeURIComponent(sessionID)}/form/${encodeURIComponent(formID)}${query}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** 当前目录可切换的 agent（只保留用户可选的主 agent）。 */
+export async function listAgents(root: string): Promise<AgentInfo[]> {
+  const data = await call<{ data?: AgentInfo[] } | AgentInfo[]>(
+    `/api/agent?location%5Bdirectory%5D=${encodeURIComponent(root)}`,
+  )
+  const list = Array.isArray(data) ? data : (data.data ?? [])
+  return list.filter((agent) => agent.id && !agent.hidden && agent.mode !== 'subagent')
+}
+
+/** 切换当前会话的 agent（对后续请求生效）。 */
+export async function switchAgent(sessionID: string, agent: string): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}/agent`, {
+    method: 'POST',
+    body: JSON.stringify({ agent }),
+  })
+}
+
+/** 当前目录的斜杠命令（服务端配置的命令）。 */
+export async function listCommands(root: string): Promise<CommandInfo[]> {
+  const data = await call<{ data?: CommandInfo[] } | CommandInfo[]>(
+    `/api/command?location%5Bdirectory%5D=${encodeURIComponent(root)}`,
+  )
+  const list = Array.isArray(data) ? data : (data.data ?? [])
+  return list.filter((command) => command.name)
+}
+
+/** 执行服务端斜杠命令（/goal、/swarm、/vkb 等）。 */
+export async function runSessionCommand(
+  sessionID: string,
+  name: string,
+  text = '',
+): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}/command`, {
+    method: 'POST',
+    body: JSON.stringify({ name, text }),
+  })
+}
+
+/** 压缩当前会话上下文。 */
+export async function compactSession(sessionID: string): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}/compact`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+/** 发一条用户消息；返回后内容会通过 SSE 陆续推过来。files 是图片/文件附件。 */
+export async function sendPrompt(
+  sessionID: string,
+  text: string,
+  files: PromptFile[] = [],
+): Promise<void> {
+  const body: { text: string; files?: PromptFile[] } = { text }
+  if (files.length > 0) body.files = files
   await call(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
     method: 'POST',
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -207,7 +374,10 @@ export function isSessionBusy(session: SessionInfo): boolean {
  * 这里用 fetch 流手动按 SSE 的 `data: {...}` 行解析（心跳是 `: heartbeat`，跳过）。
  */
 export async function subscribeEvents(
-  onEvent: (event: { type?: string; data?: { sessionID?: string } }) => void,
+  onEvent: (event: {
+    type?: string
+    data?: { sessionID?: string; form?: { sessionID?: string } }
+  }) => void,
   signal: AbortSignal,
 ): Promise<void> {
   const headers = new Headers()

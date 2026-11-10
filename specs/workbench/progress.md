@@ -2,7 +2,7 @@
 
 ## 当前任务
 
-**T8 收尾** — 状态：未开始（下一步）
+**T13 已交付（大文件阅读 + 虚拟滚动）；下一步待评估项见 tasks.md**
 
 ## 记录
 
@@ -219,3 +219,32 @@
   - 选中一段文字时右键不拦截，保留浏览器原生菜单（「复制选区」仍可用）
   - `.chat-bubble-wrap` 的 `min-width` 36 → 46px，覆盖「已复制」最宽状态（44px + right 2px）；失败文案从「复制失败」缩成「失败」避免按钮变宽出框（`aria-label` 仍是完整的「复制失败」）
   - 实测：无头 Edge 380px 面板下三处按钮均 `bottom/right` 间距 2px、完全落在气泡内；`tsc` + `vite build` 通过
+
+- 2026-11-09 **任意大小文件阅读 + 连点不卡**（用户反馈：>500KB 看不了、点频繁卡死）：
+  - 根因：`client.ts` 写死 500KB 预览上限；CodeView 把整份文本拆成逐行 DOM（15 万行 = 15 万节点）；文件树每次点选重排全部已展开节点；读文件走 opencode 上游 `/api/fs/read`（整份返回），快速连点会同时压住外壳 64 个并发名额和上游
+  - Rust：新增 `/local/fs/*`（list/stat/read/text/raw/hex）。`fsindex` 一次扫描建「行号 → 字节偏移」稀疏检查点（每 4096 行），`fsread` 按行窗口读取（UTF-8/UTF-16 BOM、CRLF 归一、单行 >256KB 截断、单窗口 ≤512KB），索引按 path+size+mtime 缓存 8 份；`resolve` 逐段拒绝 `..`/盘符，canonicalize 后做前缀校验；与 `/api` 同一道 `x-oc-token`
+  - 前端：CodeView 虚拟滚动（19px 行高、200 行一页、overscan 60、最多缓存 24 页、滚动 rAF 合并）；FileTree 拍平 + 行虚拟化（24px 行高、只渲染视口 ±10 行）；App 不再持有文件内容，读取只发生在 CodeView，避免整个 App 连同会话面板重渲染；新增 `api/localfs.ts`、`components/codeWindow.ts`
+  - 预览：Markdown ≤1MB 用 react-markdown，超过自动提示并留在源码；图片走 blob URL；二进制显示前 4KB hex
+  - dev：`scripts/dev-local-fs.mjs` 与 Rust 同语义，供浏览器实测；`vite.config.ts` 注册插件
+  - 实测（headless Edge 157 + CDP）：7.2MB/150,000 行 → 首屏 99 行、scrollHeight 2,850,032、滚到底 149,905–150,000 行正确；32.5MB/600,000 行 → 滚到底 599,905–600,000；1.1MB md → 预览提示 1MB 上限、源码 47,999 行分页；EXE 头 hex 以 `4d 5a 90 00` 开头；PNG blob 预览 naturalWidth 640；5 个文件连点 40 次 1044ms、最长帧间隔 21ms；展开 6 个目录后文件树只渲染 40 行、整页 DOM 230 节点
+  - 坑：① vite 默认 watch 会监听浏览器 profile（`.tmp/edge-profile`）导致 EBUSY 把 dev server 直接搞崩 → `.tmp` 进 `watch.ignored`，profile 移到 `%TEMP%`；② React StrictMode 下 FileTree 会挂载-卸载-重挂，实测脚本必须等行数连续 3 次一致再点；③ 旧 exe 正在运行（20:43 起）导致 `cargo build` 报 os error 5，改用独立 `CARGO_TARGET_DIR` 构建后优雅关闭窗口替换；④ Rust 源码里的双反斜杠字符字面量经工具链被吃成单反斜杠，改用 `char::from(92u8)`；⑤ 文件首次打开要整份扫描建索引（30MB ≈ 数百 ms），之后命中缓存；⑥ Markdown 预览仍整份渲染，所以设 1MB 上限，源码模式不受限
+  - 验证：cargo test 19 项（含 `/local` token 门禁、list/stat/read 往返、越界 400）、`tsc --noEmit`、`vite build`、dev 实测、生产 exe 启动日志
+
+- 2026-11-09 **集群审核修复（3 路并行：Rust / 前端 / 跨层文档）**：
+  - BLOCKER 修：分页不再假设「一页 200 行」——服务端 512KB 上限会让窗口少给行，前端改为按 `next` 续拉、按页覆盖区间找行，超长行（30×40KB）实测 30 行全部可读、`pendingRows=0`；FileTree 的 `load()` 从 setState 更新函数里移出（改由 effect 派发），StrictMode 下不再重复请求或永久「加载中」
+  - MAJOR 修：切文件时用 `statPath` 防止「路径是新的、内容是旧的」一帧；页请求全部带 AbortController，切文件即 abort；预览→源码滚动位置恢复；滚动高度超过 1600 万 px 时按比例压缩（>176 万行仍能滚到末行）；stat 失败加「重试」按钮；点同一文件用 `openSeq` 强制重读；`readLines` 超时 60s、索引过期时服务端回 `eof` 防止原地重试
+  - 工程拆分：Rust `fsapi`(294) / `fsutil`(89) / `fsdecode`(88) / `fsread`(244)；前端 `CodeView`(309) / `CodeSourceBody` / `CodeToolbar` / `codeCache` / `useFilePreview`；新增 7 项虚拟滚动纯函数测试（node --test）与 1 项「索引过期」回归测试（Rust 20 项）
+  - dev 中间件对齐：字节数按 UTF-8 计算、单行 256KB 截断、先校验路径段再 realpath、raw 流错误处理、text 对二进制 415、`/local` 无斜杠也拦截、参数非法回落；已知差异（无 token、UTF-16 >64MB）写进 docs §9
+  - 文档：T4 改成实际的只读查看（保存未做）、T13 完成信号改为「语义对齐」、product 单文件约束改为 ≤350、README 补 exe 被占用时的独立 target 目录做法
+  - 复测：7.2MB/150,000 行与 32.5MB/600,000 行滚到底正确；1.1MB md 预览降级、源码 47,999 行；PNG naturalWidth 640；EXE 头 hex；5 文件连点 40 次 maxGap 20ms；文件树展开 6 目录仅 40 行 / 230 DOM 节点
+
+- 2026-11-09 **跳转到行**：源码模式工具栏加行号输入 + 回车/按钮跳转；按「行号 × 行高 × 压缩比」算 scrollTop 并夹到可滚动范围，目标行落到视口顶部并高亮 1.2 秒；超大文件（滚动高度已压缩映射）同样适用
+
+- 2026-11-09 **跳转增强**：Ctrl+G / Cmd+G 聚焦并全选行号输入框；工具栏实时显示「第 N 行」（scrollTop × 压缩比反算，夹到 1..lineCount）；`lineAtScrollTop` 纯函数加单测。实测 60 万行文件跳 300,000 行后显示「第 300,000 行」、目标行高亮、Ctrl+G 聚焦为 true
+
+- 2026-11-09 **Ctrl+F 搜索 + 文件树刷新 + 键盘滚动**：
+  - Rust 新增 `/local/fs/search`（`fssearch.rs`）：复用分页窗口逐段扫描，大小写不敏感、`limit` 截断、`from` 续扫；核心 `find_matches` 有单测（默认上限/大小写敏感）
+  - 前端搜索条：Ctrl+F 打开并聚焦、250ms 防抖、abort 旧请求、`1/N+` 计数、上下跳回绕、命中片段 `<mark>` 高亮、当前命中行底色；Esc 关闭；切文件自动重搜
+  - 文件树：标题栏「刷新」+ 窗口 focus 自动重拉所有已加载目录（保留展开状态）
+  - 代码区可聚焦，Home/End 直达首尾
+  - 实测：32.5MB/60 万行搜 `end-599999` → `1/1`、1 处 `<mark>`、1 行命中底色，视口落在末行附近；连点 40 次仍 maxGap 22ms

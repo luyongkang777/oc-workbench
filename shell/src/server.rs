@@ -207,6 +207,18 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
         return;
     }
 
+    // 本地文件通道：直接读磁盘，不经过 opencode。同样要 token（页面从 IPC 拿）。
+    if path == "/local" || path.starts_with("/local/") {
+        if !token_allowed(&request, &ctx.token) {
+            let _ = request.respond(
+                Response::from_string("403 缺少或错误的 x-oc-token").with_status_code(403),
+            );
+            return;
+        }
+        crate::fsapi::handle(request, &path, &url);
+        return;
+    }
+
     if path == "/api" || path.starts_with("/api/") {
         // 先 Host 再 token，任一失败都不转发。
         if !token_allowed(&request, &ctx.token) {

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { localFsPlugin } from './scripts/dev-local-fs.mjs'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 
@@ -57,13 +58,13 @@ export default defineConfig(async ({ command, isPreview }) => {
   const auth: Auth = shouldPair ? await resolveAuth() : { cookie: '', target: FALLBACK_TARGET }
 
   return {
-    plugins: [react()],
+    plugins: [react(), localFsPlugin()],
     server: {
       port: 5273,
       strictPort: true,
       watch: {
         // Rust 外壳的编译产物被占用时，watcher 会 EBUSY 把 dev server 直接搞崩
-        ignored: ['**/shell/**', '**/target/**', '**/dist/**', '**/.git/**'],
+        ignored: ['**/shell/**', '**/target/**', '**/dist/**', '**/.git/**', '**/.tmp/**'],
       },
       proxy: {
         '/api': {

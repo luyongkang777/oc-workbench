@@ -143,6 +143,60 @@
   font-size: 11.5px;
 }
 
+/* 聊天/预览里的可点文件路径：长得像链接，点了在中间栏打开 */
+.md-file {
+  display: inline;
+  padding: 0 2px;
+  border: none;
+  border-radius: 2px;
+  background: rgba(122, 167, 214, 0.14);
+  color: #7fb3e0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.md-file:hover {
+  background: rgba(122, 167, 214, 0.26);
+  color: #a9d1f5;
+}
+
+.md-file:focus-visible {
+  outline: 1px solid #7aa7d6;
+  outline-offset: 1px;
+}
+
+/* 远程图片的「点击加载」按钮：沿用占位样式，但要是可点的按钮 */
+button.md-img {
+  font-family: inherit;
+  font-size: 11.5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+button.md-img:hover {
+  border-color: #7aa7d6;
+  color: #cfd8e3;
+}
+
+/* 真正渲染出来的图片（data URL / 本地截图） */
+.md-image {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  margin: 4px 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: #1e1e1e;
+}
+
 .md strong {
   color: #ffffff;
   font-weight: 600;

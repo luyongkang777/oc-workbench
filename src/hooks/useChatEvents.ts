@@ -36,7 +36,8 @@ export function useChatEvents(
       while (!stopped) {
         try {
           await subscribeEvents((event) => {
-            const sid = event.data?.sessionID
+            // form.created 的 data 是 { form: {...} }，sessionID 在 form 里
+            const sid = event.data?.sessionID ?? event.data?.form?.sessionID
             if (!sid || currentRef.current !== sid) return
             schedule(sid)
           }, controller.signal)

@@ -130,3 +130,33 @@
 3. `location` 不是字符串，是对象；写成 `location=F:\x` 会报 `Expected object | undefined at ["location"]`。
 4. 配对链接是一次性的，5 分钟过期；生成后立刻用。
 5. `opencode pair --url <别的端口>` 只是改显示地址，code 仍属于默认服务，拿去访问别的端口会 401 expired。
+
+## 9. 工作台本地文件通道 `/local/fs/*`（不是 opencode 的接口）
+
+外壳自己实现，直接读磁盘，解决 opencode `/api/fs/read` 只能整份返回、大文件卡死的问题。
+除 `Host` 外同样要求 `x-oc-token`（页面经 IPC 拿到），路径限定在 `root` 目录内。
+
+| 端点 | 参数 | 返回 |
+|---|---|---|
+| `GET /local/fs/list` | `root`, `path` | `{ entries: [{ path, type, size }] }`，目录在前、名字升序，目录 path 带尾部 `\` |
+| `GET /local/fs/stat` | `root`, `path` | `{ size, mtimeMs, lineCount, encoding, binary }`；首次会扫描建行索引 |
+| `GET /local/fs/read` | `root`, `path`, `start`, `lines` | `{ start, text, next, eof, lineCount }`，按整行返回、CRLF 归一，单窗口 ≤512KB |
+| `GET /local/fs/text` | `root`, `path`, `maxBytes` | `{ text }`；超过上限 413（给 Markdown 预览用） |
+| `GET /local/fs/raw` | `root`, `path` | 原始字节 + 按扩展名的 content-type（图片预览） |
+| `GET /local/fs/hex` | `root`, `path`, `offset`, `bytes` | `{ text }` 十六进制转储，默认 4KB、上限 64KB |
+| `GET /local/fs/search` | `root`, `path`, `q`, `limit`, `from`, `case` | `{ matches: [{ line, text }], truncated, lineCount }`；整文件按行搜索，0 基行号，默认最多 200 条 |
+
+- 编码：UTF-8（含 BOM）、UTF-16LE/BE（按 BOM）；UTF-8 前 8KB 有 NUL 判为二进制。
+- 行号是 0 基；`lineCount` 按实际文本行数算（末尾有换行时不额外多算一行）。
+- 索引缓存 8 份，按 path + size + mtime 失效；命中后读任意页都是 seek + 最多跳 4096 行。
+- **返回行数可能少于 `lines`**：单窗口字节上限 512KB、单行上限 256KB（超出截断）。
+  调用方必须按 `next` 续拉，不能假设「一页 200 行」；`eof` 为真时不要再往后补页。
+- `start` 超过实际行数时返回空窗口 + `eof`，且 `next >= start`。
+
+### dev 中间件（scripts/dev-local-fs.mjs）的已知差异
+
+- 没有 `x-oc-token` 校验（只监听 loopback、只用于开发）；生产 exe 一定校验。
+- UTF-16 文件 >64MB 直接 413；生产 Rust 版本仍可分页。
+- 页读是「Node 解码后按行切」，字节边界与 Rust 的 `BufReader` 窗口可能不同，
+  但 `{text,next,eof,lineCount}` 的续拉语义一致。
+- 排序/目录 size 已与 Rust 对齐（目录 size=null、名字小写码点比较）。
