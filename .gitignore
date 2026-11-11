@@ -1,5 +1,7 @@
 node_modules/
 dist/
 shell/target/
+shell/target-rel/
 *.log
 .DS_Store
+.tmp/

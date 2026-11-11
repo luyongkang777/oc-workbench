@@ -29,12 +29,14 @@
 - 验收：展开 `F:\opencode\workbench` 能看到真实文件；点文件能拿到路径
 - 完成信号：树可展开两级以上
 
-## T4 ✅ 编辑器（仅只读查看，未接 Monaco / 保存）
+## T4 ✅ 编辑器（查看 + 编辑保存）
 
-- 范围：`src/components/Editor.tsx` `src/api/client.ts`
-- 内容：Monaco 打开文件（`/api/fs/read`），Ctrl+S 保存（`/api/experimental/fs/write`）
-- 验收：改一行保存后 `Get-Content` 能看到新内容
-- 完成信号：保存成功提示
+- 范围：`src/components/CodeView.tsx` `src/components/CodeEditor.tsx` `src/api/client.ts` `shell/src/fsapi.rs`
+- 内容：只读查看（行号 + 虚拟滚动 + 分页读取）；2026-11-10 补上编辑：`PUT /local/fs/write` 原子写回，
+  ≤2MB，双击进入；编码支持 UTF-8 / UTF-16LE / UTF-16BE / GBK，保存时可用工具栏下拉换编码；
+  Ctrl+S 保存、mtime 冲突 409，保留 BOM / CRLF；未接 Monaco
+- 验收：点文件能看到带行号的源码；大文件按页加载、滚动不卡；改一行 Ctrl+S 后磁盘内容更新、切走前会提示未保存
+- 完成信号：编辑闭环（保存单列已收敛）
 
 ## T5 ✅ 会话面板
 
@@ -92,9 +94,67 @@
 - 验收：切换模型后会话 model 字段变化；耗时任务生成中出现「停止」，点击后 `outcome: interrupted`
 - 完成信号：dev 实测通过（2026-11-09），68 个模型可筛选
 
+## T13 ✅ 任意大小文件阅读 + 行虚拟化
+
+- 范围：`shell/src/fsapi.rs` `fsindex.rs` `fsread.rs` `server.rs`、`src/api/localfs.ts`、`src/components/CodeView.tsx` `FileTree.tsx` `codeWindow.ts`、`src/App.tsx`、`vite.config.ts`、`scripts/dev-local-fs.mjs`
+- 内容：新增 `/local/fs/*` 本地直读通道（list/stat/read/text/raw/hex，token 门禁与 `/api` 一致、路径限定在 root 内）；一次扫描建「行号 → 字节偏移」稀疏检查点（每 4096 行），分页窗口按行读取；CodeView 改为虚拟滚动（只渲染视口 + 60 行 overscan，按 200 行一页按需加载、最多缓存 24 页）；FileTree 扁平化 + 行虚拟化；Markdown 预览（≤1MB）、图片 blob 预览、二进制 hex 转储；去掉 500KB 预览上限
+- 验收：7.2MB/15 万行与 32.5MB/60 万行文件能打开并滚到末行；1.1MB Markdown 预览降级、源码可分页；PNG 预览、EXE 头 hex；5 个文件连续点 40 次无长掉帧；展开 6 个目录后文件树 DOM 行数仍只有 40
+- 完成信号：dev（headless Edge + CDP）实测通过（2026-11-09）；dev 中间件与 Rust 语义对齐但存在已知差异（见 docs/api-notes.md §9）；Rust 19 项单测 + 前端 7 项纯函数测试全绿
+
+## T14 ✅ 聊天图片/文件附件
+
+- 范围：`src/components/attachments.ts`、`ChatInput.tsx`、`Chat.tsx`、`MessageList.tsx`、`MarkdownText.tsx`、`src/api/chat.ts`、`src/styles/editor.css`、`markdown.css`
+- 内容：输入框支持选择/粘贴/拖入图片（缩略图可删），发送时把 data URL 放进 `POST /api/session/<id>/prompt` 的 `files`；消息里的附件按 `files[].data + mime` 还原成 blob 缩略图，点击全屏放大；agent 回复里的 `data:` 图片直接渲染、工作区内截图路径走 `/local/fs/raw`，远程图片点「点击加载」才请求
+- 验收：带图 prompt 返回 200 且 `GET message` 回 `files[{name,mime,data}]`；页面 DOM 出现 `chat-file-img > img[src^=blob:]`；单张 ≤6MB、总量 data URL ≤9MB（外壳 body 上限 10MB），>1.2MB 位图先压 JPEG
+- 完成信号：真实 opencode 服务 + headless Edge 实测通过（2026-11-10），44 项前端单测全绿
+
+## T15 ✅ 消息里的文件路径可点击
+
+- 范围：`src/components/fileLinks.ts`、`MarkdownText.tsx`、`MessageList.tsx`、`Chat.tsx`、`CodeView.tsx`、`src/App.tsx`、`src/styles/markdown.css`、`tools.css`
+- 内容：反引号、Markdown 链接、正文裸路径都识别成可点按钮（中文正文边界、尾部标点、URL 排除都处理）；支持 `:12` / `:12:5` / `#L12` 行号后缀；点击后在中间栏打开并滚到该行（Markdown 预览态自动切源码、闪行高亮）；工具卡片里的文件路径同样可点
+- 验收：点 `src/components/Chat.tsx:300` → `.editor-path` 变 `src/components/Chat.tsx`、`scrollTop=5681`、第 300 行 `.code-line.flash`
+- 完成信号：headless Edge + CDP 实测通过（2026-11-10，脚本 `scripts/verify-filelinks.mjs`）；路径识别 6 项 + 附件 9 项单测全绿
+
+## T16 ✅ 审查面板压力测试与修复
+
+- 范围：`src/components/ReviewPanel.tsx`、`diffWindow.ts`、`src/api/vcs.ts`、`src/styles/diff.css`、`scripts/stress-review.mjs`、`scripts/verify-review.mjs`
+- 内容：diff 行做虚拟滚动（固定行高 18px，只渲染视口 ±40 行）；文件列表做虚拟滚动（固定 26px）；`fetchStatus/fetchDiff` 支持 AbortSignal，连点刷新先掐旧请求；patch 按 `
+?
+` 切分去掉 Windows 的 `
+`；加载中补「读取改动中…」
+- 验收：401 文件 / 5.4MB diff / 单文件 60005 行的夹具（`.tmp/stress-repo`）上：首帧 3676ms→927ms、DOM 62492→378、堆 60MB→27.6MB；滚到中间看到 huge_9955、滚到底看到 huge_29999（位置无错位）；滚动 16ms/帧；列表滚到底出现 module_399
+- 完成信号：headless Edge + CDP 实测（2026-11-10）；正常仓库（67 个改动文件）复测 681ms、切换文件正常；49 项前端单测全绿
+
+## T17 ✅ 高优先级评审后的修复
+
+- 范围：`src/hooks/useFilePreview.ts`、`src/components/Chat.tsx`、`attachments.ts`、`src/App.tsx`、`scripts/{verify-fixes,verify-attach}.mjs`；swarm `lib/tower.mjs`、`lib/tower-run.mjs`、`stress-review.mjs`
+- 内容：
+  1. ≥1MB Markdown 默认停在源码分页（等 stat 到达再判定；手动切过视图后自动规则不再抢）
+  2. 附件只发 `uri`，不再重复带 `source`（同一 base64 发两遍时 4MB+ 非图片附件在打包版必被 413）
+  3. 图片压缩提前到体积校验之前（8MB 截图压到 2.1MB 能加入），压缩前挡 32MB 原始文件
+  4. 停在审查视图时点聊天路径 / 文件树 → 自动切回代码视图
+  5. tower 评审结论改用一次性 nonce（`VERDICT-<nonce>`），互相矛盾的结论按不通过处理
+  6. `clampDiffDetailed` 多文件按「前 K 个文件」截断，500 文件也守住 1.05 倍预算
+  7. 抽出 `reviewOutcome` 纯函数，补 review→state→merge 的接线测试
+- 验收：2.3MB `.md` 打开是 97 行源码（`preview=false`、无关闭提示）；8.16MB PNG 压到 2.1MB 后加入附件；审查视图点 `README.md` 后 `reviewActive=false`、编辑器显示该文件；swarm 27+27+19+22 全过，workbench 49 项全过
+- 完成信号：dev（headless Edge + CDP）实测 2026-11-10（`scripts/verify-fixes.mjs`、`scripts/verify-attach.mjs`）
+
+## T18 ✅ 代码补全（本地词法 + 同目录符号）
+
+- 范围：`src/components/completion.ts`（新）、`src/components/CodeEditor.tsx`、`src/styles/editor.css`、`scripts/completion.test.mjs`（新）
+- 内容：编辑态输入时弹补全浮层，候选 = 当前文件符号（函数/类/变量/类型/import）+ 同目录文件符号
+  + 语言关键字 + import 路径；`Tab`/`Enter` 接受、`↑↓`/`PgUp/PgDn` 选择、`Esc` 只关浮层不退出编辑、
+  `Ctrl+Space` 手动叫出；`=`/`.` 触发成员补全；字符串里 `./` 触发路径补全；滚动即关闭，避免位置漂移
+- 实现要点：符号每 200ms 去抖重算（>400KB 只在挂载时算）、同目录索引限 40 个文件 / 单个 128KB；
+  浮层定位抽成 `popupPlacement` 纯函数（行号列 68 + 内边距 12 + 列×字符宽，靠右夹紧、靠底翻到上方）
+- 验收：在真实工作台里打开一个 `.cs` 文件，输入 `con` 弹出 `const/continue` 与同目录符号，`Tab` 后该行变成 `const`；
+  输入 `loadConfig.` 弹成员候选且本文件符号排第一；`Esc` 关浮层后编辑器仍在、再 `Esc` 退出编辑
+- 完成信号：`tsc --noEmit` + `npm test` 86 项全过（新增 completion 24 项）；`dist` 与 release exe 重建并重启
+  实测 2026-11-11（WebView2 CDP 驱动真实界面，见 `.tmp/cdp-check.mjs` 的验证输出）
+
 ## 待评估
 
-- LSP 接入（Monaco + typescript-language-server）
+- LSP 接入（Monaco + typescript-language-server）：目前是本地词法补全，LSP 只用来补「类型级成员/签名」
 - 内置浏览器 / 图片预览
 - 多窗口（每个会话一个窗口）
 - 交互式终端（需要 x-opencode-ticket + WebSocket 代理）

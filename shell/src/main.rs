@@ -13,6 +13,13 @@
 
 mod auth;
 mod body;
+mod fsapi;
+mod fsdecode;
+mod fsindex;
+mod fsread;
+mod fssearch;
+mod fsutil;
+mod winenc;
 mod server;
 mod proxy;
 mod static_files;

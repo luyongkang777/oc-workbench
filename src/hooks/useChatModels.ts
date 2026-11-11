@@ -78,5 +78,21 @@ export function useChatModels(root: string, connected: boolean) {
     [],
   )
 
-  return { models, loading, error, reload: load, model, syncSession, pick }
+  /**
+   * 选思考强度：variant 为空 = 用该模型默认档位。
+   * 先请求成功再改界面，失败抛给调用方。
+   */
+  const pickVariant = useCallback(
+    async (next: ModelInfo, sessionID: string | null, variant?: string) => {
+      const key: ModelRef = variant
+        ? { id: next.id, providerID: next.providerID, variant }
+        : { id: next.id, providerID: next.providerID }
+      if (sessionID) await switchModel(sessionID, key)
+      setModel(key)
+      return key
+    },
+    [],
+  )
+
+  return { models, loading, error, reload: load, model, syncSession, pick, pickVariant }
 }

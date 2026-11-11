@@ -65,12 +65,14 @@
 /* ---------- 文件树 ---------- */
 .tree {
   flex: 1;
-  overflow: auto;
-  padding: 6px 0 12px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .tree-root {
-  padding: 2px 12px 8px;
+  flex: 0 0 auto;
+  padding: 4px 12px 6px;
   color: #8a8a8a;
   font-size: 11px;
   white-space: nowrap;
@@ -80,7 +82,22 @@
   text-align: left;
 }
 
-.tree-item {
+/* 目录树行虚拟化：只有这一层滚动，行全部绝对定位 */
+.tree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0 12px;
+}
+
+.tree-rows {
+  position: relative;
+}
+
+.tree-row {
+  position: absolute;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -93,11 +110,11 @@
   color: #cfcfcf;
 }
 
-.tree-item:hover {
+.tree-row:hover {
   background: #2a2d2e;
 }
 
-.tree-item.active {
+.tree-row.active {
   background: #094771;
   color: #ffffff;
 }
@@ -120,20 +137,16 @@
   text-overflow: ellipsis;
 }
 
-.tree-empty {
+/* 加载中 / 空目录 / 加载失败的状态行 */
+.tree-status {
   color: #7a7a7a;
   font-size: 12px;
-  padding: 4px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.tree-error {
+.tree-row:has(.tree-retry) .tree-status {
   color: #f14c4c;
-  font-size: 12px;
-  padding: 6px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  word-break: break-all;
 }
 
 .tree-retry {
@@ -210,6 +223,22 @@
   font-size: 11px;
   flex: 0 0 auto;
 }
+.chat-session-more {
+  width: 100%;
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid #333;
+  color: #7a9cc6;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-session-more:hover {
+  background: #2a2d2e;
+  color: #9fc3ef;
+}
 
 /* ---------- 消息 ---------- */
 .chat-msg {
@@ -222,14 +251,88 @@
   align-items: flex-end;
 }
 
-.chat-bubble {
+.chat-bubble-wrap {
+  position: relative;
   max-width: 92%;
+  /* 至少容得下右下角按钮最宽的状态（「已复制」44px + 右边距 2px），否则短消息上按钮会出框 */
+  min-width: 46px;
+}
+
+.chat-bubble {
+  max-width: 100%;
   padding: 6px 10px;
   border-radius: 4px;
   font-size: 12.5px;
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.chat-copy {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  padding: 1px 6px;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  background: rgba(37, 37, 38, 0.92);
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+  /* 默认不可见也不可点，避免浮层常驻压住气泡文字、吞掉拖选 */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.chat-bubble-wrap:hover .chat-copy,
+.chat-copy:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chat-copy.done {
+  color: #4ec9b0;
+  border-color: #2f5f55;
+}
+
+.chat-copy.fail {
+  color: #f48771;
+  border-color: #7a2f2f;
+}
+
+/* ---------- 气泡右键菜单 ---------- */
+.chat-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 136px;
+  padding: 4px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+
+.chat-menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-menu-item:hover {
+  background: #094771;
+  color: #ffffff;
 }
 
 .chat-msg.user .chat-bubble {
@@ -240,6 +343,310 @@
 .chat-msg.assistant .chat-bubble {
   background: #2a2a2a;
   color: #d4d4d4;
+}
+
+/* ---------- 思考过程（reasoning 段） ---------- */
+.chat-reasoning {
+  max-width: 92%;
+  border-left: 3px solid #4b3f72;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.chat-reasoning.active {
+  border-left-color: #8a7bd8;
+}
+
+.chat-reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  background: transparent;
+  border: none;
+  color: #a0a0a0;
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-reasoning-head:hover {
+  color: #d4d4d4;
+}
+
+.chat-reasoning.active .chat-reasoning-head {
+  color: #c9bdff;
+}
+
+.chat-reasoning.active .chat-reasoning-label {
+  animation: reasoning-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes reasoning-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.chat-reasoning-caret {
+  flex: 0 0 auto;
+  width: 10px;
+  color: #7a7a7a;
+  font-size: 10px;
+}
+
+.chat-reasoning-label {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-reasoning-hint {
+  margin-left: auto;
+  color: #6e6e6e;
+  font-size: 10.5px;
+}
+
+.chat-reasoning-body {
+  max-height: 260px;
+  overflow: auto;
+  padding: 4px 10px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  color: #9a9a9a;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-reasoning-wait {
+  color: #6e6e6e;
+}
+
+/* 首字还没到时的「模型思考中」提示 */
+.chat-waiting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: #8a7bd8;
+  font-size: 11.5px;
+}
+
+.chat-waiting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #8a7bd8;
+  animation: reasoning-pulse 1s ease-in-out infinite;
+}
+
+/* ---------- 选择模式：question 表单 ---------- */
+.chat-forms {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  overflow: auto;
+  padding: 6px 8px 0;
+  border-top: 1px solid #2f2f2f;
+  background: #1e1e1e;
+}
+
+.chat-form {
+  padding: 6px 8px 7px;
+  border: 1px solid #4a3f2a;
+  border-left: 3px solid #d7a54a;
+  border-radius: 4px;
+  background: #26231d;
+}
+
+.chat-form-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.chat-form-badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #d7a54a;
+  color: #1e1e1e;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.chat-form-title {
+  color: #e0c68a;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-form-field {
+  padding: 5px 0 3px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.06);
+}
+
+.chat-form-field:first-of-type {
+  border-top: none;
+}
+
+.chat-form-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.chat-form-label-text {
+  color: #e6e6e6;
+  font-size: 12px;
+}
+
+.chat-form-desc {
+  color: #8a8a8a;
+  font-size: 11px;
+}
+
+.chat-form-options {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chat-form-options.inline {
+  flex-direction: row;
+}
+
+.chat-form-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 7px;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  background: #222;
+  color: #c8c8c8;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-form-option:hover {
+  border-color: #8a6d33;
+  color: #ffffff;
+}
+
+.chat-form-option.selected {
+  border-color: #d7a54a;
+  background: #3a3020;
+  color: #ffe6b0;
+}
+
+.chat-form-option.compact {
+  width: auto;
+  padding: 3px 10px;
+}
+
+.chat-form-option-mark {
+  flex: 0 0 12px;
+  width: 12px;
+  color: #d7a54a;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.chat-form-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.chat-form-option-label {
+  line-height: 16px;
+}
+
+.chat-form-option-desc {
+  color: #8a8a8a;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.chat-form-option.selected .chat-form-option-desc {
+  color: #bfa980;
+}
+
+.chat-form-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 4px 7px;
+  background: #1b1b1b;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  color: #e0e0e0;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.chat-form-input:focus {
+  border-color: #d7a54a;
+}
+
+.chat-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.chat-form-submit {
+  padding: 3px 12px;
+  border: 1px solid #8a6d33;
+  border-radius: 3px;
+  background: #d7a54a;
+  color: #1e1e1e;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-form-submit:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chat-form-skip {
+  padding: 3px 9px;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  background: transparent;
+  color: #9a9a9a;
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.chat-form-skip:hover {
+  color: #dddddd;
+  border-color: #666;
 }
 
 .chat-tool {
@@ -473,6 +880,92 @@
   white-space: nowrap;
 }
 
+/* ---------- 思考强度（variant） ---------- */
+.model-toggle-variant {
+  color: #9a8fe0;
+}
+
+.model-variant-mark {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  color: #8a7bd8;
+  font-size: 9.5px;
+  line-height: 14px;
+}
+
+.model-variants {
+  padding-bottom: 4px;
+}
+
+.model-back {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: #1e1e1e;
+  border: none;
+  border-bottom: 1px solid #333;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-back:hover {
+  background: #2a2d2e;
+}
+
+.model-variant-title {
+  padding: 6px 10px 2px;
+  color: #7a7a7a;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+}
+
+.model-variant-list {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.model-variant-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-variant-item:hover {
+  background: #2a2d2e;
+}
+
+.model-variant-item.active {
+  background: #094771;
+  color: #ffffff;
+}
+
+.model-variant-id {
+  flex: 0 0 auto;
+  color: #7a7a7a;
+  font-size: 10.5px;
+}
+
+.model-variant-item.active .model-variant-id {
+  color: #cfe3ff;
+}
+
 .model-retry {
   display: block;
   width: 100%;
@@ -483,4 +976,161 @@
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+}
+
+/* 侧栏标题右侧的一组操作 */
+.pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- 文件树右键菜单 ---------- */
+.tree-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.tree-menu {
+  position: fixed;
+  min-width: 140px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.tree-menu button {
+  height: 26px;
+  padding: 0 10px;
+  text-align: left;
+  font-size: 12px;
+  color: #cfcfcf;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tree-menu button:hover {
+  background: #094771;
+  color: #ffffff;
+}
+
+.tree-menu button.danger {
+  color: #f48771;
+}
+
+.tree-menu button.danger:hover {
+  background: #5a1d1d;
+  color: #ffffff;
+}
+
+.tree-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: #3c3c3c;
+}
+
+/* ---------- 新建 / 重命名对话框 ---------- */
+.tree-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 90px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.tree-dialog {
+  width: 320px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.tree-dialog-title {
+  font-size: 13px;
+  color: #d4d4d4;
+}
+
+.tree-dialog-name,
+.tree-dialog-kind select {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #d4d4d4;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  outline: none;
+}
+
+.tree-dialog-name:focus {
+  border-color: #0e639c;
+}
+
+.tree-dialog-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #9d9d9d;
+}
+
+.tree-dialog-kind select {
+  flex: 1 1 auto;
+}
+
+.tree-dialog-error {
+  font-size: 12px;
+  color: #f48771;
+}
+
+.tree-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tree-dialog-btn {
+  height: 26px;
+  padding: 0 14px;
+  font-size: 12px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tree-dialog-btn:hover:not(:disabled) {
+  background: #37373d;
+  color: #ffffff;
+}
+
+.tree-dialog-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tree-dialog-btn.primary {
+  background: #0e639c;
+  border-color: #1177bb;
+  color: #ffffff;
+}
+
+.tree-dialog-btn.primary:hover:not(:disabled) {
+  background: #1177bb;
 }

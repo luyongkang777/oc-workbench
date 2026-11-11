@@ -82,6 +82,27 @@
   font-size: 10px;
 }
 
+/* 工具详情是文件路径时：保留等宽字体，但做成可点的按钮（重置 button 默认外观） */
+.chat-tool-file {
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.chat-tool-file:hover {
+  color: #9fc3ef;
+}
+
+.chat-tool-file:focus-visible {
+  outline: 1px solid #7aa7d6;
+  outline-offset: 1px;
+}
+
 .chat-tool-row.done .chat-tool-status {
   color: #4ec9b0;
 }

@@ -78,7 +78,11 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 5px 10px;
+  box-sizing: border-box;
+  /* 固定高度：ReviewPanel 的列表虚拟化按 26px 算位移（ITEM_HEIGHT） */
+  height: 26px;
+  line-height: 16px;
+  padding: 0 10px;
   background: transparent;
   border: none;
   color: #cccccc;
@@ -164,11 +168,16 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  /* 上下留一点呼吸：padding 在滚动容器上，不影响虚拟滚动的行高计算 */
+  padding: 6px 0 12px;
 }
 
+/* 虚拟滚动的定位容器：高度 = 行数 * 18px，行块靠 transform 位移。
+   这里的 line-height 必须和 components/diffWindow.ts 的 DIFF_LINE_HEIGHT 一致。 */
 .diff-body {
+  position: relative;
   margin: 0;
-  padding: 6px 0 24px;
+  padding: 0;
   font-family: 'Cascadia Mono', Consolas, monospace;
   font-size: 12px;
   line-height: 18px;

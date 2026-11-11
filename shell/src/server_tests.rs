@@ -239,3 +239,72 @@ fn large_static_file_keeps_content_length() {
         "静态文件不应改 chunked"
     );
 }
+
+/// `/local/*` 和 `/api/*` 用同一道 token 门禁：没 token 直接 403，不能读盘。
+#[test]
+fn local_api_requires_token() {
+    let token = "unit-test-local-token";
+    let port = start_test_server(None, token);
+    let host = format!("127.0.0.1:{port}");
+    let resp = raw_get(port, &host, "/local/fs/stat?root=C%3A%5C&path=x");
+    assert!(
+        resp.starts_with("HTTP/1.1 403"),
+        "无 token 必须 403：{}",
+        &resp[..resp.len().min(200)]
+    );
+}
+
+/// 带 token 走一遍真实的 list/stat/read：验证路由、参数解析与 JSON 形状。
+#[test]
+fn local_api_list_and_read_roundtrip() {
+    let token = "unit-test-local-token";
+    let dir = std::env::temp_dir().join(format!("ocwb-route-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+    std::fs::write(dir.join("hello.txt"), b"first\nsecond\n").expect("写文件");
+
+    let port = start_test_server(None, token);
+    let host = format!("127.0.0.1:{port}");
+    let slash = char::from(92u8);
+    let root = dir.to_string_lossy().replace(slash, "%5C").replace(':', "%3A");
+    let headers = [("x-oc-token", token)];
+
+    let list = raw_request(
+        port,
+        "GET",
+        &host,
+        &format!("/local/fs/list?root={root}&path="),
+        &headers,
+    );
+    assert!(list.starts_with("HTTP/1.1 200"), "list 应 200：{}", &list[..list.len().min(200)]);
+    assert!(list.contains("hello.txt"), "list 里应有 hello.txt");
+
+    let stat = raw_request(
+        port,
+        "GET",
+        &host,
+        &format!("/local/fs/stat?root={root}&path=hello.txt"),
+        &headers,
+    );
+    assert!(stat.contains("\"lineCount\":2"), "stat 行数应为 2：{}", &stat[..stat.len().min(300)]);
+
+    let read = raw_request(
+        port,
+        "GET",
+        &host,
+        &format!("/local/fs/read?root={root}&path=hello.txt&start=1&lines=1"),
+        &headers,
+    );
+    assert!(read.contains("second"), "read 应返回第二行：{}", &read[..read.len().min(300)]);
+
+    // 越界路径必须 400，且不能真的读到 C:\ 上的东西
+    let escape = raw_request(
+        port,
+        "GET",
+        &host,
+        &format!("/local/fs/read?root={root}&path=..%5C%5Cwindows%5Cwin.ini&start=0&lines=1"),
+        &headers,
+    );
+    assert!(escape.starts_with("HTTP/1.1 400"), "越界必须 400：{}", &escape[..escape.len().min(200)]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

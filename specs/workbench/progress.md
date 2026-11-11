@@ -2,7 +2,7 @@
 
 ## 当前任务
 
-**T8 收尾** — 状态：未开始（下一步）
+**T13 已交付（大文件阅读 + 虚拟滚动）；下一步待评估项见 tasks.md**
 
 ## 记录
 
@@ -189,3 +189,124 @@
 ## 阻塞
 
 （无）
+
+- 2026-11-09 **会话下拉只列工作台会话**（用户反馈：同目录里 CLI/审核脚本的会话全列出来，不需要）：
+  - `chat.ts`：建会话时带 `metadata: { source: 'oc-workbench' }`；新增 `isWorkbenchSession`（排除终端会话）、`isWorkbenchTerminal`
+  - `terminal.ts`：终端会话带 `metadata: { source, kind: 'terminal' }`，既不算用户会话，也不占「外部会话」计数
+  - `Chat.tsx`：下拉默认只列工作台会话（当前会话即使是外部会话也保留）；默认选中优先工作台会话，回退时跳过终端会话
+  - `ChatHeader.tsx`：下拉底部「显示全部会话（另有 N 条外部会话）」/「只显示工作台会话」切换，N 为 0 时不出按钮
+  - 实测：workbench 目录 28 条 → 默认 2 条；「显示全部」多出 26 条；终端会话不出现在列表也不计入 N
+  - 数据迁移：按标题「工作台会话」「工作台终端」给历史会话补 metadata（`PATCH /api/session/<id>`，服务端支持并保留，实测切模型/发消息不会冲掉）
+
+- 2026-11-09 **消息气泡加复制按钮**（用户反馈）：
+  - `MessageList.tsx`：新增 `copyText`（Clipboard API，失败退回 `execCommand`）和 `CopyButton`（成功显示「已复制」1.2 秒、失败显示「复制失败」，定时器卸载时清理）
+  - 用户提问复制原文；助手回复复制 Markdown 原文（`texts.join('\\n\\n')`，和渲染内容一致）
+  - `panels.css`：气泡外套 `.chat-bubble-wrap`（定位按钮），`.chat-copy` 常显 0.42 透明度、hover/focus 变亮
+  - 实测：点用户气泡复制到剪贴板 38412 字符（完整 review 提示词）；点助手气泡 2956 字符（Markdown 原文），按钮显示「已复制」
+
+- 2026-11-09 **复制按钮审核修复**（集群审核 1 MAJOR + 9 MINOR）：
+  - MAJOR：`.chat-copy` 常显 0.42 透明度且 absolute 压在气泡首行上，用户消息首行结尾约 2 个汉字被半透明块常驻覆盖（对比度约 2.8:1）。改为 `opacity:0` + `pointer-events:none`，只在 `:hover` / `:focus-visible` 时恢复可见可点，默认态不遮挡也不吃拖选
+  - 极短消息（单字）按钮比气泡宽、溢出到气泡外：`.chat-bubble-wrap` 加 `min-width:36px`（按钮 34px + right 2px）
+  - `done` 状态不随 `text` 变化复位：流式输出时「已复制」会贴到新增长的内容上 → 加 `useEffect(() => setState('idle'), [text])`
+  - timer 在 `await` 之后才建立，卸载窗口内会留下悬挂 timer → 加 `alive` ref，await 回来先判、timer 回调再判
+  - textarea 兜底清理移到 `finally`（异常时不再把隐藏节点留在 body 上），并 `readOnly` + 复制结束归还焦点
+  - 按钮补 `aria-label`（随状态切换，读屏能播「已复制 / 复制失败」）；`.chat-copy` 加 `font-family:inherit`、`white-space:nowrap`；`.done` 成功色对齐项目既有 `#4ec9b0`
+  - 验证：`tsc --noEmit` 通过、`vite build` 通过；无头 Edge 实测 380px 面板下默认态 `opacity:0 / pointer-events:none`，助手首行零重叠，单字气泡溢出 0px
+
+- 2026-11-09 **复制按钮移到右下角 + 右键菜单**（用户反馈：别在最顶上）：
+  - `.chat-copy` 从 `top:2px` 改为 `bottom:2px`，按钮落到底部右下角，不再压首行；残留遮挡只剩最后一行末尾，且 hover 才出现
+  - 气泡支持右键：`onContextMenu` 弹 `.chat-menu`（fixed 定位 + 视口边界收拢），菜单项「复制这条消息」，复制后短暂显示「已复制」再关闭；点空白 / 滚动 / Esc 关闭
+  - 选中一段文字时右键不拦截，保留浏览器原生菜单（「复制选区」仍可用）
+  - `.chat-bubble-wrap` 的 `min-width` 36 → 46px，覆盖「已复制」最宽状态（44px + right 2px）；失败文案从「复制失败」缩成「失败」避免按钮变宽出框（`aria-label` 仍是完整的「复制失败」）
+  - 实测：无头 Edge 380px 面板下三处按钮均 `bottom/right` 间距 2px、完全落在气泡内；`tsc` + `vite build` 通过
+
+- 2026-11-09 **任意大小文件阅读 + 连点不卡**（用户反馈：>500KB 看不了、点频繁卡死）：
+  - 根因：`client.ts` 写死 500KB 预览上限；CodeView 把整份文本拆成逐行 DOM（15 万行 = 15 万节点）；文件树每次点选重排全部已展开节点；读文件走 opencode 上游 `/api/fs/read`（整份返回），快速连点会同时压住外壳 64 个并发名额和上游
+  - Rust：新增 `/local/fs/*`（list/stat/read/text/raw/hex）。`fsindex` 一次扫描建「行号 → 字节偏移」稀疏检查点（每 4096 行），`fsread` 按行窗口读取（UTF-8/UTF-16 BOM、CRLF 归一、单行 >256KB 截断、单窗口 ≤512KB），索引按 path+size+mtime 缓存 8 份；`resolve` 逐段拒绝 `..`/盘符，canonicalize 后做前缀校验；与 `/api` 同一道 `x-oc-token`
+  - 前端：CodeView 虚拟滚动（19px 行高、200 行一页、overscan 60、最多缓存 24 页、滚动 rAF 合并）；FileTree 拍平 + 行虚拟化（24px 行高、只渲染视口 ±10 行）；App 不再持有文件内容，读取只发生在 CodeView，避免整个 App 连同会话面板重渲染；新增 `api/localfs.ts`、`components/codeWindow.ts`
+  - 预览：Markdown ≤1MB 用 react-markdown，超过自动提示并留在源码；图片走 blob URL；二进制显示前 4KB hex
+  - dev：`scripts/dev-local-fs.mjs` 与 Rust 同语义，供浏览器实测；`vite.config.ts` 注册插件
+  - 实测（headless Edge 157 + CDP）：7.2MB/150,000 行 → 首屏 99 行、scrollHeight 2,850,032、滚到底 149,905–150,000 行正确；32.5MB/600,000 行 → 滚到底 599,905–600,000；1.1MB md → 预览提示 1MB 上限、源码 47,999 行分页；EXE 头 hex 以 `4d 5a 90 00` 开头；PNG blob 预览 naturalWidth 640；5 个文件连点 40 次 1044ms、最长帧间隔 21ms；展开 6 个目录后文件树只渲染 40 行、整页 DOM 230 节点
+  - 坑：① vite 默认 watch 会监听浏览器 profile（`.tmp/edge-profile`）导致 EBUSY 把 dev server 直接搞崩 → `.tmp` 进 `watch.ignored`，profile 移到 `%TEMP%`；② React StrictMode 下 FileTree 会挂载-卸载-重挂，实测脚本必须等行数连续 3 次一致再点；③ 旧 exe 正在运行（20:43 起）导致 `cargo build` 报 os error 5，改用独立 `CARGO_TARGET_DIR` 构建后优雅关闭窗口替换；④ Rust 源码里的双反斜杠字符字面量经工具链被吃成单反斜杠，改用 `char::from(92u8)`；⑤ 文件首次打开要整份扫描建索引（30MB ≈ 数百 ms），之后命中缓存；⑥ Markdown 预览仍整份渲染，所以设 1MB 上限，源码模式不受限
+  - 验证：cargo test 19 项（含 `/local` token 门禁、list/stat/read 往返、越界 400）、`tsc --noEmit`、`vite build`、dev 实测、生产 exe 启动日志
+
+- 2026-11-09 **集群审核修复（3 路并行：Rust / 前端 / 跨层文档）**：
+  - BLOCKER 修：分页不再假设「一页 200 行」——服务端 512KB 上限会让窗口少给行，前端改为按 `next` 续拉、按页覆盖区间找行，超长行（30×40KB）实测 30 行全部可读、`pendingRows=0`；FileTree 的 `load()` 从 setState 更新函数里移出（改由 effect 派发），StrictMode 下不再重复请求或永久「加载中」
+  - MAJOR 修：切文件时用 `statPath` 防止「路径是新的、内容是旧的」一帧；页请求全部带 AbortController，切文件即 abort；预览→源码滚动位置恢复；滚动高度超过 1600 万 px 时按比例压缩（>176 万行仍能滚到末行）；stat 失败加「重试」按钮；点同一文件用 `openSeq` 强制重读；`readLines` 超时 60s、索引过期时服务端回 `eof` 防止原地重试
+  - 工程拆分：Rust `fsapi`(294) / `fsutil`(89) / `fsdecode`(88) / `fsread`(244)；前端 `CodeView`(309) / `CodeSourceBody` / `CodeToolbar` / `codeCache` / `useFilePreview`；新增 7 项虚拟滚动纯函数测试（node --test）与 1 项「索引过期」回归测试（Rust 20 项）
+  - dev 中间件对齐：字节数按 UTF-8 计算、单行 256KB 截断、先校验路径段再 realpath、raw 流错误处理、text 对二进制 415、`/local` 无斜杠也拦截、参数非法回落；已知差异（无 token、UTF-16 >64MB）写进 docs §9
+  - 文档：T4 改成实际的只读查看（保存未做）、T13 完成信号改为「语义对齐」、product 单文件约束改为 ≤350、README 补 exe 被占用时的独立 target 目录做法
+  - 复测：7.2MB/150,000 行与 32.5MB/600,000 行滚到底正确；1.1MB md 预览降级、源码 47,999 行；PNG naturalWidth 640；EXE 头 hex；5 文件连点 40 次 maxGap 20ms；文件树展开 6 目录仅 40 行 / 230 DOM 节点
+
+- 2026-11-09 **跳转到行**：源码模式工具栏加行号输入 + 回车/按钮跳转；按「行号 × 行高 × 压缩比」算 scrollTop 并夹到可滚动范围，目标行落到视口顶部并高亮 1.2 秒；超大文件（滚动高度已压缩映射）同样适用
+
+- 2026-11-09 **跳转增强**：Ctrl+G / Cmd+G 聚焦并全选行号输入框；工具栏实时显示「第 N 行」（scrollTop × 压缩比反算，夹到 1..lineCount）；`lineAtScrollTop` 纯函数加单测。实测 60 万行文件跳 300,000 行后显示「第 300,000 行」、目标行高亮、Ctrl+G 聚焦为 true
+
+- 2026-11-09 **Ctrl+F 搜索 + 文件树刷新 + 键盘滚动**：
+  - Rust 新增 `/local/fs/search`（`fssearch.rs`）：复用分页窗口逐段扫描，大小写不敏感、`limit` 截断、`from` 续扫；核心 `find_matches` 有单测（默认上限/大小写敏感）
+  - 前端搜索条：Ctrl+F 打开并聚焦、250ms 防抖、abort 旧请求、`1/N+` 计数、上下跳回绕、命中片段 `<mark>` 高亮、当前命中行底色；Esc 关闭；切文件自动重搜
+  - 文件树：标题栏「刷新」+ 窗口 focus 自动重拉所有已加载目录（保留展开状态）
+  - 代码区可聚焦，Home/End 直达首尾
+  - 实测：32.5MB/60 万行搜 `end-599999` → `1/1`、1 处 `<mark>`、1 行命中底色，视口落在末行附近；连点 40 次仍 maxGap 22ms
+
+- 2026-11-10 **源码编辑（保存）**：
+  - 后端两侧同语义：Rust `PUT /local/fs/write`（`fsapi::write`）与 dev 中间件 `write` 分支——请求体为纯 UTF-8 文本，
+    `expectedMtimeMs` 对不上回 409、二进制 / UTF-16 回 415、>8MB 回 413；写盘是「同目录临时文件 + rename」，
+    原文件 UTF-8 BOM 与 CRLF 原样保留；行数口径与行索引一致
+  - 前端：工具栏「编辑」（≤2MB、UTF-8 才可点，否则按钮禁用并给原因）；`CodeEditor` 用整份 textarea + 只渲染视口行号，
+    Tab 插 2 空格、Ctrl+S 保存、Esc 取消；保存后只更新 stat 并清页缓存，不打断滚动位置；成功提示 2 秒
+  - 冲突与丢稿防护：409 提示「已在磁盘上被修改」；`dirty` 上报到 App，切文件 / 切目录前 `confirm` 拦一次
+  - 测试：Rust 29 项（新增 encode/BOM/CRLF、冲突 409、二进制 415、原子写无残留、真实 HTTP PUT 往返与 405）；
+    node 55 项（新增 `scripts/editorWrite.test.mjs`：编码规则 + 真起 http 打 PUT 的落盘/409/415/路径穿越/405）
+  - 产物：`dist` + release exe 已重建，exe 内嵌最新 bundle；README / docs §9 / tasks 同步
+
+- 2026-11-11 **编辑改成双击进入 + 多编码（UTF-8 / UTF-16LE / UTF-16BE / GBK）**：
+  - 入口：去掉工具栏「编辑」按钮；代码区双击进入编辑、文件树双击「打开即编辑」（App 用 `autoEditSeq` 传递，
+    同一个信号只消费一次）；只读文件提示「只读」，可编辑提示「双击编辑」
+  - 编码识别：新增 `shell/src/winenc.rs`（kernel32 `MultiByteToWideChar/WideCharToMultiByte`，代码页 54936），
+    `fsindex` 增加 `Enc::Gbk`：无 BOM 时先试严格 UTF-8，不是合法 UTF-8 再试 GB18030，解得动就当 GBK；
+    行扫描/分页/整文/搜索全部按编码解码（GBK 换行字节同为 0x0A，字节层切行安全）
+  - 保存：`PUT /local/fs/write` 增加 `encoding`（utf8 / utf16le / utf16be / gbk）；不传沿用原编码，
+    换编码保存时不沿用旧 BOM、UTF-16 自动补 BOM、CRLF 按原文件风格保留；响应回 `{ size, mtimeMs, lineCount, encoding }`
+  - 前端：编辑态工具栏加「保存编码」下拉（默认文件原编码）；保存后 stat 的 encoding 同步，提示显示「已保存 · N 行 · GBK」
+  - 测试：Rust 31 项（新增 GBK 编解码/探测、UTF-8→UTF-16/UTF-8 改编码保存）；node 60 项
+    （新增 GBK 文件的 stat/text/保存往返、encoding=gbk / utf16le 改编码、UTF-16 字节序断言）
+  - 产物：dist + release exe 重建；README / docs §9 / tasks 同步
+
+- 2026-11-11 **「以指定编码重新打开」**：
+  - 后端：`fsindex::index_for_encoding(path, Option<Enc>)`——索引缓存键改成 `路径#编码`，
+    强制编码时只在 BOM 与它匹配时跳过 BOM；`stat` / `read` / `text` / `search` 全部接受 `encoding` 参数，
+    行索引按该编码重建（UTF-16 与单字节编码的行边界不同），不认识的名字回 400；
+    dev 中间件同语义（`scanIndex(filePath, forcedEnc)`、缓存键 `path#enc`、`invalidate()` 一次清所有变体）
+  - 前端：工具栏编码下拉改成常驻（二进制不显示）。非编辑态是「以该编码重新打开」（含「自动」＝回到探测），
+    切换后 stat / 分页读取 / Markdown 预览 / Ctrl+F 搜索全部按覆盖编码重读；编辑态同一控件就是「保存编码」
+  - 切文件 / 切目录自动回到「自动」，不会把上一条覆盖带到下一个文件
+  - 测试：Rust 32 项（新增「强制 GBK 覆盖探测、BOM 与强制编码一致时跳过 BOM」）；node 61 项
+    （新增「stat/text/read 带 encoding=gbk 重新解释、非法编码 400」）
+  - 产物：dist + release exe 重建并重启；README / docs §9 / tasks 同步
+
+- 2026-11-11 **文件树结构操作（新建 / 重命名 / 删除）**：
+  - 后端四个 POST 接口（Rust + dev 中间件同语义）：`mkdir` / `create` / `rename`（`to` 参数）/ `delete`；
+    目标可能不存在，所以走 `resolve_new`（父目录必须存在且 canonicalize 后仍在 root 内），
+    最后一段名字按 Windows 规则校验（非法字符、尾随空格/点、CON/PRN/COM1… 保留名、200 字上限）；
+    同名/目标被占用回 409，删根回 400，GET 打这些接口回 405
+  - 前端：文件树右键菜单（目录上可「新建文件/新建文件夹」，文件上「重命名/删除」，空白处对根目录新建）；
+    新建文件对话框带类型预设 `.c/.cpp/.cc/.cxx/.h/.hpp/.txt/.md/.json/.py/.js/.ts/.html/.css/.java/.go/.rs`，
+    选类型自动补扩展名；建完自动展开父目录并打开文件
+  - 安全联动：删除/重命名命中「当前打开的文件」且编辑器有未保存改动时先确认；删除后 App 关掉对应编辑器，
+    重命名后把打开中的路径换到新名字（含目录下的子文件）；`forgetSubtree()` 清掉被删/被改名子树的缓存
+  - 测试：Rust 35 项（新建→重命名→递归删除、名字/越界/删根、POST 门禁）；node 63 项
+    （新增 `scripts/fsOps.test.mjs`：四项操作真实 HTTP 往返、保留名 400、GET 405）
+  - 产物：dist + release exe 重建并重启；README / docs §9 同步
+
+- 2026-11-11 **代码补全**：
+  - 新增 `src/components/completion.ts`：上下文识别（word / member / path）、按语言抽符号、候选打分排序、
+    写回文本、浮层定位，全是纯函数
+  - 编辑器接入：输入即弹（首字符是字母/下划线；`.` 后给成员；字符串里 `./` 给路径），
+    `Tab`/`Enter` 接受、`↑↓`/`PgUp/PgDn` 选择、`Esc` 只关浮层、`Ctrl+Space` 手动触发；滚动自动关闭
+  - 数据来源：当前文件符号（200ms 去抖，>400KB 只算一次）+ 同目录文件符号（≤40 文件、单个 ≤128KB）
+    + 语言关键字 + 当前目录条目（import 路径）
+  - 测试：`scripts/completion.test.mjs` 24 项（上下文/触发/抽符号/排序/写回/路径/定位）；`npm test` 共 86 项全过
+  - 真实界面实测：WebView2 CDP 驱动，输入 `con` 弹出 `const,continue,ControlGate,TryConnect…`，
+    `Tab` 后该行变 `const`；`loadConfig.` 弹成员候选且 `greet` 排第一；`Esc` 逐层退出正常
+  - 产物：`dist` + release exe 重建并重启；README / product / tasks 同步
