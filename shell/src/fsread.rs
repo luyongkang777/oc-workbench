@@ -57,24 +57,30 @@ pub fn read_window(
     let limit = max_lines.min(index.line_count - start);
 
     match index.enc {
-        Enc::Utf8 => read_utf8(&mut reader, skip, limit, start, index.line_count),
+        Enc::Utf8 => read_bytes(&mut reader, skip, limit, start, index.line_count, false),
+        Enc::Gbk => read_bytes(&mut reader, skip, limit, start, index.line_count, true),
         Enc::Utf16Le | Enc::Utf16Be => {
             read_utf16(&mut reader, index.enc, skip, limit, start, index.line_count)
         }
     }
 }
 
-fn read_utf8<R: BufRead>(
+/// 单字节编码（UTF-8 / GBK）按行读：换行处切行，再整行解码。
+///
+/// 两种编码的换行字节都是 0x0A，且 GBK 的双字节序列里不会出现 0x0A，
+/// 所以在字节层切行是安全的。
+fn read_bytes<R: BufRead>(
     reader: &mut R,
     skip: u64,
     limit: u64,
     start: u64,
     total: u64,
+    gbk: bool,
 ) -> io::Result<Window> {
     let mut scratch = Vec::new();
     let mut skipped = 0;
     while skipped < skip {
-        if !read_line_utf8(reader, &mut scratch)? {
+        if !read_line_bytes(reader, &mut scratch)? {
             break;
         }
         skipped += 1;
@@ -84,11 +90,15 @@ fn read_utf8<R: BufRead>(
     let mut bytes = 0usize;
     let mut hit_eof = false;
     while (lines.len() as u64) < limit {
-        if !read_line_utf8(reader, &mut scratch)? {
+        if !read_line_bytes(reader, &mut scratch)? {
             hit_eof = true;
             break;
         }
-        let text = String::from_utf8_lossy(&scratch).into_owned();
+        let text = if gbk {
+            crate::winenc::decode_lossy(&scratch)
+        } else {
+            String::from_utf8_lossy(&scratch).into_owned()
+        };
         bytes += text.len() + 1;
         lines.push(text);
         if bytes >= MAX_WINDOW_BYTES {
@@ -109,7 +119,7 @@ fn read_utf8<R: BufRead>(
 ///
 /// 用 `fill_buf` 手写循环而不是 `read_until`：既能限制单行字节数，
 /// 又能在超长行里把剩余部分消费掉，保证下一行从正确的换行处开始。
-fn read_line_utf8<R: BufRead>(reader: &mut R, out: &mut Vec<u8>) -> io::Result<bool> {
+fn read_line_bytes<R: BufRead>(reader: &mut R, out: &mut Vec<u8>) -> io::Result<bool> {
     out.clear();
     let mut truncated = false;
     loop {

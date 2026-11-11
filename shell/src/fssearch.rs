@@ -97,7 +97,17 @@ pub fn handle(request: Request, file: &Path, pairs: &[(String, String)]) {
         query.to_lowercase()
     };
 
-    let index = match fsindex::index_for(file) {
+    let forced = match param(pairs, "encoding").filter(|value| !value.is_empty()) {
+        Some(name) => match fsindex::Enc::from_name(name) {
+            Some(enc) => Some(enc),
+            None => {
+                let _ = json_error(request, 400, &format!("不认识的编码：{name}"));
+                return;
+            }
+        },
+        None => None,
+    };
+    let index = match fsindex::index_for_encoding(file, forced) {
         Ok(index) => index,
         Err(err) => {
             let _ = json_error(request, 500, &format!("建立行索引失败：{err}"));

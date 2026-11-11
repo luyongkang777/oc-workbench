@@ -7,7 +7,17 @@ use std::path::Path;
 use crate::fsindex::{detect_encoding, Enc};
 
 /// 读整份文本用于 Markdown 预览：超过 `max_bytes` 返回 `None`（由调用方报 413）。
+#[allow(dead_code)] // 单测用；线上统一走 read_whole_with（带编码覆盖）
 pub fn read_whole(path: &Path, max_bytes: u64) -> io::Result<Option<String>> {
+    read_whole_with(path, max_bytes, None)
+}
+
+/// 指定编码读整份文本（`None` = 按 BOM / 探测自动判定）。
+pub fn read_whole_with(
+    path: &Path,
+    max_bytes: u64,
+    forced: Option<Enc>,
+) -> io::Result<Option<String>> {
     let mut file = File::open(path)?;
     // 不信任 metadata 的长度：文件可能在这两步之间被写大。多读 1 字节用来判超限。
     let mut bytes = Vec::with_capacity(max_bytes.min(1024 * 1024) as usize);
@@ -17,12 +27,18 @@ pub fn read_whole(path: &Path, max_bytes: u64) -> io::Result<Option<String>> {
     if bytes.len() as u64 > max_bytes {
         return Ok(None);
     }
-    let (enc, data_start) = detect_encoding(&bytes[..bytes.len().min(4)]);
+    let enc_start = detect_encoding(&bytes[..bytes.len().min(4)]);
+    let (enc, data_start) = match forced {
+        Some(enc) if enc == enc_start.0 => (enc, enc_start.1),
+        Some(enc) => (enc, 0),
+        None => enc_start,
+    };
     let body = &bytes[(data_start as usize).min(bytes.len())..];
     let text = match enc {
         Enc::Utf8 => String::from_utf8_lossy(body).into_owned(),
         Enc::Utf16Le => decode_utf16(body, true),
         Enc::Utf16Be => decode_utf16(body, false),
+        Enc::Gbk => crate::winenc::decode_lossy(body),
     };
     Ok(Some(text.replace("\r\n", "\n")))
 }

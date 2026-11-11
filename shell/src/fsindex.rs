@@ -20,6 +20,8 @@ pub enum Enc {
     Utf8,
     Utf16Le,
     Utf16Be,
+    /// GBK / GB18030（中文 Windows 默认代码页）；没有 BOM，靠「不是合法 UTF-8」判出来。
+    Gbk,
 }
 
 impl Enc {
@@ -28,6 +30,23 @@ impl Enc {
             Enc::Utf8 => "utf8",
             Enc::Utf16Le => "utf16le",
             Enc::Utf16Be => "utf16be",
+            Enc::Gbk => "gbk",
+        }
+    }
+
+    /// 与 UTF-8 一样按「字节 0x0A」切行：GBK 的双字节序列里不会出现 0x0A。
+    pub fn byte_lines(self) -> bool {
+        matches!(self, Enc::Utf8 | Enc::Gbk)
+    }
+
+    /// 前端 / 查询参数里的编码名 → 枚举；大小写和连字符都容忍。
+    pub fn from_name(name: &str) -> Option<Enc> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "utf8" | "utf-8" => Some(Enc::Utf8),
+            "utf16le" | "utf-16le" | "utf16" => Some(Enc::Utf16Le),
+            "utf16be" | "utf-16be" => Some(Enc::Utf16Be),
+            "gbk" | "gb2312" | "gb18030" => Some(Enc::Gbk),
+            _ => None,
         }
     }
 }
@@ -56,6 +75,43 @@ pub fn detect_encoding(head: &[u8]) -> (Enc, u64) {
     }
 }
 
+/// 没有 BOM 时用来分辨 UTF-8 / GBK 的探测长度；8KB 足够看到中文正文。
+const ENCODING_PROBE: usize = 8192;
+
+/// 完整判定编码：先看 BOM；没有 BOM 就按「合法 UTF-8 → 否则合法 GB18030」猜。
+///
+/// 判 GBK 前必须先确认「不是 UTF-8」：GBK 很宽松，UTF-8 的中文字节通常也能解成 GBK 乱码。
+pub fn detect_file_encoding(file: &mut File, size: u64) -> io::Result<(Enc, u64)> {
+    let mut head = [0u8; 4];
+    let head_len = read_up_to(file, &mut head)?;
+    let (enc, data_start) = detect_encoding(&head[..head_len]);
+    if enc != Enc::Utf8 || data_start != 0 || size == 0 {
+        return Ok((enc, data_start));
+    }
+
+    file.seek(SeekFrom::Start(0))?;
+    let want = size.min(ENCODING_PROBE as u64) as usize;
+    let mut probe = vec![0u8; want];
+    let got = read_up_to(file, &mut probe)?;
+    probe.truncate(got);
+    if probe.is_empty() || is_utf8_prefix(&probe) {
+        return Ok((Enc::Utf8, 0));
+    }
+    if crate::winenc::decode_strict(&probe).is_some() {
+        return Ok((Enc::Gbk, 0));
+    }
+    // 两边都不合法：保持旧行为，交给 UTF-8 lossy 显示
+    Ok((Enc::Utf8, 0))
+}
+
+/// 整段是否「像被切断的 UTF-8」：只有末尾半截字符才允许失败。
+fn is_utf8_prefix(bytes: &[u8]) -> bool {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => true,
+        Err(err) => err.error_len().is_none(),
+    }
+}
+
 struct Cached {
     key: String,
     size: u64,
@@ -67,14 +123,25 @@ static CACHE: Mutex<Vec<Cached>> = Mutex::new(Vec::new());
 
 /// 取（或重建）文件索引。大文件只在第一次打开时扫一遍，之后命中缓存。
 pub fn index_for(path: &Path) -> io::Result<Arc<Index>> {
-    let key = path.to_string_lossy().to_string();
+    index_for_encoding(path, None)
+}
+
+/// 指定编码建索引（「以 X 编码重新打开」用）。
+///
+/// 缓存键带上编码：同一文件按 UTF-8 / GBK 扫出来的行布局可能不同（UTF-16 尤其明显），
+/// 不能共用一份索引。`None` 表示按 BOM / 探测自动判定。
+pub fn index_for_encoding(path: &Path, forced: Option<Enc>) -> io::Result<Arc<Index>> {
+    let key = match forced {
+        Some(enc) => format!("{}#{}", path.to_string_lossy(), enc.name()),
+        None => path.to_string_lossy().to_string(),
+    };
     let meta = std::fs::metadata(path)?;
     let size = meta.len();
     let mtime = meta.modified().ok();
     if let Some(index) = lookup(&key, size, mtime) {
         return Ok(index);
     }
-    let index = Arc::new(scan(path)?);
+    let index = Arc::new(scan(path, forced)?);
     store(Cached {
         key,
         size,
@@ -113,15 +180,26 @@ fn lock_cache() -> std::sync::MutexGuard<'static, Vec<Cached>> {
     }
 }
 
-fn scan(path: &Path) -> io::Result<Index> {
+fn scan(path: &Path, forced: Option<Enc>) -> io::Result<Index> {
     let mut file = File::open(path)?;
     let size = file.metadata()?.len();
-    let mut head = [0u8; 4];
-    let head_len = read_up_to(&mut file, &mut head)?;
-    let (enc, data_start) = detect_encoding(&head[..head_len]);
+    let (enc, data_start) = match forced {
+        Some(enc) => {
+            // 强制编码：只有 BOM 跟它一致时才跳过 BOM，否则从 0 开始解
+            let mut head = [0u8; 4];
+            let n = read_up_to(&mut file, &mut head)?;
+            let (bom_enc, bom_start) = detect_encoding(&head[..n]);
+            if bom_enc == enc {
+                (enc, bom_start)
+            } else {
+                (enc, 0)
+            }
+        }
+        None => detect_file_encoding(&mut file, size)?,
+    };
 
-    // 只有 UTF-8 才做「前 8KB 有 NUL 就是二进制」的判断；UTF-16 到处都是 NUL。
-    let binary = enc == Enc::Utf8 && size > data_start && probe_binary(&mut file, data_start, size)?;
+    // 只有单字节编码（UTF-8 / GBK）才做「前 8KB 有 NUL 就是二进制」的判断；UTF-16 到处都是 NUL。
+    let binary = enc.byte_lines() && size > data_start && probe_binary(&mut file, data_start, size)?;
     if binary {
         return Ok(Index {
             enc,
@@ -146,7 +224,7 @@ fn scan(path: &Path) -> io::Result<Index> {
             break;
         }
         match enc {
-            Enc::Utf8 => {
+            Enc::Utf8 | Enc::Gbk => {
                 for (i, byte) in buf[..n].iter().enumerate() {
                     last_is_newline = *byte == b'\n';
                     if !last_is_newline {
