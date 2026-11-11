@@ -33,6 +33,8 @@ export default function App() {
   const [fileSeq, setFileSeq] = useState(0)
   // 打开时要跳到的行（1 基）；只在本次 openSeq 生效，跳完就不管了
   const [fileLine, setFileLine] = useState<number | null>(null)
+  // 双击文件树时自增：CodeView 收到后打开完直接进编辑
+  const [autoEditSeq, setAutoEditSeq] = useState(0)
   // 文件树刷新信号：窗口重新获得焦点或点「刷新」时自增
   const [treeSeq, setTreeSeq] = useState(0)
   // 一次性提示（例如打开链接失败），4 秒后自动消失
@@ -43,6 +45,8 @@ export default function App() {
   const alive = useRef(true)
   // 探活请求是否在途：定时探活不叠加；finally 里保证复位
   const probing = useRef(false)
+  // 编辑器里有未保存的改动：切文件 / 切目录前拦一下
+  const editorDirty = useRef(false)
 
   useEffect(() => {
     alive.current = true
@@ -129,6 +133,9 @@ export default function App() {
       same.ipc?.postMessage(`oc:save-root:${path}`)
       return
     }
+    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，切换文件夹会丢弃它，继续？')) {
+      return
+    }
     rootRef.current = path
     setRoot(path)
     try {
@@ -168,12 +175,52 @@ export default function App() {
   // 这里只切换「看哪个文件」；读取、分页、虚拟滚动全部由 CodeView 自己管，
   // 避免每次读到内容都让整个 App（含会话面板）跟着重渲染。
   // 用 useCallback 是为了让聊天里的 Markdown 能靠 memo 跳过重渲染。
-  const openFile = useCallback((relPath: string, line?: number) => {
+  const openFile = useCallback((relPath: string, line?: number, edit?: boolean) => {
+    // 编辑中的未保存内容不能因为点了一下文件树就无声丢掉
+    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，确定离开？')) return
     setFile(relPath)
     setFileLine(typeof line === 'number' && Number.isFinite(line) ? line : null)
     setFileSeq((value) => value + 1)
+    // 双击文件树：打开后直接进编辑
+    if (edit) setAutoEditSeq((value) => value + 1)
     // 停在「审查」面板时点路径/文件树也要有反应：切回代码视图
     setView('code')
+  }, [])
+
+  const handleEditorDirty = useCallback((dirty: boolean) => {
+    editorDirty.current = dirty
+  }, [])
+
+  // 文件树删除/重命名前用来判断「当前文件是否有未保存改动」
+  const isEditorDirty = useCallback(() => editorDirty.current, [])
+
+  // 保存后文件大小/行数变了，让文件树重拉一次
+  const handleEditorSaved = useCallback(() => setTreeSeq((value) => value + 1), [])
+
+  /** 文件树里删掉了东西：正在看的是它（或它的子文件）就关掉编辑器。 */
+  const handlePathRemoved = useCallback((removed: string) => {
+    const target = removed.replace(/[\\/]+$/, '')
+    if (!target) return
+    setFile((prev) => {
+      if (!prev) return prev
+      const hit =
+        prev === target || prev.startsWith(`${target}\\`) || prev.startsWith(`${target}/`)
+      return hit ? null : prev
+    })
+  }, [])
+
+  /** 重命名：把打开中的文件路径一起换到新名字。 */
+  const handlePathRenamed = useCallback((from: string, to: string) => {
+    const source = from.replace(/[\\/]+$/, '')
+    if (!source) return
+    setFile((prev) => {
+      if (!prev) return prev
+      if (prev === source) return to
+      if (prev.startsWith(`${source}\\`) || prev.startsWith(`${source}/`)) {
+        return `${to}${prev.slice(source.length)}`
+      }
+      return prev
+    })
   }, [])
 
   /** 手动重试：没令牌时先重新走 IPC 握手，已有令牌时让外壳重新配对并立刻探活。 */
@@ -259,7 +306,15 @@ export default function App() {
           {auth.status === 'ready' ? (
             // 拿到令牌就挂载：文件树走本地直读，不依赖 opencode 连上；
             // 后端断开时只有聊天/审查不可用，文件照样能看。
-            <FileTree root={root} onOpenFile={openFile} refreshSeq={treeSeq} />
+            <FileTree
+              root={root}
+              onOpenFile={openFile}
+              refreshSeq={treeSeq}
+              activePath={file}
+              isDirty={isEditorDirty}
+              onPathRemoved={handlePathRemoved}
+              onPathRenamed={handlePathRenamed}
+            />
           ) : (
             <div className="pane-notice" role="status">
               {auth.status === 'pending'
@@ -273,7 +328,16 @@ export default function App() {
           {view === 'diff' ? (
             <ReviewPanel root={root} connected={connected} />
           ) : (
-            <CodeView root={root} path={file} openSeq={fileSeq} openLine={fileLine} onOpenFile={openFile} />
+            <CodeView
+              root={root}
+              path={file}
+              openSeq={fileSeq}
+              openLine={fileLine}
+              onOpenFile={openFile}
+              onDirtyChange={handleEditorDirty}
+              onSaved={handleEditorSaved}
+              autoEditSeq={autoEditSeq}
+            />
           )}
         </section>
 

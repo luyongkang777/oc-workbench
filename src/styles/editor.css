@@ -784,3 +784,246 @@
 .code-line.match {
   background: #1f2a33;
 }
+
+/* ---------- 编辑态 ---------- */
+.code-edit {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  background: #1e1e1e;
+}
+
+/* ---------- 补全浮层 ---------- */
+.code-complete {
+  position: absolute;
+  z-index: 60;
+  width: 330px;
+  max-width: calc(100% - 8px);
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.code-complete-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 8px;
+  background: #2d2d30;
+  border-bottom: 1px solid #3c3c3c;
+  color: #8a8a8a;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.code-complete-hint {
+  color: #6b6b6b;
+  font-size: 10px;
+}
+
+.code-complete-list {
+  max-height: 198px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.code-complete-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #d4d4d4;
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.code-complete-item:hover {
+  background: #2a2d2e;
+}
+
+.code-complete-item.active {
+  background: #094771;
+  color: #ffffff;
+}
+
+.code-complete-kind {
+  flex: 0 0 22px;
+  text-align: center;
+  font-size: 9.5px;
+  line-height: 14px;
+  border-radius: 2px;
+  color: #cfcfcf;
+  background: #3c3c3c;
+}
+
+.code-complete-kind.local {
+  background: #2f4f2f;
+  color: #b5e8b5;
+}
+
+.code-complete-kind.workspace {
+  background: #3a3a58;
+  color: #c9c9ff;
+}
+
+.code-complete-kind.keyword {
+  background: #4a3a2a;
+  color: #f0cfae;
+}
+
+.code-complete-kind.path {
+  background: #2a3d4a;
+  color: #b9e0f0;
+}
+
+.code-complete-label {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-complete-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: #8a8a8a;
+  font-size: 10.5px;
+}
+
+.code-complete-item.active .code-complete-detail {
+  color: #cfe3ff;
+}
+
+/* 行号列：只渲染视口内的数字，靠 top 偏移跟着 textarea 滚 */
+.code-edit-gutter {
+  flex: 0 0 68px;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  background: #1e1e1e;
+  border-right: 1px solid #2b2b2b;
+}
+
+.code-edit-no {
+  position: absolute;
+  right: 12px;
+  height: 19px;
+  line-height: 19px;
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 12.5px;
+  color: #5a5a5a;
+}
+
+.code-edit-area {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: #d4d4d4;
+  caret-color: #aeafad;
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 12.5px;
+  line-height: 19px;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+
+/* 工具栏上的编辑 / 保存 / 取消 */
+.editor-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.editor-action {
+  height: 20px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.editor-action:hover:not(:disabled) {
+  background: #37373d;
+  color: #ffffff;
+}
+
+.editor-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.editor-action.primary {
+  background: #0e639c;
+  border-color: #1177bb;
+  color: #ffffff;
+}
+
+.editor-action.primary:hover:not(:disabled) {
+  background: #1177bb;
+}
+
+.editor-dirty {
+  color: #e2c08d;
+  font-size: 11px;
+}
+
+/* 保存成功的短提示（2 秒后消失） */
+.editor-save-note {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: #89d185;
+  background: #1f2d1f;
+  border-bottom: 1px solid #2b3a2b;
+}
+
+/* 保存失败条：贴一行，不占满整个编辑器 */
+.editor-error-bar {
+  margin: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* 编辑时的保存编码选择 */
+.editor-enc {
+  height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: #cfcfcf;
+  background: #2a2d2e;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+}
+
+/* 只读/可编辑提示（双击进入编辑） */
+.editor-edit-hint {
+  font-size: 11px;
+  color: #7d7d7d;
+  user-select: none;
+}
+
+.editor-edit-hint.muted {
+  color: #5a5a5a;
+}

@@ -18,6 +18,8 @@ type Props = {
   query?: string
   /** 当前搜索命中行（0 基）。 */
   matchLine?: number | null
+  /** 双击代码区（进入编辑）。 */
+  onDoubleClick?: () => void
 }
 
 /** 源码虚拟列表：只渲染视口内的行，总高度靠上下占位块撑。 */
@@ -33,6 +35,7 @@ export default function CodeSourceBody({
   flashLine = null,
   query = '',
   matchLine = null,
+  onDoubleClick,
 }: Props) {
   const { first, last } = visibleRange(scrollTop, viewportHeight, stat.lineCount, scale)
   const topPad = first * LINE_HEIGHT * scale
@@ -86,6 +89,7 @@ export default function CodeSourceBody({
       className="code-scroll"
       ref={attachScroll}
       onScroll={onScroll}
+      onDoubleClick={onDoubleClick}
       tabIndex={0}
       onKeyDown={(event) => {
         // 焦点在代码区时 Home/End 直达首尾；其余按键交给浏览器原生滚动。

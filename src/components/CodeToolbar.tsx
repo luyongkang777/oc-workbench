@@ -13,9 +13,23 @@ type Props = {
   currentLine: number | null
   /** 供 Ctrl+G 聚焦的输入框。 */
   jumpRef: RefObject<HTMLInputElement>
+  /** 当前文件能否编辑（二进制 / 超大文件不行）。 */
+  canEdit: boolean
+  /** 不能编辑时的原因，作为悬浮提示。 */
+  editHint: string | null
+  editing: boolean
+  dirty: boolean
+  saving: boolean
+  /** 保存编码（编辑时可改）。 */
+  encoding: string
+  /** 非编辑态是否显示「自动」（以指定编码重新打开）。 */
+  allowAuto: boolean
+  onEncoding: (encoding: string) => void
+  onSave: () => void
+  onCancel: () => void
 }
 
-/** 编辑器顶部的文件信息条：大小 / 行数 / 编码 / 跳转 / 预览切换。 */
+/** 编辑器顶部的文件信息条：大小 / 行数 / 编码 / 跳转 / 双击编辑 / 保存编码。 */
 export default function CodeToolbar({
   stat,
   markdown,
@@ -24,9 +38,19 @@ export default function CodeToolbar({
   onJump,
   currentLine,
   jumpRef,
+  canEdit,
+  editHint,
+  editing,
+  dirty,
+  saving,
+  encoding,
+  allowAuto,
+  onEncoding,
+  onSave,
+  onCancel,
 }: Props) {
   const [jumpText, setJumpText] = useState('')
-  const canJump = !stat.binary && stat.lineCount > 0 && mode === 'source'
+  const canJump = !stat.binary && stat.lineCount > 0 && mode === 'source' && !editing
 
   function submitJump() {
     const value = Number(jumpText)
@@ -74,7 +98,57 @@ export default function CodeToolbar({
         </span>
       ) : null}
       <span className="editor-toolbar-spacer" />
-      {markdown ? (
+      {dirty ? <span className="editor-dirty">● 未保存</span> : null}
+      {stat.binary ? null : (
+        <select
+          className="editor-enc"
+          value={encoding}
+          onChange={(event) => onEncoding(event.target.value)}
+          disabled={saving}
+          title={
+            editing
+              ? '保存编码（换编码保存会让文件变成该编码）'
+              : '以该编码重新打开（自动 = 按 BOM / 内容判定）'
+          }
+          aria-label="编码"
+        >
+          {allowAuto ? <option value="auto">自动</option> : null}
+          <option value="utf8">UTF-8</option>
+          <option value="utf16le">UTF-16 LE</option>
+          <option value="utf16be">UTF-16 BE</option>
+          <option value="gbk">GBK</option>
+        </select>
+      )}
+      {editing ? (
+        <span className="editor-actions">
+          <button
+            type="button"
+            className="editor-action primary"
+            onClick={onSave}
+            disabled={saving || !dirty}
+            title="保存（Ctrl+S）"
+          >
+            {saving ? '保存中…' : '保存'}
+          </button>
+          <button
+            type="button"
+            className="editor-action"
+            onClick={onCancel}
+            disabled={saving}
+            title="放弃修改（Esc）"
+          >
+            取消
+          </button>
+        </span>
+      ) : (
+        <span
+          className={`editor-edit-hint${canEdit ? '' : ' muted'}`}
+          title={editHint ?? '双击代码进入编辑（Ctrl+S 保存）'}
+        >
+          {canEdit ? '双击编辑' : '只读'}
+        </span>
+      )}
+      {markdown && !editing ? (
         <span className="editor-modes">
           <button
             type="button"

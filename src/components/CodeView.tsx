@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { readLines, searchFile, statFile, type FileStat, type SearchMatch } from '../api/localfs'
+import {
+  readLines,
+  readText,
+  searchFile,
+  statFile,
+  writeText,
+  type FileStat,
+  type SearchMatch,
+} from '../api/localfs'
+import CodeEditor from './CodeEditor'
 import CodeSourceBody from './CodeSourceBody'
 import CodeSearchBar from './CodeSearchBar'
 import CodeToolbar from './CodeToolbar'
@@ -18,6 +27,11 @@ import {
 import MarkdownText from './MarkdownText'
 import { useFilePreview } from '../hooks/useFilePreview'
 
+/** 超过这个大小不进入编辑：整份文本要一次性载入，太大打字会卡。 */
+const EDIT_MAX_BYTES = 2 * 1024 * 1024
+/** 后端支持的保存编码；stat.encoding 返回的也是这几个名字。 */
+const SAVE_ENCODINGS = ['utf8', 'utf16le', 'utf16be', 'gbk']
+
 type Props = {
   root: string
   path: string | null
@@ -27,6 +41,12 @@ type Props = {
   openLine?: number | null
   /** 预览里的 Markdown 若含文件路径，点开别的文件。 */
   onOpenFile?: (path: string, line?: number) => void
+  /** 编辑中是否有未保存改动（外层切文件前用来拦一下）。 */
+  onDirtyChange?: (dirty: boolean) => void
+  /** 保存成功（外层可刷新文件树里的大小）。 */
+  onSaved?: (path: string) => void
+  /** 外层要求「打开后直接进编辑」（双击文件树时自增）。 */
+  autoEditSeq?: number
 }
 
 /**
@@ -35,8 +55,20 @@ type Props = {
  * 数据流：stat（行数 + 编码 + 是否二进制）→ 按行分页按需取。
  * 服务端可能因为 512KB 上限少给几行，所以每页记 `next`，缺口从 next 续拉，
  * 不能假设「一页就是 200 行」。快速连点文件时 abort 所有在途页请求，旧响应凭 gen 丢弃。
+ *
+ * 编辑（2MB 以内）：双击代码进入整份文本的 textarea，Ctrl+S 原子写回磁盘，
+ * 带 mtime 冲突检测；编码支持 UTF-8 / UTF-16LE / UTF-16BE / GBK，保存时可换编码。
  */
-export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: Props) {
+export default function CodeView({
+  root,
+  path,
+  openSeq,
+  openLine,
+  onOpenFile,
+  onDirtyChange,
+  onSaved,
+  autoEditSeq = 0,
+}: Props) {
   const [stat, setStat] = useState<FileStat | null>(null)
   const [statPath, setStatPath] = useState<string | null>(null)
   const [statError, setStatError] = useState<string | null>(null)
@@ -54,6 +86,19 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
 
+  // 编辑态：draft 是 textarea 里的整份文本，baseline 是打开/上次保存时的原文。
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [baseline, setBaseline] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [saveNote, setSaveNote] = useState<string | null>(null)
+  // 保存编码：默认沿用文件原编码，可在工具栏改成 UTF-8 / UTF-16 / GBK
+  const [saveEncoding, setSaveEncoding] = useState('utf8')
+  // 编码覆盖（null = 自动）：非编辑态选「以 X 编码重新打开」时置上，所有读取都按它解码
+  const [encodingOverride, setEncodingOverride] = useState<string | null>(null)
+
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const cacheRef = useRef(new Map<number, Entry>())
   const inflightRef = useRef(new Map<number, AbortController>())
@@ -67,12 +112,148 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
   const lastSearchJump = useRef('')
   const searchOpenRef = useRef(false)
   const statRef = useRef<FileStat | null>(null)
+  const pathRef = useRef<string | null>(path)
+  pathRef.current = path
 
   const bump = useCallback(() => setVersion((value) => value + 1), [])
   searchOpenRef.current = searchOpen
   statRef.current = stat
-  const previewState = useFilePreview(root, path, stat)
+  const previewState = useFilePreview(root, path, stat, encodingOverride)
   const { mode, setMode, preview, previewError, hex, hexError, imageUrl, imageError } = previewState
+
+  // 换编码也算「要保存的改动」：允许不改文本、只把文件转成另一种编码
+  const encodingChanged = editing && !!stat && stat.encoding !== saveEncoding
+  const dirty = editing && (draft !== baseline || encodingChanged)
+
+  // 外层用这个 ref 拦「切文件会丢掉未保存改动」；卸载时也要清掉。
+  const dirtyNotifyRef = useRef(onDirtyChange)
+  dirtyNotifyRef.current = onDirtyChange
+  useEffect(() => {
+    dirtyNotifyRef.current?.(dirty)
+  }, [dirty])
+  useEffect(() => () => dirtyNotifyRef.current?.(false), [])
+
+  // 保存成功后的「已保存」提示两秒后自己消失。
+  useEffect(() => {
+    if (!saveNote) return
+    const timer = window.setTimeout(() => setSaveNote(null), 2000)
+    return () => window.clearTimeout(timer)
+  }, [saveNote])
+
+  const canEditHint = !stat
+    ? null
+    : stat.binary
+      ? '二进制文件不支持编辑'
+      : stat.size > EDIT_MAX_BYTES
+        ? `文件超过 ${Math.round(EDIT_MAX_BYTES / 1024 / 1024)}MB，暂不支持编辑`
+        : null
+
+  /** 进入编辑：整份文本一次载入（≤2MB），Markdown 自动切回源码。 */
+  const startEdit = useCallback(() => {
+    if (!path || saving || canEditHint) return
+    const target = path
+    const detected = statRef.current?.encoding ?? ''
+    setSaveEncoding(SAVE_ENCODINGS.includes(detected) ? detected : 'utf8')
+    setEditError(null)
+    setSaveNote(null)
+    setEditLoading(true)
+    setSearchOpen(false)
+    setMode('source')
+    readText(root, target, EDIT_MAX_BYTES, encodingOverride)
+      .then((text) => {
+        // 读取期间已经切走文件：这份内容不能再塞给新文件。
+        if (pathRef.current !== target) return
+        setDraft(text)
+        setBaseline(text)
+        setEditing(true)
+      })
+      .catch((err) => setEditError(`无法编辑：${(err as Error).message}`))
+      .finally(() => setEditLoading(false))
+  }, [path, root, saving, canEditHint, setMode, encodingOverride])
+
+  const cancelEdit = useCallback(() => {
+    if (saving) return
+    if (draft !== baseline && !window.confirm('放弃未保存的修改？')) return
+    setEditing(false)
+    setDraft('')
+    setBaseline('')
+    setEditError(null)
+  }, [saving, draft, baseline])
+
+  /**
+   * 工具栏编码下拉：
+   *   * 编辑态 = 保存编码（只影响写回）；
+   *   * 非编辑态 = 以该编码重新读取（auto 回到自动探测）。
+   */
+  const handleEncodingChange = useCallback(
+    (value: string) => {
+      if (editing) {
+        setSaveEncoding(value)
+        return
+      }
+      setEncodingOverride(value === 'auto' ? null : value)
+    },
+    [editing],
+  )
+
+  const save = useCallback(() => {
+    if (!path || !stat || saving || !editing) return
+    if (draft === baseline && stat.encoding === saveEncoding) return
+    setSaving(true)
+    setEditError(null)
+    writeText(root, path, draft, stat.mtimeMs, saveEncoding)
+      .then((result) => {
+        setBaseline(draft)
+        setEditing(false)
+        setSaveNote(
+          `已保存 · ${result.lineCount.toLocaleString('en-US')} 行 · ${result.encoding.toUpperCase()}`,
+        )
+        // 只更新 stat（不触发整份重读），滚动位置和阅读上下文都保留
+        cacheRef.current.clear()
+        setStat((prev) =>
+          prev
+            ? {
+                ...prev,
+                size: result.size,
+                mtimeMs: result.mtimeMs,
+                lineCount: result.lineCount,
+                encoding: result.encoding,
+              }
+            : prev,
+        )
+        onSaved?.(path)
+      })
+      .catch((err) => {
+        const message = (err as Error).message
+        setEditError(
+          message.includes('409')
+            ? '保存失败：文件已在磁盘上被修改，取消后重新打开再改'
+            : `保存失败：${message}`,
+        )
+      })
+      .finally(() => setSaving(false))
+  }, [path, stat, saving, editing, draft, baseline, root, saveEncoding, onSaved])
+
+  // 切文件/切根目录：结束编辑、回到自动编码（外层已经拦过未保存的情况）。
+  useEffect(() => {
+    setEditing(false)
+    setDraft('')
+    setBaseline('')
+    setEditError(null)
+    setSaving(false)
+    setEncodingOverride(null)
+  }, [path, root])
+
+  // 双击文件树「打开即编辑」：stat 到位后进一次编辑，同一个信号只消费一次。
+  const autoEditRef = useRef(0)
+  useEffect(() => {
+    if (!autoEditSeq || !path || !stat || statPath !== path) return
+    if (autoEditRef.current === autoEditSeq) return
+    autoEditRef.current = autoEditSeq
+    if (canEditHint) return
+    startEdit()
+  }, [autoEditSeq, path, stat, statPath, canEditHint, startEdit])
+
 
   // 切文件/重试：清空缓存与在途请求。gen 自增让所有旧响应失效。
   useEffect(() => {
@@ -92,7 +273,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
 
     setLoading(true)
     const controller = new AbortController()
-    statFile(root, path, controller.signal)
+    statFile(root, path, encodingOverride, controller.signal)
       .then((value) => {
         if (gen !== genRef.current) return
         setStat(value)
@@ -108,7 +289,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
 
     if (scrollRef.current) scrollRef.current.scrollTop = 0
     return () => controller.abort()
-  }, [root, path, openSeq, reload])
+  }, [root, path, openSeq, reload, encodingOverride])
 
   // 卸载：让所有回调失效，并中止在途请求。
   useEffect(
@@ -159,7 +340,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
       if (inflightRef.current.has(start)) return
       const controller = new AbortController()
       inflightRef.current.set(start, controller)
-      readLines(root, path ?? '', start, WINDOW_LINES, controller.signal)
+      readLines(root, path ?? '', start, WINDOW_LINES, encodingOverride, controller.signal)
         .then((res) => {
           if (gen !== genRef.current) return
           const count = Math.max(0, res.next - res.start)
@@ -196,7 +377,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
           }
         })
     },
-    [root, path, bump],
+    [root, path, encodingOverride, bump],
   )
 
   useEffect(() => {
@@ -213,14 +394,28 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
       ? lineAtScrollTop(scrollTop, stat.lineCount, model.scale)
       : null
 
-  // Ctrl+G 跳转聚焦 / Ctrl+F 打开搜索 / Esc 关闭搜索。
+  // Ctrl+S 保存 / Ctrl+G 跳转聚焦 / Ctrl+F 打开搜索 / Esc 关闭搜索或退出编辑。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) {
-        if (event.key === 'Escape' && searchOpenRef.current) setSearchOpen(false)
+      const key = event.key.toLowerCase()
+      if ((event.ctrlKey || event.metaKey) && key === 's') {
+        if (!editing) return
+        event.preventDefault()
+        save()
         return
       }
-      const key = event.key.toLowerCase()
+      if (event.key === 'Escape') {
+        if (editing) {
+          event.preventDefault()
+          cancelEdit()
+          return
+        }
+        if (searchOpenRef.current) setSearchOpen(false)
+        return
+      }
+      if (!(event.ctrlKey || event.metaKey)) return
+      // 编辑态交给 textarea 自己处理，别抢 Ctrl+G / Ctrl+F
+      if (editing) return
       if (key === 'g') {
         const input = jumpRef.current
         if (!input) return
@@ -239,7 +434,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [setMode])
+  }, [setMode, editing, save, cancelEdit])
 
   /** 跳转到 1 基行号：把该行放到视口顶部并闪一下。 */
   const jumpToLine = useCallback(
@@ -297,7 +492,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
     setSearchError(null)
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      searchFile(root, path, keyword, 500, controller.signal)
+      searchFile(root, path, keyword, 500, encodingOverride, controller.signal)
         .then((res) => {
           if (controller.signal.aborted) return
           setMatches(res.matches)
@@ -316,7 +511,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [searchOpen, query, path, root, stat])
+  }, [searchOpen, query, path, root, stat, encodingOverride])
 
   // 命中切换时跳到对应行；用 key 去重，避免窗口 resize 反复抢滚动位置。
   useEffect(() => {
@@ -426,10 +621,29 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
         mode={mode}
         onMode={setMode}
         onJump={jumpToLine}
-        currentLine={currentLine}
+        currentLine={editing ? null : currentLine}
         jumpRef={jumpRef}
+        canEdit={canEditHint === null}
+        editHint={canEditHint}
+        editing={editing}
+        dirty={dirty}
+        saving={saving}
+        encoding={editing ? saveEncoding : (encodingOverride ?? 'auto')}
+        allowAuto={!editing}
+        onEncoding={handleEncodingChange}
+        onSave={save}
+        onCancel={cancelEdit}
       />
-      {searchOpen ? (
+      {saveNote ? <div className="editor-save-note">{saveNote}</div> : null}
+      {editError ? (
+        <div className="editor-error editor-error-bar">
+          <span>{editError}</span>
+          <button type="button" className="editor-retry" onClick={() => setEditError(null)}>
+            知道了
+          </button>
+        </div>
+      ) : null}
+      {searchOpen && !editing ? (
         <CodeSearchBar
           query={query}
           onQuery={setQuery}
@@ -445,7 +659,21 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
         />
       ) : null}
 
-      {image ? (
+      {editing ? (
+        editLoading ? (
+          <div className="editor-empty">读取全文…</div>
+        ) : (
+          <CodeEditor
+            text={draft}
+            onChange={setDraft}
+            onSave={save}
+            onCancel={cancelEdit}
+            saving={saving}
+            root={root}
+            path={path}
+          />
+        )
+      ) : image ? (
         <div className="editor-image">
           {imageError ? (
             <div className="editor-error">{imageError}</div>
@@ -461,7 +689,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
           <pre className="hex-dump">{hexError ?? hex ?? '读取中…'}</pre>
         </div>
       ) : markdown && mode === 'preview' ? (
-        <div className="editor-preview">
+        <div className="editor-preview" onDoubleClick={startEdit} title="双击编辑">
           {previewError ? (
             <div className="editor-note">{previewError}</div>
           ) : preview === null ? (
@@ -491,6 +719,7 @@ export default function CodeView({ root, path, openSeq, openLine, onOpenFile }: 
             cacheRef.current.delete(start)
             bump()
           }}
+          onDoubleClick={startEdit}
         />
       )}
     </div>

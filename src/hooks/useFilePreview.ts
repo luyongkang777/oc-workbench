@@ -30,6 +30,7 @@ export function useFilePreview(
   root: string,
   path: string | null,
   stat: FileStat | null,
+  encoding?: string | null,
 ): FilePreview {
   const [mode, setModeState] = useState<PreviewMode>('source')
   // 用户手动切过视图（点工具栏、Ctrl+F、跳行）后，自动规则不再抢他的选择
@@ -72,7 +73,7 @@ export function useFilePreview(
     const controller = new AbortController()
     setPreview(null)
     setPreviewError(null)
-    readText(root, path, controller.signal)
+    readText(root, path, undefined, encoding, controller.signal)
       .then((text) => {
         if (alive) setPreview(text)
       })
@@ -83,7 +84,7 @@ export function useFilePreview(
       alive = false
       controller.abort()
     }
-  }, [root, path, stat, mode])
+  }, [root, path, stat, mode, encoding])
 
   useEffect(() => {
     if (!path || !stat || !stat.binary || isImagePath(path)) return

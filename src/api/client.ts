@@ -109,8 +109,9 @@ export async function localRequest<T>(
   path: string,
   signal?: AbortSignal,
   timeoutMs?: number,
+  init?: RequestInit,
 ): Promise<T> {
-  const res = await request(path, { signal, cache: 'no-store' }, timeoutMs)
+  const res = await request(path, { ...init, signal, cache: 'no-store' }, timeoutMs)
   return (await res.json()) as T
 }
 
