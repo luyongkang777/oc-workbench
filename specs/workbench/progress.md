@@ -248,3 +248,65 @@
   - 文件树：标题栏「刷新」+ 窗口 focus 自动重拉所有已加载目录（保留展开状态）
   - 代码区可聚焦，Home/End 直达首尾
   - 实测：32.5MB/60 万行搜 `end-599999` → `1/1`、1 处 `<mark>`、1 行命中底色，视口落在末行附近；连点 40 次仍 maxGap 22ms
+
+- 2026-11-10 **源码编辑（保存）**：
+  - 后端两侧同语义：Rust `PUT /local/fs/write`（`fsapi::write`）与 dev 中间件 `write` 分支——请求体为纯 UTF-8 文本，
+    `expectedMtimeMs` 对不上回 409、二进制 / UTF-16 回 415、>8MB 回 413；写盘是「同目录临时文件 + rename」，
+    原文件 UTF-8 BOM 与 CRLF 原样保留；行数口径与行索引一致
+  - 前端：工具栏「编辑」（≤2MB、UTF-8 才可点，否则按钮禁用并给原因）；`CodeEditor` 用整份 textarea + 只渲染视口行号，
+    Tab 插 2 空格、Ctrl+S 保存、Esc 取消；保存后只更新 stat 并清页缓存，不打断滚动位置；成功提示 2 秒
+  - 冲突与丢稿防护：409 提示「已在磁盘上被修改」；`dirty` 上报到 App，切文件 / 切目录前 `confirm` 拦一次
+  - 测试：Rust 29 项（新增 encode/BOM/CRLF、冲突 409、二进制 415、原子写无残留、真实 HTTP PUT 往返与 405）；
+    node 55 项（新增 `scripts/editorWrite.test.mjs`：编码规则 + 真起 http 打 PUT 的落盘/409/415/路径穿越/405）
+  - 产物：`dist` + release exe 已重建，exe 内嵌最新 bundle；README / docs §9 / tasks 同步
+
+- 2026-11-11 **编辑改成双击进入 + 多编码（UTF-8 / UTF-16LE / UTF-16BE / GBK）**：
+  - 入口：去掉工具栏「编辑」按钮；代码区双击进入编辑、文件树双击「打开即编辑」（App 用 `autoEditSeq` 传递，
+    同一个信号只消费一次）；只读文件提示「只读」，可编辑提示「双击编辑」
+  - 编码识别：新增 `shell/src/winenc.rs`（kernel32 `MultiByteToWideChar/WideCharToMultiByte`，代码页 54936），
+    `fsindex` 增加 `Enc::Gbk`：无 BOM 时先试严格 UTF-8，不是合法 UTF-8 再试 GB18030，解得动就当 GBK；
+    行扫描/分页/整文/搜索全部按编码解码（GBK 换行字节同为 0x0A，字节层切行安全）
+  - 保存：`PUT /local/fs/write` 增加 `encoding`（utf8 / utf16le / utf16be / gbk）；不传沿用原编码，
+    换编码保存时不沿用旧 BOM、UTF-16 自动补 BOM、CRLF 按原文件风格保留；响应回 `{ size, mtimeMs, lineCount, encoding }`
+  - 前端：编辑态工具栏加「保存编码」下拉（默认文件原编码）；保存后 stat 的 encoding 同步，提示显示「已保存 · N 行 · GBK」
+  - 测试：Rust 31 项（新增 GBK 编解码/探测、UTF-8→UTF-16/UTF-8 改编码保存）；node 60 项
+    （新增 GBK 文件的 stat/text/保存往返、encoding=gbk / utf16le 改编码、UTF-16 字节序断言）
+  - 产物：dist + release exe 重建；README / docs §9 / tasks 同步
+
+- 2026-11-11 **「以指定编码重新打开」**：
+  - 后端：`fsindex::index_for_encoding(path, Option<Enc>)`——索引缓存键改成 `路径#编码`，
+    强制编码时只在 BOM 与它匹配时跳过 BOM；`stat` / `read` / `text` / `search` 全部接受 `encoding` 参数，
+    行索引按该编码重建（UTF-16 与单字节编码的行边界不同），不认识的名字回 400；
+    dev 中间件同语义（`scanIndex(filePath, forcedEnc)`、缓存键 `path#enc`、`invalidate()` 一次清所有变体）
+  - 前端：工具栏编码下拉改成常驻（二进制不显示）。非编辑态是「以该编码重新打开」（含「自动」＝回到探测），
+    切换后 stat / 分页读取 / Markdown 预览 / Ctrl+F 搜索全部按覆盖编码重读；编辑态同一控件就是「保存编码」
+  - 切文件 / 切目录自动回到「自动」，不会把上一条覆盖带到下一个文件
+  - 测试：Rust 32 项（新增「强制 GBK 覆盖探测、BOM 与强制编码一致时跳过 BOM」）；node 61 项
+    （新增「stat/text/read 带 encoding=gbk 重新解释、非法编码 400」）
+  - 产物：dist + release exe 重建并重启；README / docs §9 / tasks 同步
+
+- 2026-11-11 **文件树结构操作（新建 / 重命名 / 删除）**：
+  - 后端四个 POST 接口（Rust + dev 中间件同语义）：`mkdir` / `create` / `rename`（`to` 参数）/ `delete`；
+    目标可能不存在，所以走 `resolve_new`（父目录必须存在且 canonicalize 后仍在 root 内），
+    最后一段名字按 Windows 规则校验（非法字符、尾随空格/点、CON/PRN/COM1… 保留名、200 字上限）；
+    同名/目标被占用回 409，删根回 400，GET 打这些接口回 405
+  - 前端：文件树右键菜单（目录上可「新建文件/新建文件夹」，文件上「重命名/删除」，空白处对根目录新建）；
+    新建文件对话框带类型预设 `.c/.cpp/.cc/.cxx/.h/.hpp/.txt/.md/.json/.py/.js/.ts/.html/.css/.java/.go/.rs`，
+    选类型自动补扩展名；建完自动展开父目录并打开文件
+  - 安全联动：删除/重命名命中「当前打开的文件」且编辑器有未保存改动时先确认；删除后 App 关掉对应编辑器，
+    重命名后把打开中的路径换到新名字（含目录下的子文件）；`forgetSubtree()` 清掉被删/被改名子树的缓存
+  - 测试：Rust 35 项（新建→重命名→递归删除、名字/越界/删根、POST 门禁）；node 63 项
+    （新增 `scripts/fsOps.test.mjs`：四项操作真实 HTTP 往返、保留名 400、GET 405）
+  - 产物：dist + release exe 重建并重启；README / docs §9 同步
+
+- 2026-11-11 **代码补全**：
+  - 新增 `src/components/completion.ts`：上下文识别（word / member / path）、按语言抽符号、候选打分排序、
+    写回文本、浮层定位，全是纯函数
+  - 编辑器接入：输入即弹（首字符是字母/下划线；`.` 后给成员；字符串里 `./` 给路径），
+    `Tab`/`Enter` 接受、`↑↓`/`PgUp/PgDn` 选择、`Esc` 只关浮层、`Ctrl+Space` 手动触发；滚动自动关闭
+  - 数据来源：当前文件符号（200ms 去抖，>400KB 只算一次）+ 同目录文件符号（≤40 文件、单个 ≤128KB）
+    + 语言关键字 + 当前目录条目（import 路径）
+  - 测试：`scripts/completion.test.mjs` 24 项（上下文/触发/抽符号/排序/写回/路径/定位）；`npm test` 共 86 项全过
+  - 真实界面实测：WebView2 CDP 驱动，输入 `con` 弹出 `const,continue,ControlGate,TryConnect…`，
+    `Tab` 后该行变 `const`；`loadConfig.` 弹成员候选且 `greet` 排第一；`Esc` 逐层退出正常
+  - 产物：`dist` + release exe 重建并重启；README / product / tasks 同步

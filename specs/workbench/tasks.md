@@ -29,12 +29,14 @@
 - 验收：展开 `F:\opencode\workbench` 能看到真实文件；点文件能拿到路径
 - 完成信号：树可展开两级以上
 
-## T4 ✅ 编辑器（只读查看；保存未做）
+## T4 ✅ 编辑器（查看 + 编辑保存）
 
-- 范围：`src/components/CodeView.tsx` `src/api/client.ts`
-- 内容：只读代码查看（行号 + 虚拟滚动 + 分页读取）；未接 Monaco，也没有 Ctrl+S 保存
-- 验收：点文件能看到带行号的源码；大文件按页加载、滚动不卡
-- 完成信号：只读闭环（保存能力单列到「待评估」）
+- 范围：`src/components/CodeView.tsx` `src/components/CodeEditor.tsx` `src/api/client.ts` `shell/src/fsapi.rs`
+- 内容：只读查看（行号 + 虚拟滚动 + 分页读取）；2026-11-10 补上编辑：`PUT /local/fs/write` 原子写回，
+  ≤2MB，双击进入；编码支持 UTF-8 / UTF-16LE / UTF-16BE / GBK，保存时可用工具栏下拉换编码；
+  Ctrl+S 保存、mtime 冲突 409，保留 BOM / CRLF；未接 Monaco
+- 验收：点文件能看到带行号的源码；大文件按页加载、滚动不卡；改一行 Ctrl+S 后磁盘内容更新、切走前会提示未保存
+- 完成信号：编辑闭环（保存单列已收敛）
 
 ## T5 ✅ 会话面板
 
@@ -137,9 +139,22 @@
 - 验收：2.3MB `.md` 打开是 97 行源码（`preview=false`、无关闭提示）；8.16MB PNG 压到 2.1MB 后加入附件；审查视图点 `README.md` 后 `reviewActive=false`、编辑器显示该文件；swarm 27+27+19+22 全过，workbench 49 项全过
 - 完成信号：dev（headless Edge + CDP）实测 2026-11-10（`scripts/verify-fixes.mjs`、`scripts/verify-attach.mjs`）
 
+## T18 ✅ 代码补全（本地词法 + 同目录符号）
+
+- 范围：`src/components/completion.ts`（新）、`src/components/CodeEditor.tsx`、`src/styles/editor.css`、`scripts/completion.test.mjs`（新）
+- 内容：编辑态输入时弹补全浮层，候选 = 当前文件符号（函数/类/变量/类型/import）+ 同目录文件符号
+  + 语言关键字 + import 路径；`Tab`/`Enter` 接受、`↑↓`/`PgUp/PgDn` 选择、`Esc` 只关浮层不退出编辑、
+  `Ctrl+Space` 手动叫出；`=`/`.` 触发成员补全；字符串里 `./` 触发路径补全；滚动即关闭，避免位置漂移
+- 实现要点：符号每 200ms 去抖重算（>400KB 只在挂载时算）、同目录索引限 40 个文件 / 单个 128KB；
+  浮层定位抽成 `popupPlacement` 纯函数（行号列 68 + 内边距 12 + 列×字符宽，靠右夹紧、靠底翻到上方）
+- 验收：在真实工作台里打开一个 `.cs` 文件，输入 `con` 弹出 `const/continue` 与同目录符号，`Tab` 后该行变成 `const`；
+  输入 `loadConfig.` 弹成员候选且本文件符号排第一；`Esc` 关浮层后编辑器仍在、再 `Esc` 退出编辑
+- 完成信号：`tsc --noEmit` + `npm test` 86 项全过（新增 completion 24 项）；`dist` 与 release exe 重建并重启
+  实测 2026-11-11（WebView2 CDP 驱动真实界面，见 `.tmp/cdp-check.mjs` 的验证输出）
+
 ## 待评估
 
-- LSP 接入（Monaco + typescript-language-server）
+- LSP 接入（Monaco + typescript-language-server）：目前是本地词法补全，LSP 只用来补「类型级成员/签名」
 - 内置浏览器 / 图片预览
 - 多窗口（每个会话一个窗口）
 - 交互式终端（需要 x-opencode-ticket + WebSocket 代理）
