@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import Chat from './components/Chat'
 import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
@@ -6,6 +7,8 @@ import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
 import { getAuthState, onIpcMessage, retryAuth, startAuth, subscribeAuth } from './api/auth'
 import { getInfo, reconnect } from './api/client'
+import { normalizeRootPath, splitOpenPath } from './components/localPath'
+import { CHAT_W, SIDE_W, useUiLayout } from './hooks/useUiLayout'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
 const ROOT_KEY = 'oc-workbench:root'
@@ -29,6 +32,9 @@ export default function App() {
   const [reconnecting, setReconnecting] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
   const [file, setFile] = useState<string | null>(null)
+  // 打开工作区外的文件时，它自己的 root（文件所在目录）；null 表示就在当前工作区里。
+  // 分开存是为了点一下聊天里的外部路径不会把整个工作区切走（会话/文件树都还在原处）。
+  const [fileRoot, setFileRoot] = useState<string | null>(null)
   // 每次点文件自增：点同一个文件也能强制重读
   const [fileSeq, setFileSeq] = useState(0)
   // 打开时要跳到的行（1 基）；只在本次 openSeq 生效，跳完就不管了
@@ -54,6 +60,63 @@ export default function App() {
       alive.current = false
     }
   }, [])
+
+  // 三栏宽度 + 整体缩放（Ctrl/⌘ + 滚轮），都落 localStorage
+  const { sideW, chatW, scaleHint, setSideW, setChatW, resetSizes } = useUiLayout()
+  const mainRef = useRef<HTMLDivElement | null>(null)
+
+  // 上一次按在分隔条上的时刻。双击复位靠这里判断，不用 dblclick：
+  // pointerdown 里的 preventDefault 会掐掉后续的 click，dblclick 就永远不来。
+  const lastGrabRef = useRef(0)
+
+  /**
+   * 拖动分隔条。
+   * 用「实际渲染宽度 / 逻辑宽度」换算鼠标位移，这样界面被 Ctrl+滚轮 zoom 过之后
+   * 拖拽手感仍然是 1:1（zoom 会同时改变 clientX 与 getBoundingClientRect 的尺度）。
+   */
+  const beginResize = useCallback(
+    (which: 'side' | 'chat') => (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return
+
+      const now = performance.now()
+      const isDouble = lastGrabRef.current > 0 && now - lastGrabRef.current < 320
+      lastGrabRef.current = isDouble ? 0 : now
+      if (isDouble) {
+        resetSizes()
+        return
+      }
+
+      event.preventDefault()
+      const main = mainRef.current
+      if (!main) return
+
+      const pane = main.querySelector(which === 'side' ? '.sidebar' : '.chat-pane')
+      const base = which === 'side' ? sideW : chatW
+      const rendered = pane?.getBoundingClientRect().width ?? base
+      const ratio = base > 0 && rendered > 0 ? rendered / base : 1
+      const startX = event.clientX
+
+      document.body.classList.add('resizing')
+
+      const onMove = (moveEvent: PointerEvent) => {
+        const delta = (moveEvent.clientX - startX) / ratio
+        // 左侧分隔条往右拖 = 变宽；右侧分隔条往右拖 = 聊天变窄
+        if (which === 'side') setSideW(base + delta)
+        else setChatW(base - delta)
+      }
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+        document.body.classList.remove('resizing')
+      }
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    },
+    [sideW, chatW, setSideW, setChatW, resetSizes],
+  )
 
   // 挂载即发起 IPC 握手；拿不到令牌只影响连接状态，不影响界面渲染。
   useEffect(() => {
@@ -111,8 +174,8 @@ export default function App() {
       w.ipc.postMessage('oc:pick-folder')
       return
     }
-    const value = window.prompt('输入文件夹路径', root)
-    if (value && value.trim()) applyRoot(value.trim())
+    const value = window.prompt('输入文件夹路径（可直接粘贴带引号的路径）', root)
+    if (value) applyRoot(value)
   }
 
   // IPC 订阅是空依赖，闭包里的 root 永远是首帧值，所以用 ref 跟踪最新目录。
@@ -121,7 +184,10 @@ export default function App() {
 
   const normPath = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
 
-  function applyRoot(path: string) {
+  function applyRoot(input: string) {
+    // 手输/粘贴/外壳下发的路径先抹平：引号、正反斜杠、/c/ 风格、file://、尾斜杠。
+    const path = normalizeRootPath(input)
+    if (!path) return
     // 同一目录：只补刷新持久化，不清掉正在看的文件（选同一文件夹/重试都会走到这）。
     if (normPath(rootRef.current) === normPath(path)) {
       try {
@@ -147,6 +213,7 @@ export default function App() {
     const w = window as unknown as { ipc?: { postMessage(message: string): void } }
     w.ipc?.postMessage(`oc:save-root:${path}`)
     setFile(null)
+    setFileRoot(null)
     setFileLine(null)
   }
 
@@ -178,7 +245,14 @@ export default function App() {
   const openFile = useCallback((relPath: string, line?: number, edit?: boolean) => {
     // 编辑中的未保存内容不能因为点了一下文件树就无声丢掉
     if (editorDirty.current && !window.confirm('当前文件有未保存的修改，确定离开？')) return
-    setFile(relPath)
+    // 聊天里的路径常是绝对路径（`C:\...`、`/c/...`），而本地文件通道只收相对 root 的
+    // 路径，盘符那一段会被当成非法片段 400 拒掉。落在工作区外就临时换成它所在目录当
+    // root —— 只影响编辑器，不改当前工作区，会话和文件树都留在原处。
+    const target = splitOpenPath(rootRef.current, relPath)
+    if (!target.path) return
+    const sameRoot = normPath(target.root) === normPath(rootRef.current)
+    setFileRoot(sameRoot ? null : target.root)
+    setFile(target.path)
     setFileLine(typeof line === 'number' && Number.isFinite(line) ? line : null)
     setFileSeq((value) => value + 1)
     // 双击文件树：打开后直接进编辑
@@ -186,6 +260,21 @@ export default function App() {
     // 停在「审查」面板时点路径/文件树也要有反应：切回代码视图
     setView('code')
   }, [])
+
+  // 点路径栏的「外部文件」标记：把这个目录正式变成工作区，正在看的文件保持不变。
+  const useExternalRoot = useCallback((targetRoot: string) => {
+    if (!file) return
+    const target = file
+    applyRoot(targetRoot)
+    // applyRoot 会清掉 file，这里补回来（同一个事件里批处理，最终是新文件）
+    setFile(target)
+  }, [file, fileRoot])
+
+  // 文件被关掉（删除/切换工作区）时把它的专属 root 一并清掉，
+  // 否则下次点工作区内的相对路径还会沿用上一个外部目录。
+  useEffect(() => {
+    if (!file) setFileRoot(null)
+  }, [file])
 
   const handleEditorDirty = useCallback((dirty: boolean) => {
     editorDirty.current = dirty
@@ -285,7 +374,16 @@ export default function App() {
 
       {notice ? <div className="app-notice">{notice.text}</div> : null}
 
-      <div className="main">
+      <div
+        className="main"
+        ref={mainRef}
+        style={
+          {
+            '--side-w': `${sideW}px`,
+            '--chat-w': `${chatW}px`,
+          } as CSSProperties
+        }
+      >
         <aside className="sidebar">
           <div className="pane-title">
             资源管理器
@@ -310,7 +408,8 @@ export default function App() {
               root={root}
               onOpenFile={openFile}
               refreshSeq={treeSeq}
-              activePath={file}
+              // 正在看工作区外的文件时不高亮任何树节点（path 是相对文件自己的 root 的）
+              activePath={fileRoot ? null : file}
               isDirty={isEditorDirty}
               onPathRemoved={handlePathRemoved}
               onPathRenamed={handlePathRenamed}
@@ -324,12 +423,22 @@ export default function App() {
           )}
         </aside>
 
+        <div
+          className="col-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧栏宽度"
+          title="拖动调整宽度，双击复位"
+          onPointerDown={beginResize('side')}
+        />
+
         <section className="editor-pane">
           {view === 'diff' ? (
             <ReviewPanel root={root} connected={connected} />
           ) : (
             <CodeView
-              root={root}
+              // 外部文件用它自己的目录当 root，读写/搜索都落在同一个工作目录下
+              root={fileRoot ?? root}
               path={file}
               openSeq={fileSeq}
               openLine={fileLine}
@@ -337,9 +446,20 @@ export default function App() {
               onDirtyChange={handleEditorDirty}
               onSaved={handleEditorSaved}
               autoEditSeq={autoEditSeq}
+              externalRoot={fileRoot}
+              onUseExternalRoot={useExternalRoot}
             />
           )}
         </section>
+
+        <div
+          className="col-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整聊天面板宽度"
+          title="拖动调整宽度，双击复位"
+          onPointerDown={beginResize('chat')}
+        />
 
         <aside className="chat-pane">
           <Chat key={root} root={root} connected={connected} onOpenFile={openFile} />
@@ -347,6 +467,11 @@ export default function App() {
       </div>
 
       <Terminal key={root} root={root} connected={connected} />
+
+      {/* 缩放比例：只在 Ctrl+滚轮时短暂出现，平时不占位也不吃鼠标 */}
+      <div className={`zoom-hint${scaleHint ? ' show' : ''}`} aria-live="polite">
+        {scaleHint ?? ''}
+      </div>
     </div>
   )
 }

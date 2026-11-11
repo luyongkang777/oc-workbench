@@ -18,27 +18,27 @@
   gap: 6px;
   width: 100%;
   padding: 3px 8px;
-  background: #232323;
-  border: 1px solid #3c3c3c;
-  border-left: 3px solid #0e639c;
-  color: #b0b0b0;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-left: 3px solid var(--accent-line);
+  color: var(--text-2);
   font-size: 11.5px;
   text-align: left;
   cursor: pointer;
 }
 
 .chat-tools-summary:hover {
-  border-color: #0e639c;
+  border-color: var(--accent-line);
 }
 
 .chat-tools-caret {
-  color: #7a7a7a;
+  color: var(--text-3);
   font-size: 10px;
   width: 10px;
 }
 
 .chat-tools-kinds {
-  color: #6e6e6e;
+  color: var(--text-3);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -51,7 +51,7 @@
   gap: 2px;
   margin-left: 6px;
   padding-left: 8px;
-  border-left: 1px solid #333;
+  border-left: 1px solid var(--line-1);
 }
 
 .chat-tool-row {
@@ -59,12 +59,12 @@
   align-items: baseline;
   gap: 8px;
   font-size: 11px;
-  color: #9d9d9d;
+  color: var(--text-2);
   padding: 1px 0;
 }
 
 .chat-tool-name {
-  color: #9cdcfe;
+  color: var(--info-ink);
   flex: 0 0 auto;
 }
 
@@ -74,7 +74,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: 'Cascadia Mono', Consolas, monospace;
-  color: #8a8a8a;
+  color: var(--text-3);
 }
 
 .chat-tool-status {
@@ -95,22 +95,22 @@
 }
 
 .chat-tool-file:hover {
-  color: #9fc3ef;
+  color: var(--info);
 }
 
 .chat-tool-file:focus-visible {
-  outline: 1px solid #7aa7d6;
+  outline: 1px solid var(--accent-line);
   outline-offset: 1px;
 }
 
 .chat-tool-row.done .chat-tool-status {
-  color: #4ec9b0;
+  color: var(--accent);
 }
 
 .chat-tool-row.run .chat-tool-status {
-  color: #e2c08d;
+  color: var(--warn);
 }
 
 .chat-tool-row.fail .chat-tool-status {
-  color: #f14c4c;
+  color: var(--danger);
 }

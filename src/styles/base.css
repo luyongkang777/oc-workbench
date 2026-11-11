@@ -1,4 +1,81 @@
-/* 基础：reset / 全局字体 / 顶栏 / 滚动条 */
+/* 基础：设计 token / reset / 全局字体 / 顶栏 / 滚动条 */
+
+/* ==========================================================================
+   设计 token
+   统一色相 225°（蓝偏冷），表面四级 + 一个凹槽。感知亮度 L 依次 17/23/31/41/52，
+   越往上级差越大——高层表面面积小、停留短，需要更大的差值才认得出「浮起」。
+   ========================================================================== */
+:root {
+  /* ---------- 表面 ---------- */
+  --bg-inset: #0f1117; /* 凹槽：终端 / 输入框 / 代码块 */
+  --bg-0: #15171d; /* 编辑器主体 / 应用底 */
+  --bg-1: #1c1f27; /* 面板 / 顶栏 / 各种工具条 */
+  --bg-2: #252935; /* 抬升：气泡 / 工具卡 / 表头 */
+  --bg-3: #2f3443; /* 浮层：菜单 / 对话框 / 补全 */
+
+  /* 叠加层：任意表面上直接可用 */
+  --bg-hover: #ffffff0d;
+  --bg-control: #ffffff10;
+  --bg-control-hover: #ffffff1c;
+
+  /* ---------- 描边 ---------- */
+  --line-1: #ffffff0f;
+  --line-2: #ffffff1f;
+
+  /* ---------- 文字 ---------- */
+  --text-1: #dde1e8; /* 正文 / 代码 / 按钮 */
+  --text-2: #9aa1b2; /* 面板标题 / 路径 / 说明 */
+  --text-3: #6d7484; /* 提示 / 占位 / meta */
+  --text-4: #4e5462; /* 仅行号，不可用于可读文案 */
+  --text-inverse: #0f1418; /* 品牌色填充上的字 */
+
+  /* ---------- 品牌 ---------- */
+  --accent: #4ec9b0;
+  --accent-hover: #63d8c1;
+  --accent-weak: #163b36;
+  --accent-weak-hover: #1b4a43;
+  --accent-line: #4ec9b066;
+
+  /* ---------- 语义 ---------- */
+  --success: #7bc96f;
+  --success-weak: #17281a;
+  --success-line: #24422a;
+
+  --danger: #f0716b;
+  --danger-soft: #ffd9d6;
+  --danger-weak: #2b1618;
+  --danger-weak-hover: #3a1d1f;
+  --danger-line: #5a2326;
+
+  --warn: #e3b567;
+  --warn-ink: #f3d7a4;
+  --warn-weak: #2b2414;
+  --warn-line: #4a3a1c;
+
+  --info: #4daafc;
+  --info-ink: #a9d3fb;
+  --info-weak: #142634;
+
+  --reasoning: #8a7bd8;
+  --reasoning-weak: #241f3d;
+
+  /* ---------- 圆角：直角是结构，圆角是交互 ---------- */
+  --r-1: 2px; /* 小 chip / badge */
+  --r-2: 4px; /* 按钮 / 输入框 / 下拉 */
+  --r-3: 6px; /* 气泡 / 菜单 / 卡片 / 代码块 */
+  --r-4: 8px; /* 唯一模态对话框 */
+
+  /* ---------- 阴影 ---------- */
+  --shadow-1: 0 4px 12px rgba(4, 6, 12, 0.45);
+  --shadow-2: 0 8px 24px rgba(4, 6, 12, 0.55);
+  --shadow-3: 0 18px 48px rgba(4, 6, 12, 0.6);
+
+  /* ---------- 其它 ---------- */
+  --scroll-thumb: #3a4152;
+  --scroll-thumb-hover: #4a5266;
+  --ring: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--accent-line);
+  --ease: 120ms cubic-bezier(0.2, 0.6, 0.2, 1);
+}
 
 * {
   box-sizing: border-box;
@@ -12,8 +89,8 @@ body,
 }
 
 body {
-  background: #1e1e1e;
-  color: #cccccc;
+  background: var(--bg-0);
+  color: var(--text-1);
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
   font-size: 13px;
   overflow: hidden;
@@ -26,48 +103,136 @@ body {
 }
 
 /* ---------- 顶栏 ---------- */
+/* 顶栏不再是最亮的一层：与面板同层（--bg-1），只留一条最淡的分隔线。
+   原先 #323233 比工作区亮 27 点，视线第一落点被压在 34px 横条上。 */
 .topbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 34px;
+  gap: 10px;
+  height: 32px;
   padding: 0 12px;
-  background: #323233;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
   flex: 0 0 auto;
   user-select: none;
 }
 
 .brand {
+  font-size: 12px;
   font-weight: 600;
-  color: #e6e6e6;
+  color: var(--text-2);
   letter-spacing: 0.2px;
+  cursor: default;
 }
 
 .topbar-spacer {
   flex: 1;
 }
 
+/* ---------- 连接状态 ---------- */
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   display: inline-block;
+  flex: 0 0 auto;
 }
 
 .status-dot.ok {
-  background: #4ec9b0;
-  box-shadow: 0 0 6px rgba(78, 201, 176, 0.6);
+  background: var(--success);
+  box-shadow: none; /* 光晕是「警灯」语言，常驻会持续抢注意力 */
+}
+
+.status-dot.pending {
+  background: var(--warn);
+  animation: status-pulse 1.4s ease-in-out infinite;
 }
 
 .status-dot.bad {
-  background: #f14c4c;
-  box-shadow: 0 0 6px rgba(241, 76, 76, 0.6);
+  background: var(--danger);
+  box-shadow: 0 0 0 3px #f0716b26; /* 只在异常时用一圈环，不用 bloom */
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .status-text {
-  color: #a0a0a0;
+  color: var(--text-3);
   font-size: 12px;
+}
+
+/* 未连接时整块可点重试 */
+.status-text.retryable {
+  color: var(--danger);
+  cursor: pointer;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-text.retryable:hover {
+  color: var(--danger-soft);
+}
+
+/* ---------- 顶栏按钮 ---------- */
+/* 这个类此前完全没有规则，渲染成浏览器默认浅灰按钮，是顶栏亮斑的主要来源 */
+.review-toggle {
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  line-height: 20px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    border-color var(--ease),
+    background var(--ease);
+}
+
+.review-toggle:hover {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+}
+
+.review-toggle.active {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.retry-button {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  line-height: 20px;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition: background var(--ease);
+}
+
+.retry-button:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  color: var(--text-1);
+}
+
+.retry-button:disabled {
+  color: var(--text-4);
+  cursor: default;
 }
 
 /* ---------- 滚动条 ---------- */
@@ -77,14 +242,52 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #424242;
-  border: 2px solid #1e1e1e;
+  background: var(--scroll-thumb);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 5px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4f4f4f;
+  background: var(--scroll-thumb-hover);
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------- 缩放比例浮层 ---------- */
+/* 只在 Ctrl+滚轮后短暂出现。始终留在 DOM 里（文本为空），靠 .show 做过渡，
+   这样淡出是动画而不是元素瞬间消失。 */
+.zoom-hint {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  min-width: 52px;
+  padding: 5px 10px;
+  border-radius: var(--r-3);
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow-2);
+  color: var(--text-1);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+  z-index: 100;
+}
+
+.zoom-hint.show {
+  opacity: 1;
+  transform: translateY(0);
 }

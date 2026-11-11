@@ -367,6 +367,41 @@ export function isSessionBusy(session: SessionInfo): boolean {
   return busy > idle
 }
 
+/** 服务端推来的事件。字段按实际用到的那几个声明，其余不管。 */
+export type StreamEvent = {
+  type?: string
+  data?: {
+    sessionID?: string
+    assistantMessageID?: string
+    /** 同一条消息里第几个 text 段 */
+    ordinal?: number
+    /** 流式增量 */
+    delta?: string
+    /** 定稿全文（text.ended 带） */
+    text?: string
+    /** step.started 带的开始时间 */
+    started?: number
+    agent?: string
+    model?: { id?: string; providerID?: string }
+    form?: { sessionID?: string }
+  }
+}
+
+/**
+ * 这类事件本地就能处理（改本地消息），不需要重新拉整包。
+ * 其余事件（step.ended、execution.* 等）仍然触发一次全量对账。
+ */
+const INCREMENTAL_EVENTS = new Set([
+  'session.step.started',
+  'session.text.started',
+  'session.text.delta',
+  'session.text.ended',
+])
+
+export function isIncrementalEvent(type: string | undefined): boolean {
+  return typeof type === 'string' && INCREMENTAL_EVENTS.has(type)
+}
+
 /**
  * 订阅 `/api/event`。
  *
@@ -374,10 +409,7 @@ export function isSessionBusy(session: SessionInfo): boolean {
  * 这里用 fetch 流手动按 SSE 的 `data: {...}` 行解析（心跳是 `: heartbeat`，跳过）。
  */
 export async function subscribeEvents(
-  onEvent: (event: {
-    type?: string
-    data?: { sessionID?: string; form?: { sessionID?: string } }
-  }) => void,
+  onEvent: (event: StreamEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
   const headers = new Headers()

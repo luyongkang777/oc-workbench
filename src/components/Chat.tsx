@@ -10,6 +10,8 @@ import {
   mergeCommands,
   parseSlash,
 } from './chatCommands'
+import { appendText, ensureMessage, setText } from './streamPatch'
+import type { StreamEvent } from '../api/chat'
 import { useChatEvents } from '../hooks/useChatEvents'
 import { useChatForms } from '../hooks/useChatForms'
 import { useChatModels } from '../hooks/useChatModels'
@@ -67,6 +69,8 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
   const [showAllSessions, setShowAllSessions] = useState(false)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  // 当前会话的 agent（界面叫「模式」）。空串表示跟着服务端默认走，显示时回退到第一个。
+  const [agent, setAgent] = useState('')
   const [serverCommands, setServerCommands] = useState<CommandInfo[]>([])
 
   const currentRef = useRef<string | null>(null)
@@ -131,6 +135,39 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     [reloadMessages, reloadForms],
   )
 
+  /**
+   * 流式增量：文本事件直接改本地那条消息，不重新拉整包。
+   * 大会话一次全量 6MB+，原来每个 delta 都拉一遍，越聊越卡。
+   */
+  const applyStream = useCallback((event: StreamEvent) => {
+    const id = event.data?.assistantMessageID
+    if (!id) return
+    const ordinal = typeof event.data?.ordinal === 'number' ? event.data.ordinal : 0
+
+    if (event.type === 'session.step.started') {
+      // 新的一轮开始：本地先插一条骨架，后面的 delta 才有地方落
+      setMessages((prev) =>
+        ensureMessage(prev, id, {
+          time: { created: event.data?.started },
+          model: event.data?.model,
+        }),
+      )
+      return
+    }
+
+    if (event.type === 'session.text.delta' && typeof event.data?.delta === 'string') {
+      const delta = event.data.delta
+      setMessages((prev) => appendText(prev, id, ordinal, delta))
+      return
+    }
+
+    if (event.type === 'session.text.ended' && typeof event.data?.text === 'string') {
+      // 定稿：用全文覆盖一遍，防增量丢字
+      const text = event.data.text
+      setMessages((prev) => setText(prev, id, ordinal, text))
+    }
+  }, [])
+
   // 连上（或 root 变化触发重挂载）时拉本目录的会话列表。
   // 不用 booted 守卫：StrictMode 会把 effect 跑两遍，守卫会让第二遍直接跳过、
   // 而第一遍的结果又被 alive 丢弃，导致列表永远为空。
@@ -172,7 +209,7 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     void reloadMessages(currentID)
   }, [currentID, sessions, syncSessionModel, reloadMessages])
 
-  useChatEvents(connected, currentID, refreshSession)
+  useChatEvents(connected, currentID, refreshSession, applyStream)
 
   // 新消息到达时贴到底部
   useEffect(() => {
@@ -263,13 +300,14 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     }
   }
 
-  /** 切换当前会话的 agent。 */
+  /** 切换当前会话的 agent（界面上的「模式」）。 */
   async function pickAgent(id: string) {
     const sessionID = await ensureSession('切换 agent')
     if (!sessionID) return
     setError(null)
     try {
       await switchAgent(sessionID, id)
+      setAgent(id)
       await reloadMessages(sessionID)
     } catch (err) {
       setError((err as Error).message)
@@ -485,6 +523,9 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
         sessions={visibleSessions}
         hiddenCount={hiddenCount}
         showAll={showAllSessions}
+        agents={agents}
+        currentAgent={agent || agents[0]?.id || ''}
+        onPickAgent={(id) => void pickAgent(id)}
         onToggleShowAll={() => setShowAllSessions((value) => !value)}
         current={current}
         expanded={expanded}

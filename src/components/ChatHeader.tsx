@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ModelInfo, SessionInfo } from '../api/chat'
+import type { AgentInfo, ModelInfo, SessionInfo } from '../api/chat'
 
 type ModelKey = { id: string; providerID: string; variant?: string }
 
@@ -12,6 +12,11 @@ type Props = {
   modelsError?: string | null
   onRetryModels?: () => void
   currentModel: ModelKey | null
+  /** 可切换的模式（服务端 agent，已滤掉 hidden 与 subagent） */
+  agents: AgentInfo[]
+  /** 当前模式 id；空串表示跟随服务端默认 */
+  currentAgent: string
+  onPickAgent: (id: string) => void
   connected: boolean
   onToggleSessions: () => void
   onPickSession: (id: string) => void
@@ -67,6 +72,9 @@ export default function ChatHeader({
   onRetryModels,
   currentModel,
   connected,
+  agents,
+  currentAgent,
+  onPickAgent,
   onToggleSessions,
   onPickSession,
   onNewSession,
@@ -77,6 +85,8 @@ export default function ChatHeader({
   onToggleShowAll,
 }: Props) {
   const [modelsOpen, setModelsOpen] = useState(false)
+  const [modesOpen, setModesOpen] = useState(false)
+  const modesBox = useRef<HTMLDivElement | null>(null)
   const [filter, setFilter] = useState('')
   /** 点开一个有思考档位的模型后，先选档位再切换 */
   const [pendingModel, setPendingModel] = useState<ModelInfo | null>(null)
@@ -94,6 +104,22 @@ export default function ChatHeader({
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
   }, [modelsOpen])
+
+  // 点外面收起模式下拉
+  useEffect(() => {
+    if (!modesOpen) return
+    const onDown = (event: MouseEvent) => {
+      if (modesBox.current && !modesBox.current.contains(event.target as Node)) {
+        setModesOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [modesOpen])
+
+  const activeAgent = agents.find((a) => a.id === currentAgent)
+  // 没有 name 的 agent（自定义配置常见）用 id 兜底
+  const agentLabel = activeAgent?.name ?? activeAgent?.id ?? currentAgent ?? '模式'
 
   const active = currentModel
     ? models.find((m) => m.id === currentModel.id && m.providerID === currentModel.providerID)
@@ -136,6 +162,40 @@ export default function ChatHeader({
         >
           {current ? shortTitle(current) : '会话'} ▾
         </button>
+
+        <div className="mode-picker" ref={modesBox}>
+          <button
+            type="button"
+            className={`mode-toggle${modesOpen ? ' open' : ''}`}
+            title={`模式：${agentLabel}${activeAgent?.description ? `\n${activeAgent.description}` : ''}`}
+            onClick={() => setModesOpen((value) => !value)}
+            disabled={agents.length === 0}
+          >
+            <span className="mode-toggle-text">{agentLabel}</span>
+            <span className="mode-toggle-caret">▾</span>
+          </button>
+          {modesOpen ? (
+            <div className="mode-menu">
+              {agents.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`mode-item${item.id === currentAgent ? ' active' : ''}`}
+                  title={item.description}
+                  onClick={() => {
+                    onPickAgent(item.id)
+                    setModesOpen(false)
+                  }}
+                >
+                  <span className="mode-item-name">{item.name ?? item.id}</span>
+                  {item.description ? (
+                    <span className="mode-item-desc">{item.description}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
 
         <div className="model-picker" ref={modelsBox}>
           <button

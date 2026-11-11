@@ -47,6 +47,40 @@ type Props = {
   onSaved?: (path: string) => void
   /** 外层要求「打开后直接进编辑」（双击文件树时自增）。 */
   autoEditSeq?: number
+  /** 当前文件在工作区外时，它自己的根目录；null/undefined 表示就在工作区里。 */
+  externalRoot?: string | null
+  /** 点「外部文件」标记：把工作区切到这个目录。 */
+  onUseExternalRoot?: (root: string) => void
+}
+
+/**
+ * 路径栏：工作区外的文件在路径右边挂一个可点的「外部文件」标记，
+ * 免得文件树里没有高亮时让人以为文件没打开。
+ */
+function PathBar({
+  path,
+  externalRoot,
+  onUseExternalRoot,
+}: {
+  path: string | null
+  externalRoot?: string | null
+  onUseExternalRoot?: (root: string) => void
+}) {
+  return (
+    <div className="editor-path" title={path ?? ''}>
+      <span className="editor-path-text">{path}</span>
+      {externalRoot ? (
+        <button
+          type="button"
+          className="editor-external"
+          title={`这个文件不在当前工作区。点一下把工作区切到 ${externalRoot}`}
+          onClick={() => onUseExternalRoot?.(externalRoot)}
+        >
+          外部文件 · {externalRoot}
+        </button>
+      ) : null}
+    </div>
+  )
 }
 
 /**
@@ -68,6 +102,8 @@ export default function CodeView({
   onDirtyChange,
   onSaved,
   autoEditSeq = 0,
+  externalRoot = null,
+  onUseExternalRoot,
 }: Props) {
   const [stat, setStat] = useState<FileStat | null>(null)
   const [statPath, setStatPath] = useState<string | null>(null)
@@ -583,9 +619,7 @@ export default function CodeView({
   if (statError) {
     return (
       <div className="editor">
-        <div className="editor-path" title={path}>
-          {path}
-        </div>
+        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
         <div className="editor-error">
           <div>{statError}</div>
           <button type="button" className="editor-retry" onClick={() => setReload((v) => v + 1)}>
@@ -599,9 +633,7 @@ export default function CodeView({
   if (loading || !stat || statPath !== path) {
     return (
       <div className="editor">
-        <div className="editor-path" title={path}>
-          {path}
-        </div>
+        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
         <div className="editor-empty">读取中…</div>
       </div>
     )
@@ -612,9 +644,7 @@ export default function CodeView({
 
   return (
     <div className="editor">
-      <div className="editor-path" title={path}>
-        {path}
-      </div>
+      <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
       <CodeToolbar
         stat={stat}
         markdown={markdown}
