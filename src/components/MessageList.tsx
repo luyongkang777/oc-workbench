@@ -4,7 +4,7 @@ import MarkdownText, { type OpenFile } from './MarkdownText'
 import { copyText } from './clipboard'
 import { isImageFile, messageFilePreview } from './attachments'
 import { parseFilePath } from './fileLinks'
-import { groupTurns, reasoningLabel, type ToolInfo, type Turn } from './turns'
+import { groupTurns, reasoningLabel, type ToolInfo, type Turn, type TurnBlock } from './turns'
 import type { ChatMessage, MessageFile } from '../api/chat'
 
 function summarize(tools: ToolInfo[]): string {
@@ -69,37 +69,40 @@ function ToolGroup({ tools, onOpenFile }: { tools: ToolInfo[]; onOpenFile?: Open
 }
 
 /**
- * 思考过程：模型在吐 reasoning 段时实时显示（默认展开、标题走秒），
- * 结束后默认收起，点标题可以回看。空文本阶段也显示标题，避免「什么都没发生」的错觉。
+ * 一段思考。每段独立成块 —— 第一次思考结束就落位，说过话、调过工具之后的第二次思考
+ * 另起一块往下排，不再把所有 reasoning 拼成一大坨。
  */
-function ReasoningBlock({ turn }: { turn: Turn }) {
+function ReasoningBlock({ block }: { block: Extract<TurnBlock, { kind: 'reasoning' }> }) {
   const [manual, setManual] = useState<boolean | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
-  // 新的一轮思考开始：恢复自动展开
+  // 这一段开始推理：恢复自动展开
   useEffect(() => {
-    if (turn.reasoningActive) setManual(null)
-  }, [turn.reasoningActive])
+    if (block.active) setManual(null)
+  }, [block.active])
 
   useEffect(() => {
-    if (!turn.reasoningActive) return
+    if (!block.active) return
     const timer = window.setInterval(() => setNow(Date.now()), 500)
     return () => window.clearInterval(timer)
-  }, [turn.reasoningActive])
+  }, [block.active])
 
-  const open = manual === null ? turn.reasoningActive : manual
-  const label = reasoningLabel(turn, now)
+  const open = manual === null ? block.active : manual
+  const label = reasoningLabel(
+    { reasoningActive: block.active, reasoningMs: block.ms, reasoningStartedAt: block.startedAt },
+    now,
+  )
 
   return (
-    <div className={`chat-reasoning${turn.reasoningActive ? ' active' : ''}`}>
+    <div className={`chat-reasoning${block.active ? ' active' : ''}`}>
       <button type="button" className="chat-reasoning-head" onClick={() => setManual(!open)}>
         <span className="chat-reasoning-caret">{open ? '▾' : '▸'}</span>
         <span className="chat-reasoning-label">{label}</span>
-        <span className="chat-reasoning-hint">{turn.reasoningActive ? '模型正在推理' : '点击查看'}</span>
+        <span className="chat-reasoning-hint">{block.active ? '模型正在推理' : '点击查看'}</span>
       </button>
       {open ? (
         <div className="chat-reasoning-body">
-          {turn.reasoning ? turn.reasoning : <span className="chat-reasoning-wait">等待思考内容…</span>}
+          {block.text ? block.text : <span className="chat-reasoning-wait">等待思考内容…</span>}
         </div>
       ) : null}
     </div>
@@ -235,9 +238,7 @@ export default function MessageList({
 
   // 首字还没到（assistant 消息都还没建）时先给一个「思考中」，别让界面像卡住
   const last = turns[turns.length - 1]
-  const waiting =
-    running &&
-    (!last || (last.texts.length === 0 && last.tools.length === 0 && !last.reasoningActive))
+  const waiting = running && (!last || last.blocks.length === 0)
 
   // 点别处、滚动、按 Esc 都关掉右键菜单
   useEffect(() => {
@@ -309,23 +310,24 @@ export default function MessageList({
             </div>
           ) : null}
 
-          {turn.reasoningActive || turn.reasoning ? <ReasoningBlock turn={turn} /> : null}
-
-          {turn.texts.length > 0 ? (
-            <div className="chat-msg assistant">
-              <div
-                className="chat-bubble-wrap"
-                onContextMenu={(e) => openMenu(e, turn.texts.join('\n\n'))}
-              >
-                <div className="chat-bubble">
-                  <MarkdownText text={turn.texts.join('\n\n')} root={root} onOpenFile={onOpenFile} />
+          {turn.blocks.map((block) => {
+            if (block.kind === 'reasoning') {
+              return <ReasoningBlock block={block} key={block.key} />
+            }
+            if (block.kind === 'tools') {
+              return <ToolGroup tools={block.tools} onOpenFile={onOpenFile} key={block.key} />
+            }
+            return (
+              <div className="chat-msg assistant" key={block.key}>
+                <div className="chat-bubble-wrap" onContextMenu={(e) => openMenu(e, block.text)}>
+                  <div className="chat-bubble">
+                    <MarkdownText text={block.text} root={root} onOpenFile={onOpenFile} />
+                  </div>
+                  <CopyButton text={block.text} title="复制这条回复（Markdown 原文）" />
                 </div>
-                <CopyButton text={turn.texts.join('\n\n')} title="复制这条回复（Markdown 原文）" />
               </div>
-            </div>
-          ) : null}
-
-          <ToolGroup tools={turn.tools} onOpenFile={onOpenFile} />
+            )
+          })}
         </div>
       ))}
 

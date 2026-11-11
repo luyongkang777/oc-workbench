@@ -12,11 +12,23 @@ export type ToolInfo = {
   detail: string
 }
 
+/**
+ * 一轮里的一段输出，按消息 part 的原始顺序排列。
+ * 渲染层必须按这个顺序走，才能做到「思考 → 说话 → 工具 → 思考 → 说话」交错，
+ * 而不是把同类型的内容合并成三大块。
+ */
+export type TurnBlock =
+  | { kind: 'reasoning'; text: string; active: boolean; ms: number; startedAt: number | null; key: string }
+  | { kind: 'text'; text: string; key: string }
+  | { kind: 'tools'; tools: ToolInfo[]; key: string }
+
 export type Turn = {
   id: string
   user?: string
   /** 这条用户消息带的附件（图片/文件） */
   files: MessageFile[]
+  /** 按原始顺序排列的段落（渲染用这个） */
+  blocks: TurnBlock[]
   texts: string[]
   tools: ToolInfo[]
   /** 思考段全文（多段用空行分开） */
@@ -58,6 +70,7 @@ function emptyTurn(id: string): Turn {
   return {
     id,
     files: [],
+    blocks: [],
     texts: [],
     tools: [],
     reasoning: '',
@@ -93,9 +106,19 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
     }
 
     const done = typeof message.time?.completed === 'number'
+    let blockIndex = 0
+    const nextKey = () => `${message.id}:${blockIndex++}`
+
     for (const part of message.content ?? []) {
       if (part.type === 'text' && part.text) {
         turn.texts.push(part.text)
+        // 连续的 text 段合成一段话；中间隔了思考或工具就另起一块
+        const prev = turn.blocks[turn.blocks.length - 1]
+        if (prev && prev.kind === 'text') {
+          prev.text = prev.text ? `${prev.text}\n\n${part.text}` : part.text
+        } else {
+          turn.blocks.push({ kind: 'text', text: part.text, key: nextKey() })
+        }
       } else if (part.type === 'reasoning') {
         const text = typeof part.text === 'string' ? part.text.trim() : ''
         if (text) {
@@ -103,20 +126,41 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
         }
         const created = part.time?.created
         const completed = part.time?.completed
+
+        let ms = 0
+        let active = false
+        let startedAt: number | null = null
+
         if (typeof created === 'number' && typeof completed === 'number') {
-          turn.reasoningMs += Math.max(0, completed - created)
+          ms = Math.max(0, completed - created)
+          turn.reasoningMs += ms
         } else if (!done && typeof created === 'number') {
+          active = true
+          startedAt = created
           turn.reasoningActive = true
           if (turn.reasoningStartedAt === null || created < turn.reasoningStartedAt) {
             turn.reasoningStartedAt = created
           }
         }
+
+        // 每段思考单独成块，绝不合并：第一次思考 → 说话 → 工具 → 第二次思考，各占各的位置
+        if (text || active) {
+          turn.blocks.push({ kind: 'reasoning', text, active, ms, startedAt, key: nextKey() })
+        }
       } else if (part.type === 'tool') {
-        turn.tools.push({
+        const info = {
           name: part.name ?? '工具',
           status: part.state?.status ?? 'unknown',
           detail: toolDetail(part),
-        })
+        }
+        turn.tools.push(info)
+        // 连着调的工具收成一组，前面是思考或说话就另起一组
+        const prev = turn.blocks[turn.blocks.length - 1]
+        if (prev && prev.kind === 'tools') {
+          prev.tools.push(info)
+        } else {
+          turn.blocks.push({ kind: 'tools', tools: [info], key: nextKey() })
+        }
       }
     }
   }
