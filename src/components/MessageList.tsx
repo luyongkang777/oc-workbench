@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import MarkdownText, { type OpenFile } from './MarkdownText'
 import { copyText } from './clipboard'
 import { isImageFile, messageFilePreview } from './attachments'
 import { parseFilePath } from './fileLinks'
-import { groupTurns, reasoningLabel, type ToolInfo, type Turn, type TurnBlock } from './turns'
+import { groupTurns, reasoningLabel, sameTurn, type ToolInfo, type Turn, type TurnBlock } from './turns'
 import type { ChatMessage, MessageFile } from '../api/chat'
 
 function summarize(tools: ToolInfo[]): string {
@@ -108,6 +108,69 @@ function ReasoningBlock({ block }: { block: Extract<TurnBlock, { kind: 'reasonin
     </div>
   )
 }
+
+/**
+ * 一轮对话。memo + sameTurn：只有内容真的变了才重渲染。
+ *
+ * 长会话里流式输出时，原来每来一次事件就把整页几百轮全部重建一遍，
+ * 这是「比 CLI 慢几秒」的主要原因。现在没变的轮次直接跳过。
+ */
+const TurnView = memo(
+  function TurnView({
+    turn,
+    root,
+    onOpenFile,
+    onOpenMenu,
+    onOpenImage,
+  }: {
+    turn: Turn
+    root?: string
+    onOpenFile?: OpenFile
+    onOpenMenu: (e: ReactMouseEvent, text: string) => void
+    onOpenImage: (image: { url: string; name: string }) => void
+  }) {
+    return (
+      <div className="chat-turn">
+        {turn.user !== undefined || turn.files.length > 0 ? (
+          <div className="chat-msg user">
+            <div className="chat-bubble-wrap" onContextMenu={(e) => onOpenMenu(e, turn.user ?? '')}>
+              <div className="chat-bubble">
+                <FileGrid files={turn.files} onOpen={(url, name) => onOpenImage({ url, name })} />
+                {turn.user ? turn.user : null}
+              </div>
+              {turn.user ? <CopyButton text={turn.user} title="复制这条提问" /> : null}
+            </div>
+          </div>
+        ) : null}
+
+        {turn.blocks.map((block) => {
+          if (block.kind === 'reasoning') {
+            return <ReasoningBlock block={block} key={block.key} />
+          }
+          if (block.kind === 'tools') {
+            return <ToolGroup tools={block.tools} onOpenFile={onOpenFile} key={block.key} />
+          }
+          return (
+            <div className="chat-msg assistant" key={block.key}>
+              <div className="chat-bubble-wrap" onContextMenu={(e) => onOpenMenu(e, block.text)}>
+                <div className="chat-bubble">
+                  <MarkdownText text={block.text} root={root} onOpenFile={onOpenFile} />
+                </div>
+                <CopyButton text={block.text} title="复制这条回复（Markdown 原文）" />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    )
+  },
+  (a, b) =>
+    a.root === b.root &&
+    a.onOpenFile === b.onOpenFile &&
+    a.onOpenMenu === b.onOpenMenu &&
+    a.onOpenImage === b.onOpenImage &&
+    sameTurn(a.turn, b.turn),
+)
 
 /** 复制文本：优先 Clipboard API，失败退回 execCommand（WebView2 里两条路都能用）。 */
 /** 气泡右下角的复制按钮，成功后 1.2 秒内显示「已复制」。 */
@@ -261,7 +324,8 @@ export default function MessageList({
     if (menuTimer.current) window.clearTimeout(menuTimer.current)
   }, [])
 
-  function openMenu(e: ReactMouseEvent, text: string) {
+  // 稳定引用：TurnView 是 memo 的，这个函数每次渲染新建会让整表重渲染
+  const openMenu = useCallback((e: ReactMouseEvent, text: string) => {
     // 已经选中一段文字时保留浏览器原生菜单，别抢走「复制选区」
     if ((window.getSelection()?.toString() ?? '').trim()) return
     e.preventDefault()
@@ -271,7 +335,7 @@ export default function MessageList({
       text,
       done: false,
     })
-  }
+  }, [])
 
   async function copyFromMenu() {
     if (!menu) return
@@ -291,44 +355,14 @@ export default function MessageList({
   return (
     <>
       {turns.map((turn) => (
-        <div className="chat-turn" key={turn.id}>
-          {turn.user !== undefined || turn.files.length > 0 ? (
-            <div className="chat-msg user">
-              <div
-                className="chat-bubble-wrap"
-                onContextMenu={(e) => openMenu(e, turn.user ?? '')}
-              >
-                <div className="chat-bubble">
-                  <FileGrid
-                    files={turn.files}
-                    onOpen={(url, name) => setLightbox({ url, name })}
-                  />
-                  {turn.user ? turn.user : null}
-                </div>
-                {turn.user ? <CopyButton text={turn.user} title="复制这条提问" /> : null}
-              </div>
-            </div>
-          ) : null}
-
-          {turn.blocks.map((block) => {
-            if (block.kind === 'reasoning') {
-              return <ReasoningBlock block={block} key={block.key} />
-            }
-            if (block.kind === 'tools') {
-              return <ToolGroup tools={block.tools} onOpenFile={onOpenFile} key={block.key} />
-            }
-            return (
-              <div className="chat-msg assistant" key={block.key}>
-                <div className="chat-bubble-wrap" onContextMenu={(e) => openMenu(e, block.text)}>
-                  <div className="chat-bubble">
-                    <MarkdownText text={block.text} root={root} onOpenFile={onOpenFile} />
-                  </div>
-                  <CopyButton text={block.text} title="复制这条回复（Markdown 原文）" />
-                </div>
-              </div>
-            )
-          })}
-        </div>
+        <TurnView
+          key={turn.id}
+          turn={turn}
+          root={root}
+          onOpenFile={onOpenFile}
+          onOpenMenu={openMenu}
+          onOpenImage={setLightbox}
+        />
       ))}
 
       <Lightbox image={lightbox} onClose={closeLightbox} />

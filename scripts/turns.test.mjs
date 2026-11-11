@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { groupTurns, reasoningLabel } from '../src/components/turns.ts'
+import { groupTurns, reasoningLabel, sameTurn } from '../src/components/turns.ts'
 
 const assistant = (content, time) => ({ id: 'msg_a', type: 'assistant', content, time })
 const user = (id, text) => ({ id, type: 'user', text })
@@ -198,4 +198,67 @@ test('blocks 的 key 在消息之间也不撞', () => {
 
   const keys = turns.flatMap((t) => t.blocks.map((b) => b.key))
   assert.equal(new Set(keys).size, keys.length)
+})
+
+test('sameTurn：内容一样的两份轮次判为相同（引用不同）', () => {
+  const build = () =>
+    groupTurns([
+      user('u1', '问题'),
+      assistant(
+        [
+          { type: 'reasoning', text: '想一下', time: { created: 1, completed: 5 } },
+          { type: 'text', text: '答案' },
+          { type: 'tool', name: 'read', state: { status: 'completed', input: { path: 'a.js' } } },
+        ],
+        { created: 1, completed: 9 },
+      ),
+    ])
+  const a = build()
+  const b = build()
+  assert.notEqual(a[0], b[0])
+  assert.equal(sameTurn(a[0], b[0]), true)
+})
+
+test('sameTurn：文字变了要判为不同（否则界面不更新）', () => {
+  const base = (text) =>
+    groupTurns([assistant([{ type: 'text', text }], { created: 1, completed: 2 })])[0]
+
+  assert.equal(sameTurn(base('旧文本'), base('新文本')), false)
+})
+
+test('sameTurn：思考段进行中的状态变化要判为不同（标题要走秒）', () => {
+  const running = groupTurns([
+    assistant([{ type: 'reasoning', text: '', time: { created: 5 } }], { created: 5 }),
+  ])[0]
+  const done = groupTurns([
+    assistant([{ type: 'reasoning', text: '', time: { created: 5, completed: 8 } }], {
+      created: 5,
+      completed: 9,
+    }),
+  ])[0]
+
+  assert.equal(sameTurn(running, done), false)
+})
+
+test('sameTurn：工具状态变化要判为不同', () => {
+  const build = (status) =>
+    groupTurns([
+      assistant([{ type: 'tool', name: 'read', state: { status } }], { created: 1, completed: 2 }),
+    ])[0]
+
+  assert.equal(sameTurn(build('running'), build('completed')), false)
+})
+
+test('sameTurn：块数量变化要判为不同', () => {
+  const one = groupTurns([
+    assistant([{ type: 'text', text: 'a' }], { created: 1, completed: 2 }),
+  ])[0]
+  const two = groupTurns([
+    assistant([{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }], {
+      created: 1,
+      completed: 2,
+    }),
+  ])[0]
+
+  assert.equal(sameTurn(one, two), false)
 })

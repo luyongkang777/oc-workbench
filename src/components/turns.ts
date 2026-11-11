@@ -178,3 +178,41 @@ export function reasoningLabel(turn: Pick<Turn, 'reasoningActive' | 'reasoningMs
   if (seconds >= 1) return `思考过程 ${seconds}s`
   return '思考过程'
 }
+
+/**
+ * 两轮内容是否完全一样。
+ *
+ * `groupTurns` 每次都造新对象，渲染层光比引用永远不相等，
+ * 于是任意一条消息变化都会让整个列表重渲染。这个比较让没变的轮次跳过。
+ */
+export function sameTurn(a: Turn, b: Turn): boolean {
+  if (a === b) return true
+  if (a.id !== b.id || a.user !== b.user) return false
+
+  if (a.files.length !== b.files.length) return false
+  for (let i = 0; i < a.files.length; i++) {
+    if (a.files[i]?.name !== b.files[i]?.name || a.files[i]?.data !== b.files[i]?.data) return false
+  }
+
+  if (a.blocks.length !== b.blocks.length) return false
+  for (let i = 0; i < a.blocks.length; i++) {
+    const x = a.blocks[i]
+    const y = b.blocks[i]
+    if (x.kind !== y.kind || x.key !== y.key) return false
+
+    if (x.kind === 'text' && y.kind === 'text') {
+      if (x.text !== y.text) return false
+    } else if (x.kind === 'reasoning' && y.kind === 'reasoning') {
+      if (x.text !== y.text || x.active !== y.active || x.ms !== y.ms) return false
+    } else if (x.kind === 'tools' && y.kind === 'tools') {
+      if (x.tools.length !== y.tools.length) return false
+      for (let j = 0; j < x.tools.length; j++) {
+        const tx = x.tools[j]
+        const ty = y.tools[j]
+        if (tx.name !== ty.name || tx.status !== ty.status || tx.detail !== ty.detail) return false
+      }
+    }
+  }
+
+  return true
+}

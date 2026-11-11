@@ -122,11 +122,11 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     }
   }, [])
 
-  // 消息和表单一起刷新：form.created 事件也会推过来
+  // 消息和表单一起刷新：form.created 事件也会推过来。
+  // 必须返回 Promise，useChatEvents 的串行闸要等它真的拉完才放行下一次。
   const refreshSession = useCallback(
-    (sessionID: string) => {
-      void reloadMessages(sessionID)
-      void reloadForms(sessionID)
+    async (sessionID: string) => {
+      await Promise.all([reloadMessages(sessionID), reloadForms(sessionID)])
     },
     [reloadMessages, reloadForms],
   )
