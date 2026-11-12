@@ -27,6 +27,9 @@ type Props = {
   onEncoding: (encoding: string) => void
   onSave: () => void
   onCancel: () => void
+  /** 自动换行是否开启（长行折行显示）。 */
+  wrap: boolean
+  onWrap: () => void
 }
 
 /** 编辑器顶部的文件信息条：大小 / 行数 / 编码 / 跳转 / 双击编辑 / 保存编码。 */
@@ -48,6 +51,8 @@ export default function CodeToolbar({
   onEncoding,
   onSave,
   onCancel,
+  wrap,
+  onWrap,
 }: Props) {
   const [jumpText, setJumpText] = useState('')
   const canJump = !stat.binary && stat.lineCount > 0 && mode === 'source' && !editing
@@ -99,6 +104,21 @@ export default function CodeToolbar({
       ) : null}
       <span className="editor-toolbar-spacer" />
       {dirty ? <span className="editor-dirty">● 未保存</span> : null}
+      {stat.binary || editing || mode !== 'source' ? null : (
+        <button
+          type="button"
+          className={`editor-wrap-toggle${wrap ? ' active' : ''}`}
+          onClick={onWrap}
+          title={
+            wrap
+              ? '自动换行：长行折到容器宽度内（Alt+Z 或点击改回单行）'
+              : '单行显示：长行横向滚动（Alt+Z 或点击开启自动换行）'
+          }
+          aria-pressed={wrap}
+        >
+          换行
+        </button>
+      )}
       {stat.binary ? null : (
         <select
           className="editor-enc"

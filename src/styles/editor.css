@@ -185,6 +185,11 @@
   min-height: 0;
 }
 
+/* 自动换行态：长行在容器宽度内折行，不再出横向滚动条 */
+.code-scroll.wrap {
+  overflow-x: hidden;
+}
+
 .code-block {
   margin: 0;
   /* 纵向 padding 必须为 0：虚拟滚动按「行数 × 19px」算，任何 padding 都会让位置恒偏 */
@@ -199,6 +204,23 @@
   height: 19px;
   line-height: 19px;
   white-space: pre;
+}
+
+/* 换行态：高度交给内容（行高由 JS 给 min-height，同 19px 网格）。
+   断行规则必须和 wrapLayout.ts 的算法一致：满一行就在任意字符处断、Tab 走 4 列。
+   height: auto 是必须的——基础规则里的 height:19px 会把盒子钉死，内容一多就压出去。 */
+.code-line.wrap {
+  align-items: flex-start;
+  white-space: normal;
+  height: auto;
+}
+
+.code-line.wrap .code-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  tab-size: 4;
 }
 
 .code-line:hover {
@@ -265,12 +287,396 @@
   text-transform: none;
 }
 
+/* 顶栏右侧的上下文用量：小进度条 + 百分比，悬停/点击展开明细浮层 */
+.chat-context {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex: none;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.chat-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--ease), color var(--ease), border-color var(--ease);
+}
+
+.chat-context-text {
+  white-space: nowrap;
+}
+
+.chat-context-chip:hover,
+.chat-context-chip.open {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
+  border-color: var(--line-2);
+}
+
+.chat-context-bar {
+  width: 34px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+
+.chat-context-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width var(--ease);
+}
+
+.chat-context-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 272px;
+  padding: 10px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-2);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.chat-context-head {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+.chat-context-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.chat-context-rows b {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.chat-context-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* 压缩进行中的补充说明：按钮上的秒表只说明「还在跑」，这一行说明「在做什么」 */
+.chat-context-note {
+  width: 100%;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.chat-context-action {
+  flex: 1;
+  height: 24px;
+  font-size: 11px;
+  color: var(--text-1);
+  background: var(--bg-control);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.chat-context-action:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+}
+
+.chat-context-action:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* 压缩中虽然 disabled，但那是「正在干活」而不是「不可用」，得看得见 */
+.chat-context-action.running:disabled {
+  color: var(--info);
+}
+
 .chat-warn {
   padding: 8px 12px;
   background: var(--warn-weak);
   color: var(--warn);
   font-size: 12px;
   border-bottom: 1px solid var(--warn-line);
+}
+
+/* 聊天区状态条：压缩上下文这类要跑一阵、而且会改掉历史的操作 */
+.chat-notice {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  /* 右边留给关闭按钮：说明文字换行时按钮也不会跟着掉到第二行 */
+  padding: 7px 34px 7px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-top: 1px solid var(--line-2);
+}
+
+.chat-notice.info {
+  background: var(--info-weak);
+  color: var(--info-ink);
+}
+
+.chat-notice.ok {
+  background: var(--success-weak);
+  color: var(--success);
+}
+
+.chat-notice.fail {
+  background: var(--danger-weak);
+  color: var(--danger);
+}
+
+.chat-notice-text {
+  font-weight: 600;
+}
+
+.chat-notice-detail {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.chat-notice-spin {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: chat-notice-spin 0.7s linear infinite;
+}
+
+@keyframes chat-notice-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.chat-notice-close {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  background: none;
+  border: 0;
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+
+.chat-notice-close:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
+
+/* 压缩记录：历史被重写之后，唯一还能说明「这里发生过什么」的东西。默认收起。 */
+.chat-compact-log {
+  margin-top: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+
+.chat-compact-log-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.chat-compact-log-head:hover {
+  background: var(--bg-hover);
+}
+
+.chat-compact-log-caret {
+  flex: none;
+  color: var(--text-3);
+}
+
+.chat-compact-log-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chat-compact-log-hint {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.chat-compact-log-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 10px 8px;
+  border-top: 1px solid var(--line-1);
+}
+
+.chat-compact-log-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.chat-compact-log-row.fail {
+  color: var(--danger);
+}
+
+.chat-compact-log-time,
+.chat-compact-log-ms {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-compact-log-size {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-compact-log-err {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: var(--danger);
+}
+
+.chat-compact-log-clear {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: var(--text-3);
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+
+.chat-compact-log-clear:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+/* 压缩摘要：历史被重写成的一段文本，默认展开，正文限高内部滚动 */
+.chat-summary {
+  margin: 2px 0;
+  border: 1px solid var(--line-2);
+  border-left: 3px solid var(--info);
+  border-radius: var(--r-3);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+
+.chat-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.chat-summary-head:hover {
+  background: var(--bg-hover);
+}
+
+.chat-summary-caret {
+  flex: none;
+  color: var(--text-3);
+}
+
+.chat-summary-title {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.chat-summary-time {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-summary-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.chat-summary-body {
+  max-height: 360px;
+  overflow: auto;
+  padding: 2px 12px 10px;
+  border-top: 1px solid var(--line-1);
+  font-size: 12px;
+}
+
+/* 压缩失败：服务端回了 200 但消息上带 error（例如 Nothing to compact yet） */
+.chat-summary.fail {
+  border-left-color: var(--danger);
+}
+
+.chat-summary.fail .chat-summary-title {
+  color: var(--danger);
+}
+
+.chat-summary-error {
+  font-size: 11px;
+  color: var(--danger);
 }
 
 .chat-body {
@@ -281,6 +687,35 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
+}
+
+/* 会话滚动区 + 悬浮的「回到最新」按钮：按钮不能跟着内容滚走，所以要一层定位容器 */
+.chat-body-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-jump {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-2);
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+}
+
+.chat-jump:hover {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
 }
 
 .chat-placeholder {
@@ -443,7 +878,7 @@
 
 .chat-file-img {
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line-2);
   border-radius: var(--r-2);
   background: var(--bg-0);
   line-height: 0;
@@ -452,7 +887,7 @@
 }
 
 .chat-file-img:hover {
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: var(--accent-line);
 }
 
 .chat-file-img img {
@@ -468,7 +903,7 @@
   gap: 4px;
   max-width: 240px;
   padding: 2px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--line-2);
   border-radius: var(--r-2);
   font-size: 11px;
 }
@@ -754,6 +1189,38 @@
 
 .editor-jump-btn:hover {
   background: var(--bg-control-hover);
+}
+
+/* 自动换行开关：和「跳转」同一套尺寸，激活时用弱品牌色 */
+.editor-wrap-toggle {
+  height: 18px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.editor-wrap-toggle:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+.editor-wrap-toggle.active {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.editor-wrap-toggle.active:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 /* 跳转后的目标行短暂高亮 */

@@ -6,6 +6,12 @@ import { promisify } from 'node:util'
 
 const execAsync = promisify(exec)
 const FALLBACK_TARGET = 'http://127.0.0.1:28894'
+/**
+ * 联调/自动化验收用的固定上游：设了就直接指向它，不再跑 `opencode pair`。
+ * 本地 mock 后端、录制回放服务都靠这个口子接进来（否则 pair 的 20 秒超时
+ * 会拖住 dev server 启动）。
+ */
+const OVERRIDE_TARGET = process.env.OC_WORKBENCH_TARGET?.trim() ?? ''
 const PAIR_LINK_RE = /http:\/\/127\.0\.0\.1:(\d+)\/auth\/connect\/[A-Za-z0-9_-]+/
 /** 配对链接请求的超时：对端不收连接时不能让 dev server 启动卡死。 */
 const PAIR_FETCH_TIMEOUT_MS = 10_000
@@ -18,6 +24,10 @@ type Auth = { cookie: string; target: string }
  * 失败时降级为无 cookie（前端会显示「未连接」），但 dev server 必须还能起来。
  */
 async function resolveAuth(): Promise<Auth> {
+  if (OVERRIDE_TARGET) {
+    console.log(`[oc-workbench] 使用指定上游：${OVERRIDE_TARGET}（跳过 pair）`)
+    return { cookie: '', target: OVERRIDE_TARGET }
+  }
   try {
     const { stdout, stderr } = await execAsync('opencode pair', {
       timeout: 20000,

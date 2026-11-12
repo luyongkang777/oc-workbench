@@ -19,6 +19,7 @@ mod fsindex;
 mod fsread;
 mod fssearch;
 mod fsutil;
+mod projects;
 mod winenc;
 mod server;
 mod proxy;
@@ -47,6 +48,7 @@ const LOG_NAME: &str = "gui-error.log";
 fn main() {
     install_panic_hook();
     init_com_sta();
+    adopt_launch_arg();
 
     if let Err(err) = run() {
         let log = log_path();
@@ -56,6 +58,24 @@ fn main() {
             log.display()
         ));
         std::process::exit(1);
+    }
+}
+
+/// 从资源管理器把文件夹拖到 exe 图标上、「打开方式」、或命令行带路径时，
+/// 直接把那个目录当成这次要打开的根目录（落到 root.txt，启动后随 token 下发）。
+fn adopt_launch_arg() {
+    let Some(arg) = std::env::args_os().nth(1) else {
+        return;
+    };
+    let Some(text) = arg.to_str() else {
+        return;
+    };
+    if text.is_empty() {
+        return;
+    }
+    if std::path::Path::new(text).is_dir() {
+        save_root(text);
+        append_log(&format!("[start] 按启动参数打开：{text}\n"));
     }
 }
 
@@ -194,7 +214,29 @@ fn run() -> Result<(), String> {
             if let Some(root) = body.strip_prefix("oc:save-root:") {
                 // 记住这次打开的根目录（exe 同目录 root.txt），下次启动经 root:<path> 恢复。
                 // 本地端口每次启动都变，localStorage 按 origin 分区跨不了启动，只能落盘。
+                append_log(&format!("[ipc] save-root {root}\n"));
                 save_root(root);
+                return;
+            }
+            if body == "oc:projects" {
+                // 项目清单：页面启动时来要一次，拿到 `projects:<json>`。
+                let json = projects::load();
+                append_log(&format!("[ipc] 读项目清单 {} 字节\n", json.len()));
+                ipc_queue.borrow_mut().push(format!("projects:{json}"));
+                let _ = proxy.send_event(());
+                return;
+            }
+            if let Some(json) = body.strip_prefix("oc:projects-save:") {
+                // 清单内容由前端负责（增删/排序/每个项目的界面状态），这里只落盘。
+                // 记一条带预览的日志：跨项目路径出问题时能直接看出页面到底发了什么。
+                let preview: String = json.chars().take(200).collect();
+                append_log(&format!(
+                    "[ipc] 存项目清单 {} 字节：{preview}\n",
+                    json.len()
+                ));
+                if let Err(err) = projects::save(json) {
+                    append_log(&format!("[ipc] 保存项目清单失败：{err}\n"));
+                }
                 return;
             }
             let kind = if body == "oc:auth" {

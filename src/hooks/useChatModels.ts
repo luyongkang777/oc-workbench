@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getDefaultModel,
   listModels,
@@ -7,6 +7,9 @@ import {
   type ModelRef,
   type SessionInfo,
 } from '../api/chat'
+
+/** 静默刷新间隔：网关侧随时会加减模型，轮询比「连接时拉一次」更贴近实时 */
+const REFRESH_MS = 60_000
 
 /**
  * 模型列表 + 当前会话模型。
@@ -20,19 +23,44 @@ export function useChatModels(root: string, connected: boolean) {
   const [error, setError] = useState<string | null>(null)
   const [defaultModel, setDefaultModel] = useState<ModelRef | null>(null)
   const [model, setModel] = useState<ModelRef | null>(null)
+  // 静默刷新同时只允许一个请求在飞
+  const refreshingRef = useRef(false)
+
+  const fetchModels = useCallback(async () => {
+    const list = await listModels(root)
+    setModels(list)
+    return list
+  }, [root])
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const list = await listModels(root)
-      setModels(list)
+      await fetchModels()
     } catch (err) {
       setError((err as Error).message)
     } finally {
       setLoading(false)
     }
-  }, [root])
+  }, [fetchModels])
+
+  /**
+   * 静默刷新：不显示 loading、不动当前选择，失败保留上一份列表。
+   * 用于打开下拉、窗口回焦、定时轮询——模型是网关侧随时会变的，
+   * 只在连接时拉一次会一直看到旧列表。
+   */
+  const refresh = useCallback(async () => {
+    if (refreshingRef.current) return
+    refreshingRef.current = true
+    try {
+      await fetchModels()
+      setError(null)
+    } catch {
+      // 网关暂时不通：保留旧列表，不把下拉变成错误态
+    } finally {
+      refreshingRef.current = false
+    }
+  }, [fetchModels])
 
   // 连上后拉列表 + 默认模型
   useEffect(() => {
@@ -48,6 +76,25 @@ export function useChatModels(root: string, connected: boolean) {
       alive = false
     }
   }, [connected, load, root])
+
+  // 连接存续期间保持列表新鲜：窗口回焦、页面重新可见、以及定时轮询
+  useEffect(() => {
+    if (!connected) return
+    const onFocus = () => void refresh()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisible)
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh()
+    }, REFRESH_MS)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.clearInterval(timer)
+    }
+  }, [connected, refresh])
 
   /** 会话切换/会话数据变化时同步显示：会话自己的 model > 默认模型 > 空。 */
   const syncSession = useCallback(
@@ -94,5 +141,5 @@ export function useChatModels(root: string, connected: boolean) {
     [],
   )
 
-  return { models, loading, error, reload: load, model, syncSession, pick, pickVariant }
+  return { models, loading, error, reload: load, refresh, model, syncSession, pick, pickVariant }
 }

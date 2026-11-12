@@ -50,6 +50,8 @@ const HIDDEN = new Set(['node_modules', '.git', 'dist', 'target', '.vite', '.vit
 /** 行高与 panels.css 的 .tree-row 保持一致。 */
 const ROW_HEIGHT = 24
 const OVERSCAN_ROWS = 10
+/** 已加载目录的轮询间隔：够快看到 agent 新写的文件，又不至于把本地服务打满。 */
+const POLL_INTERVAL_MS = 2000
 
 function baseName(relPath: string): string {
   const trimmed = relPath.replace(/[\\/]+$/, '')
@@ -133,6 +135,8 @@ export default function FileTree({
   const [selected, setSelected] = useState('')
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(480)
+  // 是否显示 node_modules / target / dist 这类重目录：默认精简，需要时一键展开
+  const [showHidden, setShowHidden] = useState(false)
 
   // 右键菜单：记录点击位置和落点（dir / file / blank 表示空白处 = 根目录）
   const [menu, setMenu] = useState<{
@@ -158,35 +162,53 @@ export default function FileTree({
   const rafRef = useRef(0)
   // root 变化或组件卸载后，在途请求的结果一律丢弃
   const genRef = useRef(0)
+  // 过滤规则用 ref 读：load 的依赖必须只有 root，否则切换显示项会把整棵树重置
+  const showHiddenRef = useRef(showHidden)
+  showHiddenRef.current = showHidden
 
   const load = useCallback(
-    async (rel: string) => {
+    async (rel: string, silent = false) => {
       const gen = genRef.current
-      setState((prev) => ({
-        ...prev,
-        loading: { ...prev.loading, [rel]: true },
-        errors: withoutKey(prev.errors, rel),
-      }))
+      if (!silent) {
+        setState((prev) => ({
+          ...prev,
+          loading: { ...prev.loading, [rel]: true },
+          errors: withoutKey(prev.errors, rel),
+        }))
+      }
       try {
         const entries = await listDirLocal(root, rel)
         if (gen !== genRef.current) return
-        const visible = entries.filter((entry) => !HIDDEN.has(baseName(entry.path)))
-        setState((prev) => ({
-          ...prev,
-          children: { ...prev.children, [rel]: visible },
-          loaded: { ...prev.loaded, [rel]: true },
-        }))
+        const visible = entries.filter(
+          (entry) => showHiddenRef.current || !HIDDEN.has(baseName(entry.path)),
+        )
+        setState((prev) => {
+          // 轮询刷新：内容一模一样就原样返回，别让每次轮询都重建行列表
+          if (silent && sameEntries(prev.children[rel], visible)) {
+            return prev.loaded[rel] ? prev : { ...prev, loaded: { ...prev.loaded, [rel]: true } }
+          }
+          return {
+            ...prev,
+            children: { ...prev.children, [rel]: visible },
+            loaded: { ...prev.loaded, [rel]: true },
+            errors: withoutKey(prev.errors, rel),
+          }
+        })
       } catch (err) {
         if (gen !== genRef.current) return
-        setState((prev) => ({
-          ...prev,
-          // 失败时不能留下空数组，否则会被当成「空文件夹」
-          children: withoutKey(prev.children, rel),
-          loaded: { ...prev.loaded, [rel]: false },
-          errors: { ...prev.errors, [rel]: (err as Error).message },
-        }))
+        setState((prev) => {
+          // 轮询失败（目录被临时占用之类）不能把已经显示的内容清掉
+          if (silent && prev.children[rel]) return prev
+          return {
+            ...prev,
+            // 失败时不能留下空数组，否则会被当成「空文件夹」
+            children: withoutKey(prev.children, rel),
+            loaded: { ...prev.loaded, [rel]: false },
+            errors: { ...prev.errors, [rel]: (err as Error).message },
+          }
+        })
       } finally {
-        if (gen === genRef.current) {
+        if (gen === genRef.current && !silent) {
           setState((prev) => ({ ...prev, loading: { ...prev.loading, [rel]: false } }))
         }
       }
@@ -249,6 +271,49 @@ export default function FileTree({
     if (!refreshSeq) return
     for (const rel of Object.keys(childrenRef.current)) void load(rel)
   }, [refreshSeq, load])
+
+  // 切换「显示全部 / 精简」：已加载的目录要按新规则重拉一遍（过滤发生在响应落地时）。
+  // 首帧不跑，否则会把挂载时的那次加载顶成两次。
+  const hiddenToggled = useRef(false)
+  useEffect(() => {
+    if (!hiddenToggled.current) {
+      hiddenToggled.current = true
+      return
+    }
+    for (const rel of Object.keys(childrenRef.current)) void load(rel, true)
+  }, [showHidden, load])
+
+  // 实时刷新：后台改了文件（agent 写盘、别的编辑器保存）不用再手动点「刷新」。
+  // 只轮询已经加载过的目录，内容没变就不改 state，所以不会打断滚动和选中。
+  const pollingRef = useRef(false)
+  useEffect(() => {
+    // 精简视图下不再轮询被隐藏的重目录（哪怕之前「显示全部」时展开过）
+    const loadedDirs = () =>
+      Object.keys(childrenRef.current).filter((rel) => {
+        if (showHiddenRef.current) return true
+        return !rel.split(/[\\/]/).some((part) => HIDDEN.has(part))
+      })
+    const tick = () => {
+      // 窗口不可见时没必要打请求；切回来会立刻补一次
+      if (document.visibilityState !== 'visible') return
+      if (pollingRef.current) return
+      const dirs = loadedDirs()
+      if (dirs.length === 0) return
+      pollingRef.current = true
+      void Promise.all(dirs.map((rel) => load(rel, true))).finally(() => {
+        pollingRef.current = false
+      })
+    }
+    const timer = window.setInterval(tick, POLL_INTERVAL_MS)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [load])
 
   const rows = useMemo(() => buildRows(state), [state])
 
@@ -443,7 +508,19 @@ export default function FileTree({
   return (
     <div className="tree">
       <div className="tree-root" title={root}>
-        {root}
+        <span className="tree-root-path">{root}</span>
+        <button
+          type="button"
+          className={`pane-action tree-toggle${showHidden ? ' on' : ''}`}
+          onClick={() => setShowHidden((value) => !value)}
+          title={
+            showHidden
+              ? '隐藏 node_modules / target / dist 这类重目录'
+              : '连 node_modules / target / dist 一起显示'
+          }
+        >
+          {showHidden ? '精简' : '全部'}
+        </button>
       </div>
       <div
         className="tree-scroll"
@@ -639,4 +716,13 @@ function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T
   const next = { ...record }
   delete next[key]
   return next
+}
+
+/** 目录内容是否没变：按 path + 类型比较（大小/时间不影响文件树显示）。 */
+function sameEntries(prev: LocalEntry[] | undefined, next: LocalEntry[]): boolean {
+  if (!prev || prev.length !== next.length) return false
+  for (let i = 0; i < prev.length; i += 1) {
+    if (prev[i].path !== next[i].path || prev[i].type !== next[i].type) return false
+  }
+  return true
 }

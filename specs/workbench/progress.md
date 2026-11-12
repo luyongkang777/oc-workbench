@@ -310,3 +310,18 @@
   - 真实界面实测：WebView2 CDP 驱动，输入 `con` 弹出 `const,continue,ControlGate,TryConnect…`，
     `Tab` 后该行变 `const`；`loadConfig.` 弹成员候选且 `greet` 排第一；`Esc` 逐层退出正常
   - 产物：`dist` + release exe 重建并重启；README / product / tasks 同步
+
+- 2026-11-12 **会话标题改由服务端自动生成**（用户反馈：新建会话全叫「工作台会话」）：
+  - 根因：`createSession` 建会话时硬写标题（`/new` 写「工作台会话」，首条消息走 `seed.slice(0,20)`），
+    而服务端只在**会话没有标题**时才在首条消息后自动生成摘要标题——一旦预置就永远不改名
+  - 实测（直连 28894 与经 7100 dev 代理各验一遍）：不带 title 建会话 → 响应无 title；
+    发一条消息后十几秒，服务端写入摘要标题（`README 安装步骤` / `回复收到`），与 TUI 会话一致
+  - `chat.ts`：`createSession` 只在显式传 title 时才写该字段；新增 `renameSession`（PATCH，metadata 保留）、
+    `firstUserText`（沿 cursor 翻到最早一页取首条 user 文本，上限 4 页）、`titleFromText`（去附件占位、
+    折叠空白、24 字截断）、`LEGACY_PLACEHOLDER_TITLE`
+  - `Chat.tsx`：`ensureSession()` 不再接 seed 参数，`/new` 不带标题建会话；`watchTitle` 每 5 秒问一次
+    会话（最多 18 次），拿到标题写回列表，问不到则用首条消息兜底命名；`backfillTitles` 在加载列表后
+    给「标题仍是占位符」的老会话按首条消息补名（每次最多 6 条，无消息的跳过）
+  - `ChatHeader.shortTitle`：空标题与占位标题统一显示「新会话」，不再把会话 id 前缀当名字
+  - 实测：点「+ 新会话」服务端 title 为空、下拉显示「新会话」；带消息的老会话切换目录后按首条消息改名
+  - 测试：`npm test` 189 项全过；`npm run build`（tsc + vite）通过

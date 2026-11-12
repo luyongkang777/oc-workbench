@@ -116,14 +116,27 @@ body.resizing .col-resizer::after {
 
 .tree-root {
   flex: 0 0 auto;
-  padding: 4px 12px 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 6px 12px;
   color: var(--text-3);
   font-size: 11px;
+}
+
+/* 长路径要省掉开头而不是结尾，所以本体继续用 rtl + ellipsis */
+.tree-root-path {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   direction: rtl;
   text-align: left;
+}
+
+.tree-toggle.on {
+  color: var(--accent);
 }
 
 /* 目录树行虚拟化：只有这一层滚动，行全部绝对定位 */
@@ -324,7 +337,7 @@ body.resizing .col-resizer::after {
   padding: 1px 6px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
-  background: rgba(28, 31, 39, 0.92); /* --bg-1 的 92%，浮在气泡上看不出边框 */
+  background: color-mix(in srgb, var(--bg-1) 92%, transparent); /* --bg-1 92%，随主题变，浮在气泡上看不出边框 */
   color: var(--text-1);
   font-family: inherit;
   font-size: 10px;
@@ -402,7 +415,7 @@ body.resizing .col-resizer::after {
   max-width: 92%;
   border-left: 3px solid #8a7bd866;
   border-radius: var(--r-2);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-hover);
   overflow: hidden;
 }
 
@@ -469,7 +482,7 @@ body.resizing .col-resizer::after {
   max-height: 260px;
   overflow: auto;
   padding: 4px 10px 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--line-1);
   color: var(--text-2);
   font-size: 12px;
   line-height: 1.6;
@@ -547,7 +560,7 @@ body.resizing .col-resizer::after {
 
 .chat-form-field {
   padding: 5px 0 3px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.06);
+  border-top: 1px dashed var(--line-1);
 }
 
 .chat-form-field:first-of-type {
@@ -920,6 +933,35 @@ body.resizing .col-resizer::after {
   color: var(--text-1);
   font-size: 12px;
   outline: none;
+}
+
+/* 筛选框 + 手动刷新按钮；边框交给行容器，避免双线 */
+.model-filter-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.model-filter-row .model-filter {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  border-bottom: none;
+}
+
+.model-refresh {
+  flex: none;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--line-1);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-refresh:hover {
+  color: var(--text-1);
 }
 
 .model-list {
@@ -1295,4 +1337,241 @@ body.resizing .col-resizer::after {
 
 .tree-dialog-btn.primary:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+
+
+/* ==========================================================================
+   项目标签（顶栏）
+   平铺在顶栏、和「审查」同一行：点一下切过去。项目多了横向滚动，不换行、不挤右侧按钮。
+   ========================================================================== */
+/* 标签条整体：只吃剩余空间，绝不动右侧按钮 */
+.project-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 6px;
+}
+
+/* 只有这一层滚动：「＋」是它的兄弟节点，永远滚不出去 */
+.project-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.project-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* 品牌名固定宽度，别被项目标签挤掉 */
+.topbar .brand {
+  flex: 0 0 auto;
+}
+
+/* 顶栏右侧（主题 / 审查 / 连接状态）：固定一组，不参与压缩 */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.project-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.project-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 6px 0 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
+}
+
+.project-tab:hover,
+.project-tab:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.project-tab.active {
+  color: var(--text-1);
+  background: var(--bg-2);
+  border-color: var(--line-2);
+}
+
+.project-tab.active .project-tab-name {
+  color: var(--accent);
+}
+
+.project-tab-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 关闭按钮：平时不显形，悬停/聚焦/当前项时出现，列表看起来才干净 */
+.project-tab-del {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--ease),
+    color var(--ease),
+    background var(--ease);
+}
+
+.project-tab:hover .project-tab-del,
+.project-tab:focus-within .project-tab-del,
+.project-tab.active .project-tab-del {
+  opacity: 0.6;
+}
+
+.project-tab-del:hover {
+  color: var(--danger);
+  background: var(--danger-weak);
+  opacity: 1;
+}
+
+/* 「＋」常显，带边框才看得见（之前是透明背景的淡图标，等于没有） */
+.project-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  height: 24px;
+  min-width: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.project-tab-add:hover {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
+  border-color: var(--line-2);
+}
+
+/* 一个项目都没有时，直接写成「＋ 打开文件夹」 */
+.project-tab-add.wide {
+  padding: 0 10px;
+}
+
+/* ---------- 项目标签上的状态灯 ---------- */
+
+/* 6px 圆点，和右侧「已连接」那颗同一套语义色。
+   跑 = 呼吸黄（慢闪），跑完 = 常亮绿，没连上 = 灰（不做「空闲」承诺）。 */
+.project-tab-light {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--line-2);
+}
+
+.project-tab-light.idle {
+  background: var(--success);
+}
+
+.project-tab-light.running {
+  background: var(--warn);
+  animation: tab-light-breathe 1.4s ease-in-out infinite;
+}
+
+/* 呼吸：不是硬开关，亮起来时带一点光晕，落到暗部只剩轮廓 */
+@keyframes tab-light-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 6px 1px var(--warn);
+  }
+}
+
+/* 系统开了「减少动态效果」就不闪，改成稳定的高亮黄 */
+@media (prefers-reduced-motion: reduce) {
+  .project-tab-light.running {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* ---------- 轮次时间戳（提问时间 / 结束时间 / 用时） ---------- */
+/* 挂在提问气泡下方：右对齐，10px + 弱色，只做定位不抢内容；
+   tabular-nums 让 11:07 和 19:42 宽度一致，竖着扫不会跳。 */
+.chat-stamp {
+  align-self: flex-end;
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+/* 一轮结束那行：整行右对齐，和时间戳同一套字形，中间一道细分隔 */
+.chat-stamp-end {
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  gap: 8px;
+  padding: 2px 2px 0;
+  color: var(--text-3);
+}
+
+.chat-stamp-span {
+  padding-left: 8px;
+  border-left: 1px solid var(--line-2);
+}
+
+/* ---------- 会话条目：最后一次对话时间 ---------- */
+/* 时间带上日期后变长，标题必须让位：不设 min-width:0 的 flex 子项
+   会撑到内容宽度，把右边的时间顶出容器。 */
+.chat-session-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 等宽数字：14:05 和 19:51 占同样宽度，一列时间看着不跳 */
+.chat-session-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }

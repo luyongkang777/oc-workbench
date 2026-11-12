@@ -189,6 +189,33 @@
   color: var(--text-1);
 }
 
+/* 换行态：断行规则与文件查看器一致（满一行在任意字符处断、Tab 走 4 列）。
+   高度用 min-height 给，浏览器真多折一行时盒子自己长高，不压字。 */
+.diff-line.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  tab-size: 4;
+}
+
+/* 换行时不需要横向滚动条 */
+.diff-scroll.wrap {
+  overflow-x: hidden;
+}
+
+/* 「换行」开关激活态 */
+.review-refresh.active {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.review-refresh.active:hover {
+  color: var(--text-inverse);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
 .diff-line.add {
   background: rgba(46, 160, 67, 0.16);
   color: var(--success);

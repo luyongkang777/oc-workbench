@@ -75,6 +75,79 @@
   --scroll-thumb-hover: #4a5266;
   --ring: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--accent-line);
   --ease: 120ms cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  color-scheme: dark;
+}
+
+/* ==========================================================================
+   浅白主题：只覆盖颜色类 token，结构类（圆角 / 缓动 / ring）沿用 :root。
+   叠加层由白转黑（白底上白叠加会消失），阴影换成冷灰低透明度。
+   选择器用 :root[data-theme='light'] 提一级特异性，稳压 :root 默认。
+   ========================================================================== */
+:root[data-theme='light'] {
+  /* ---------- 表面 ---------- */
+  --bg-inset: #eef1f5; /* 凹槽：终端 / 输入框 / 代码块 */
+  --bg-0: #f7f8fa; /* 编辑器主体 / 应用底 */
+  --bg-1: #ffffff; /* 面板 / 顶栏 / 各种工具条 */
+  --bg-2: #f1f3f7; /* 抬升：气泡 / 工具卡 / 表头 */
+  --bg-3: #ffffff; /* 浮层：菜单 / 对话框 / 补全（靠阴影浮起） */
+
+  /* 叠加层：浅底上改用黑色低透明度 */
+  --bg-hover: #0000000a;
+  --bg-control: #00000010;
+  --bg-control-hover: #0000001a;
+
+  /* ---------- 描边 ---------- */
+  --line-1: #0000000f;
+  --line-2: #0000001f;
+
+  /* ---------- 文字 ---------- */
+  --text-1: #242a33;
+  --text-2: #5a6472;
+  --text-3: #8a94a3;
+  --text-4: #aab2bf; /* 仅行号 */
+  --text-inverse: #ffffff; /* 品牌色填充上的字 */
+
+  /* ---------- 品牌：墨绿压深，保证浅底对比 ---------- */
+  --accent: #18897a;
+  --accent-hover: #12766a;
+  --accent-weak: #e2f1ee;
+  --accent-weak-hover: #d3eae5;
+  --accent-line: #18897a5c;
+
+  /* ---------- 语义：弱色转浅色底，ink/soft 转深色字 ---------- */
+  --success: #2e9e67;
+  --success-weak: #e3f3ea;
+  --success-line: #bfe3cd;
+
+  --danger: #d1544b;
+  --danger-soft: #a83a32; /* 在浅底上做 hover 文字，需更深 */
+  --danger-weak: #fdeceb;
+  --danger-weak-hover: #fbdedc;
+  --danger-line: #f1c4c0;
+
+  --warn: #c7881f;
+  --warn-ink: #8a5e14;
+  --warn-weak: #fbf1dd;
+  --warn-line: #ecd9ad;
+
+  --info: #3b86d6;
+  --info-ink: #1f5fa6;
+  --info-weak: #e6f0fb;
+
+  --reasoning: #7b63c9;
+  --reasoning-weak: #ede9f8;
+
+  /* ---------- 阴影：冷灰、低透明度 ---------- */
+  --shadow-1: 0 4px 12px rgba(30, 42, 66, 0.12);
+  --shadow-2: 0 8px 24px rgba(30, 42, 66, 0.16);
+  --shadow-3: 0 18px 48px rgba(30, 42, 66, 0.2);
+
+  /* ---------- 其它 ---------- */
+  --scroll-thumb: #c3cbd6;
+  --scroll-thumb-hover: #aab4c2;
+
+  color-scheme: light;
 }
 
 * {
@@ -118,11 +191,51 @@ body {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-2);
   letter-spacing: 0.2px;
   cursor: default;
+}
+
+.brand .icon,
+.brand svg {
+  color: var(--accent);
+}
+
+/* 顶栏纯图标按钮（主题切换等）：无边框，hover 一层极淡底 */
+.topbar-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease);
+}
+
+.topbar-iconbtn:hover {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+/* 「跟随系统」态：图标带一点品牌色，一眼能分出自动/手动 */
+.topbar-iconbtn.auto {
+  color: var(--accent);
+}
+
+.topbar-iconbtn.auto:hover {
+  color: var(--accent-hover);
 }
 
 .topbar-spacer {

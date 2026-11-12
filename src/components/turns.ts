@@ -39,6 +39,25 @@ export type Turn = {
   reasoningMs: number
   /** 正在进行的思考段开始时间，用来在界面上走秒 */
   reasoningStartedAt: number | null
+  /**
+   * 压缩摘要全文。
+   *
+   * 服务端把压缩结果存成一条 `type: "compaction"` 的消息，正文不在 content 里，
+   * 而在 `message.summary`。历史被重写之后，这段摘要是唯一能说明「之前聊了什么」
+   * 的东西，必须渲染出来。
+   */
+  summary?: string
+  /** 摘要生成时间（毫秒），用于标题上的时间戳 */
+  summaryAt?: number
+  /** 这一轮的开始时间（毫秒）：用户提问的 time.created，缺省时退回首条回复的 created */
+  startedAt?: number
+  /** 这一轮的结束时间（毫秒）：本轮最后一条回复的 time.completed；还在生成时为空 */
+  endedAt?: number
+  /**
+   * 压缩失败原因。服务端会回 200 但在 compaction 消息上带 error
+   * （例如「Nothing to compact yet」），这种也要在历史里留一条，别静默吞掉。
+   */
+  summaryError?: string
 }
 
 const DETAIL_LIMIT = 90
@@ -88,10 +107,29 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
   for (const message of ordered) {
     if (message.type === 'idle') continue
 
+    if (message.type === 'compaction') {
+      // 压缩节点：正文在 message.summary，content 是空的。
+      // 摘要本身要占一轮显示出来，否则压缩之后这段历史等于凭空消失。
+      const text = typeof message.summary === 'string' ? message.summary.trim() : ''
+      const failure = message.error?.message?.trim() ?? ''
+      // 既没摘要也没错误的空节点（服务端占位）不占位置
+      if (!text && !failure) continue
+      const turn = emptyTurn(message.id)
+      if (text) turn.summary = text
+      if (failure) turn.summaryError = failure
+      const at = message.time?.completed ?? message.time?.created
+      if (typeof at === 'number') turn.summaryAt = at
+      if (typeof message.time?.created === 'number') turn.startedAt = message.time.created
+      if (typeof message.time?.completed === 'number') turn.endedAt = message.time.completed
+      turns.push(turn)
+      continue
+    }
+
     if (message.type === 'user') {
       const turn = emptyTurn(message.id)
       turn.user = message.text ?? ''
       turn.files = Array.isArray(message.files) ? message.files : []
+      if (typeof message.time?.created === 'number') turn.startedAt = message.time.created
       turns.push(turn)
       continue
     }
@@ -106,6 +144,16 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
     }
 
     const done = typeof message.time?.completed === 'number'
+    // 轮次时间：起点优先用用户提问时间，没有就用首条回复的 created；
+    // 终点取本轮最后一条回复的 completed（一轮可能有多条 assistant 消息）
+    if (turn.startedAt === undefined && typeof message.time?.created === 'number') {
+      turn.startedAt = message.time.created
+    }
+    if (typeof message.time?.completed === 'number') {
+      if (turn.endedAt === undefined || message.time.completed > turn.endedAt) {
+        turn.endedAt = message.time.completed
+      }
+    }
     let blockIndex = 0
     const nextKey = () => `${message.id}:${blockIndex++}`
 
@@ -179,6 +227,65 @@ export function reasoningLabel(turn: Pick<Turn, 'reasoningActive' | 'reasoningMs
   return '思考过程'
 }
 
+const pad = (value: number): string => String(value).padStart(2, '0')
+
+/**
+ * 时间戳展示：当天只给 `HH:MM`，不是当天带上 `MM-DD`，跨年再带年份。
+ * 历史翻回去看的时候，光有几点钟分不清是哪天。
+ */
+export function formatClock(at: number, now = Date.now()): string {
+  const date = new Date(at)
+  const today = new Date(now)
+  const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  if (
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate()
+  ) {
+    return clock
+  }
+  const day = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return date.getFullYear() === today.getFullYear() ? `${day} ${clock}` : `${date.getFullYear()}-${day} ${clock}`
+}
+
+/** 完整时间，给 title 用：2026-11-12 19:42:31 */
+export function formatDateTime(at: number): string {
+  const date = new Date(at)
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(
+    date.getMinutes(),
+  )}:${pad(date.getSeconds())}`
+}
+
+/** 一段耗时：12 秒 / 5 分 32 秒 / 1 小时 3 分 */
+export function formatSpan(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000))
+  if (total < 60) return `${total} 秒`
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  if (minutes < 60) return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`
+}
+
+/**
+ * 一轮的时间说明：起点、终点、耗时。
+ * 还在生成（没有 endedAt）时只给起点，界面上另有「模型思考中」提示。
+ */
+export function turnTimeLabel(
+  turn: Pick<Turn, 'startedAt' | 'endedAt'>,
+  now = Date.now(),
+): { start: string; end: string; span: string } | null {
+  if (turn.startedAt === undefined && turn.endedAt === undefined) return null
+  const start = turn.startedAt === undefined ? '' : formatClock(turn.startedAt, now)
+  const end = turn.endedAt === undefined ? '' : formatClock(turn.endedAt, now)
+  const span =
+    turn.startedAt !== undefined && turn.endedAt !== undefined && turn.endedAt >= turn.startedAt
+      ? formatSpan(turn.endedAt - turn.startedAt)
+      : ''
+  return { start, end, span }
+}
+
 /**
  * 两轮内容是否完全一样。
  *
@@ -188,6 +295,11 @@ export function reasoningLabel(turn: Pick<Turn, 'reasoningActive' | 'reasoningMs
 export function sameTurn(a: Turn, b: Turn): boolean {
   if (a === b) return true
   if (a.id !== b.id || a.user !== b.user) return false
+  // 摘要消息只有这一段正文：内容变了必须重渲染
+  if (a.summary !== b.summary || a.summaryAt !== b.summaryAt) return false
+  if (a.summaryError !== b.summaryError) return false
+  // 时间戳变化也要重渲染：结束时间是在流式过程中才补上的，漏比就永远显示不出来
+  if (a.startedAt !== b.startedAt || a.endedAt !== b.endedAt) return false
 
   if (a.files.length !== b.files.length) return false
   for (let i = 0; i < a.files.length; i++) {

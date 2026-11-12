@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::resolve;
+use super::{find_matches, resolve};
 use crate::fsdecode;
 use crate::fsindex;
 use crate::fsread;
@@ -157,6 +157,37 @@ fn path_traversal_is_rejected() {
 
     let err = resolve(dir.to_str().unwrap(), "missing.txt").expect_err("不存在必须 404");
     assert_eq!(err.code, 404);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// 聊天里的裸文件名（`Status.h`）实际在 src\ 下：按名字定位要能找回来，
+/// 并且浅层优先、不钻进 node_modules 这类重目录。
+#[test]
+fn find_matches_locates_bare_name() {
+    let dir = temp_dir();
+    let src = dir.join("src");
+    let include = dir.join("include");
+    let vendored = dir.join("node_modules").join("pkg");
+    fs::create_dir_all(&src).expect("建 src");
+    fs::create_dir_all(&include).expect("建 include");
+    fs::create_dir_all(&vendored).expect("建 node_modules");
+
+    write_file(&src, "Status.h", b"// header\n");
+    write_file(&include, "Status.h", b"// header\n");
+    write_file(&vendored, "Status.h", b"// vendored\n");
+
+    let matches = find_matches(&dir, "Status.h").expect("按名字找文件");
+    assert_eq!(
+        matches,
+        vec!["include\\Status.h".to_string(), "src\\Status.h".to_string()],
+        "重目录要跳过，同层按名字排序"
+    );
+
+    // 聊天里大小写经常不一致
+    assert_eq!(find_matches(&dir, "status.h").expect("大小写不敏感").len(), 2);
+    // 找不到就是空，不报错
+    assert!(find_matches(&dir, "Nope.h").expect("找不到返回空").is_empty());
 
     let _ = fs::remove_dir_all(&dir);
 }

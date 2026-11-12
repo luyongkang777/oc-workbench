@@ -5,16 +5,48 @@ import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
+import ProjectTabs from './components/ProjectTabs'
+import { Icon, IconDefs } from './components/Icon'
 import { getAuthState, onIpcMessage, retryAuth, startAuth, subscribeAuth } from './api/auth'
 import { getInfo, reconnect } from './api/client'
+import { findLocal, statFile } from './api/localfs'
+import { persistProjects, startProjects } from './api/projects'
+import {
+  findProject,
+  normKey,
+  parseProjects,
+  projectNameOf,
+  removeProject,
+  setProjectState,
+  upsertProject,
+} from './components/projectList'
+import type { Project } from './components/projectList'
 import { normalizeRootPath, splitOpenPath } from './components/localPath'
+import {
+  nextThemePref,
+  parseThemePref,
+  resolveTheme,
+  themeIcon,
+  themeLabel,
+  themeTitle,
+  type ResolvedTheme,
+  type ThemePref,
+} from './components/theme'
 import { CHAT_W, SIDE_W, useUiLayout } from './hooks/useUiLayout'
+import { useProjectRunning } from './hooks/useProjectRunning'
 
 const DEFAULT_ROOT = 'F:\\opencode\\workbench'
 const ROOT_KEY = 'oc-workbench:root'
+const THEME_KEY = 'oc-workbench:theme'
 const PROBE_INTERVAL_MS = 10_000
 // 未连上时的快轮询间隔：后端 0.5 秒内就绪时用户感知不到等待。
 const FAST_PROBE_INTERVAL_MS = 1_000
+
+/** 系统是否深色。matchMedia 不存在（极老内核 / 测试环境）时按暗色处理。 */
+function prefersDarkScheme(): boolean {
+  if (typeof window.matchMedia !== 'function') return true
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
 
 export default function App() {
   // 令牌只能经 IPC 拿：ready 之前不发任何 /api 请求，避免先刷一片 401。
@@ -29,7 +61,40 @@ export default function App() {
       return DEFAULT_ROOT
     }
   })
+  // 项目清单：一个目录一个项目，点一下就切过去，每个项目各自记着自己的界面状态
+  const [projects, setProjects] = useState<Project[]>([])
   const [reconnecting, setReconnecting] = useState(false)
+  // 主题偏好：默认跟随系统。存偏好而不是存结果，系统换色时不用用户再点一次。
+  const [themePref, setThemePref] = useState<ThemePref>(() => {
+    try {
+      return parseThemePref(window.localStorage.getItem(THEME_KEY))
+    } catch {
+      // localStorage 被禁用时跟随系统
+      return 'system'
+    }
+  })
+  // 系统当前是否深色：由 prefers-color-scheme 驱动，切系统主题时实时更新
+  const [systemDark, setSystemDark] = useState(() => prefersDarkScheme())
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const query = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
+    setSystemDark(query.matches)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+  const theme: ResolvedTheme = resolveTheme(themePref, systemDark)
+  // 解析后的主题落到 <html data-theme>，CSS 的 :root[data-theme='light'] 据此整体切换。
+  // 同时把偏好写进 data-theme-pref，想要「跟随系统」专属样式时可以直接选中。
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.dataset.themePref = themePref
+    try {
+      window.localStorage.setItem(THEME_KEY, themePref)
+    } catch {
+      // 存储不可用只影响下次启动的恢复，不影响本次
+    }
+  }, [theme, themePref])
   const [retryError, setRetryError] = useState<string | null>(null)
   const [file, setFile] = useState<string | null>(null)
   // 打开工作区外的文件时，它自己的 root（文件所在目录）；null 表示就在当前工作区里。
@@ -47,6 +112,23 @@ export default function App() {
   const [notice, setNotice] = useState<{ text: string; id: number } | null>(null)
   // 同一句提示连续触发时 id 变化，effect 会重建定时器（否则第二次提示会被旧定时器提前清掉）
   const showNotice = (text: string) => setNotice({ text, id: Date.now() + Math.random() })
+  // 键盘监听里要用最新的提示函数；它每次渲染都会重建，用 ref 取，避免每次渲染重挂监听
+  const noticeRef = useRef(showNotice)
+  noticeRef.current = showNotice
+
+  // Ctrl/⌘ + Shift + L：循环切换主题（跟随系统 → 暗 → 浅），右下角浮层报一下当前状态
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey) return
+      if (event.key.toLowerCase() !== 'l') return
+      event.preventDefault()
+      const next = nextThemePref(themePref)
+      setThemePref(next)
+      noticeRef.current(`主题：${themeLabel(next, resolveTheme(next, prefersDarkScheme()))}`)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [themePref])
   // 组件是否还在树上：异步回调据此决定要不要写状态
   const alive = useRef(true)
   // 探活请求是否在途：定时探活不叠加；finally 里保证复位
@@ -181,40 +263,75 @@ export default function App() {
   // IPC 订阅是空依赖，闭包里的 root 永远是首帧值，所以用 ref 跟踪最新目录。
   const rootRef = useRef(root)
   rootRef.current = root
+  // 项目清单同理：IPC 回调里拿不到最新的 state
+  const projectsRef = useRef<Project[]>([])
+  projectsRef.current = projects
+  // 当前界面位置（看哪个文件 / 停在哪个视图），切项目时记到"要离开的"那个项目名下
+  const uiStateRef = useRef<{ file: string | null; view: 'code' | 'diff' }>({ file, view })
+  uiStateRef.current = { file, view }
 
-  const normPath = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
+  // 路径比较统一用 projectList 的 normKey（去尾分隔符、正反斜杠归一、小写）
+  const normPath = normKey
 
-  function applyRoot(input: string) {
-    // 手输/粘贴/外壳下发的路径先抹平：引号、正反斜杠、/c/ 风格、file://、尾斜杠。
-    const path = normalizeRootPath(input)
-    if (!path) return
-    // 同一目录：只补刷新持久化，不清掉正在看的文件（选同一文件夹/重试都会走到这）。
-    if (normPath(rootRef.current) === normPath(path)) {
-      try {
-        window.localStorage.setItem(ROOT_KEY, path)
-      } catch {
-        // 忽略：仅影响 dev 刷新恢复
-      }
-      const same = window as unknown as { ipc?: { postMessage(message: string): void } }
-      same.ipc?.postMessage(`oc:save-root:${path}`)
-      return
-    }
-    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，切换文件夹会丢弃它，继续？')) {
-      return
-    }
-    rootRef.current = path
-    setRoot(path)
+  /** 记住当前目录：root.txt 跨启动，localStorage 只管 dev 刷新。 */
+  function rememberRoot(path: string) {
     try {
       window.localStorage.setItem(ROOT_KEY, path)
     } catch {
-      // 存储不可用只影响 dev 刷新恢复，不影响本次切换
+      // 忽略：仅影响 dev 刷新恢复
     }
-    // exe 外壳把它落到 root.txt（localStorage 按端口分区，跨不了启动）。
     const w = window as unknown as { ipc?: { postMessage(message: string): void } }
     w.ipc?.postMessage(`oc:save-root:${path}`)
-    setFile(null)
+  }
+
+  /** 更新清单并立刻落盘（外壳写 projects.json）。 */
+  function commitProjects(next: Project[]) {
+    projectsRef.current = next
+    setProjects(next)
+    persistProjects(next)
+  }
+
+  /**
+   * 切到某个目录：既是「打开文件夹」，也是「切换项目」。
+   * 切走时把当前项目的位置记下来，切回来时恢复它自己上次的样子。
+   *
+   * `persist: false` 用于「启动时恢复上次目录」：只切界面，不把 root.txt 再写一遍。
+   * 否则两个窗口各恢复一次就会互相覆盖 root.txt，来回打架。
+   */
+  function applyRoot(input: string, opts?: { persist?: boolean }) {
+    const persist = opts?.persist !== false
+    // 手输/粘贴/外壳下发的路径先抹平：引号、正反斜杠、/c/ 风格、file://、尾斜杠。
+    const path = normalizeRootPath(input)
+    if (!path) return
+
+    // 同一目录：只补刷新持久化，不清掉正在看的文件（选同一文件夹/重试都会走到这）。
+    if (normPath(rootRef.current) === normPath(path)) {
+      commitProjects(upsertProject(projectsRef.current, path, { lastUsed: Date.now() }))
+      if (persist) rememberRoot(path)
+      return
+    }
+
+    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，切换项目会丢弃它，继续？')) {
+      return
+    }
+
+    let next = upsertProject(projectsRef.current, path, { lastUsed: Date.now() })
+    const leaving = rootRef.current
+    if (leaving) next = setProjectState(next, leaving, { ...uiStateRef.current })
+    const target = findProject(next, path)
+    commitProjects(next)
+
+    rootRef.current = path
+    setRoot(path)
+    if (persist) rememberRoot(path)
+
+    // 每个项目都是自己的界面：恢复它上次停在哪个文件、哪个视图
+    const state = target?.state
+    setView(state?.view === 'diff' ? 'diff' : 'code')
     setFileRoot(null)
     setFileLine(null)
+    setFile(state?.file ?? null)
+    setFileSeq((value) => value + 1)
   }
 
   // 外壳消息：root:<path> 是启动时随令牌下发的上次根目录；
@@ -229,7 +346,8 @@ export default function App() {
         }
         if (message.startsWith('root:')) {
           const saved = message.slice('root:'.length).trim()
-          if (saved) applyRoot(saved)
+          // 启动恢复不算"用户切了项目"，不回写 root.txt：多个窗口同时启动会把 root.txt 拉来拉去
+          if (saved) applyRoot(saved, { persist: false })
           return
         }
         if (!message.startsWith('folder:')) return
@@ -239,27 +357,133 @@ export default function App() {
     [],
   )
 
+  // 启动时拉起项目清单。外壳回的清单可能比"刚打开的这个目录"旧（两条 IPC 到达顺序不定），
+  // 所以跟本地已有的合并，别把用户刚打开的项目覆盖掉。
+  useEffect(() => {
+    const stop = startProjects((list) => {
+      const merged = parseProjects([...list, ...projectsRef.current])
+      const current = rootRef.current
+      const hasActive = current && merged.some((p) => normKey(p.path) === normKey(current))
+      const withActive =
+        current && !hasActive ? parseProjects([...merged, { path: current, name: projectNameOf(current) }]) : merged
+      projectsRef.current = withActive
+      setProjects(withActive)
+      persistProjects(withActive)
+
+      // 这次启动打开的是哪个项目，就恢复它上次停的位置
+      const state = findProject(withActive, current)?.state
+      if (!state) return
+      if (state.view) setView(state.view)
+      if (state.file) {
+        setFile(state.file)
+        setFileSeq((value) => value + 1)
+      }
+    })
+    return stop
+  }, [])
+
+  // 文件/视图变了就把位置写回当前项目。防抖：连点一串文件不会一路写盘。
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const current = rootRef.current
+      if (!current) return
+      const next = setProjectState(projectsRef.current, current, { file, view })
+      if (next === projectsRef.current) return
+      projectsRef.current = next
+      setProjects(next)
+      persistProjects(next)
+    }, 800)
+    return () => window.clearTimeout(timer)
+  }, [file, view])
+
+  /** 从列表移除项目：只是不再显示，磁盘上的东西一点不动。 */
+  const forgetProject = useCallback((path: string) => {
+    const next = removeProject(projectsRef.current, path)
+    projectsRef.current = next
+    setProjects(next)
+    persistProjects(next)
+    // 删掉的正好是当前项目：切到清单里第一个，别停在一个已经不在列表里的目录
+    if (normKey(path) === normKey(rootRef.current)) {
+      const fallback = next[0]
+      if (fallback) applyRoot(fallback.path)
+    }
+    // applyRoot 每次渲染都是新函数，这里只用 ref，所以空依赖是安全的
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * 裸文件名定位：聊天里的工具详情常只写 `Status.h`，真实文件往往在 `src\Status.h`。
+   * 先看根目录有没有，没有再按名字在工作区里搜；返回命中路径与同名数量。
+   */
+  const resolveBareName = useCallback(
+    async (rootDir: string, name: string): Promise<{ path: string; total: number } | null> => {
+      try {
+        await statFile(rootDir, name)
+        return { path: name, total: 1 }
+      } catch {
+        // 根目录下没有，退回按文件名搜索
+      }
+      try {
+        const matches = await findLocal(rootDir, name)
+        const first = matches[0]
+        return first ? { path: first.path, total: matches.length } : null
+      } catch {
+        return null
+      }
+    },
+    [],
+  )
+
   // 这里只切换「看哪个文件」；读取、分页、虚拟滚动全部由 CodeView 自己管，
   // 避免每次读到内容都让整个 App（含会话面板）跟着重渲染。
   // 用 useCallback 是为了让聊天里的 Markdown 能靠 memo 跳过重渲染。
-  const openFile = useCallback((relPath: string, line?: number, edit?: boolean) => {
-    // 编辑中的未保存内容不能因为点了一下文件树就无声丢掉
-    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，确定离开？')) return
-    // 聊天里的路径常是绝对路径（`C:\...`、`/c/...`），而本地文件通道只收相对 root 的
-    // 路径，盘符那一段会被当成非法片段 400 拒掉。落在工作区外就临时换成它所在目录当
-    // root —— 只影响编辑器，不改当前工作区，会话和文件树都留在原处。
-    const target = splitOpenPath(rootRef.current, relPath)
-    if (!target.path) return
-    const sameRoot = normPath(target.root) === normPath(rootRef.current)
-    setFileRoot(sameRoot ? null : target.root)
-    setFile(target.path)
-    setFileLine(typeof line === 'number' && Number.isFinite(line) ? line : null)
-    setFileSeq((value) => value + 1)
-    // 双击文件树：打开后直接进编辑
-    if (edit) setAutoEditSeq((value) => value + 1)
-    // 停在「审查」面板时点路径/文件树也要有反应：切回代码视图
-    setView('code')
-  }, [])
+  const openFile = useCallback(
+    (relPath: string, line?: number, edit?: boolean) => {
+      // 聊天里的路径常是绝对路径（`C:\...`、`/c/...`），而本地文件通道只收相对 root 的
+      // 路径，盘符那一段会被当成非法片段 400 拒掉。落在工作区外就临时换成它所在目录当
+      // root —— 只影响编辑器，不改当前工作区，会话和文件树都留在原处。
+      const target = splitOpenPath(rootRef.current, relPath)
+      if (!target.path) return
+
+      const open = (finalPath: string) => {
+        // 编辑中的未保存内容不能因为点了一下文件树就无声丢掉
+        if (editorDirty.current && !window.confirm('当前文件有未保存的修改，确定离开？')) return
+        const sameRoot = normPath(target.root) === normPath(rootRef.current)
+        setFileRoot(sameRoot ? null : target.root)
+        setFile(finalPath)
+        setFileLine(typeof line === 'number' && Number.isFinite(line) ? line : null)
+        setFileSeq((value) => value + 1)
+        // 双击文件树：打开后直接进编辑
+        if (edit) setAutoEditSeq((value) => value + 1)
+        // 停在「审查」面板时点路径/文件树也要有反应：切回代码视图
+        setView('code')
+      }
+
+      // 裸文件名（不带目录）先定位，别拿它去工作区根上硬拼一个不存在的路径
+      if (!/[\\/]/.test(target.path)) {
+        void resolveBareName(target.root, target.path).then((hit) => {
+          if (!hit) {
+            showNotice(`找不到文件：${target.path}`)
+            // 顺手刷新文件树：多半是刚被删掉/改名的旧条目
+            setTreeSeq((value) => value + 1)
+            return
+          }
+          if (hit.path !== target.path) {
+            showNotice(
+              hit.total > 1
+                ? `已定位到 ${hit.path}（同名 ${hit.total} 个）`
+                : `已定位到 ${hit.path}`,
+            )
+          }
+          open(hit.path)
+        })
+        return
+      }
+
+      open(target.path)
+    },
+    [resolveBareName],
+  )
 
   // 点路径栏的「外部文件」标记：把这个目录正式变成工作区，正在看的文件保持不变。
   const useExternalRoot = useCallback((targetRoot: string) => {
@@ -285,6 +509,15 @@ export default function App() {
 
   // 保存后文件大小/行数变了，让文件树重拉一次
   const handleEditorSaved = useCallback(() => setTreeSeq((value) => value + 1), [])
+
+  /**
+   * 编辑器打不开某个文件：多半是文件树里残留的旧条目（文件已被删/改名）。
+   * 提示一句并刷新文件树，旧条目自己就消失了，不用用户手动点「刷新」。
+   */
+  const handleOpenFailed = useCallback((target: string, message: string) => {
+    showNotice(`打不开 ${target}：${message}`)
+    setTreeSeq((value) => value + 1)
+  }, [])
 
   /** 文件树里删掉了东西：正在看的是它（或它的子文件）就关掉编辑器。 */
   const handlePathRemoved = useCallback((removed: string) => {
@@ -335,6 +568,9 @@ export default function App() {
     }
   }
 
+  // 顶栏标签上的呼吸灯：跨所有项目，AI 在跑的项目亮黄
+  const projectRunning = useProjectRunning(connected, projects.length)
+
   const statusOk = auth.status === 'ready' && connected
   const statusText =
     auth.status === 'pending'
@@ -348,9 +584,31 @@ export default function App() {
 
   return (
     <div className="app">
+      <IconDefs />
       <header className="topbar">
-        <span className="brand">OpenCode 工作台</span>
-        <span className="topbar-spacer" />
+        <span className="brand">
+          <Icon name="logo" size={16} />
+   OpenCode 工作台
+ </span>
+        <ProjectTabs
+          projects={projects}
+          active={root}
+          running={projectRunning}
+          connected={connected}
+          onSwitch={applyRoot}
+          onRemove={forgetProject}
+          onAdd={pickFolder}
+        />
+        <div className="topbar-right">
+        <button
+          type="button"
+   className={`topbar-iconbtn${themePref === 'system' ? ' auto' : ''}`}
+   onClick={() => setThemePref((cur) => nextThemePref(cur))}
+          title={`${themeTitle(themePref, theme)}（Ctrl+Shift+L）`}
+   aria-label="切换主题（跟随系统 / 暗色 / 浅白，Ctrl+Shift+L）"
+        >
+   <Icon name={themeIcon(themePref, theme)} size={15} />
+        </button>
         <button
           type="button"
           className={`review-toggle${view === 'diff' ? ' active' : ''}`}
@@ -370,6 +628,7 @@ export default function App() {
             {reconnecting ? '连接中…' : '重试'}
           </button>
         ) : null}
+        </div>
       </header>
 
       {notice ? <div className="app-notice">{notice.text}</div> : null}
@@ -395,9 +654,6 @@ export default function App() {
                 title="刷新文件树"
               >
                 刷新
-              </button>
-              <button type="button" className="pane-action" onClick={pickFolder} title="打开任意文件夹">
-                打开
               </button>
             </span>
           </div>
@@ -448,6 +704,7 @@ export default function App() {
               autoEditSeq={autoEditSeq}
               externalRoot={fileRoot}
               onUseExternalRoot={useExternalRoot}
+              onOpenFailed={handleOpenFailed}
             />
           )}
         </section>

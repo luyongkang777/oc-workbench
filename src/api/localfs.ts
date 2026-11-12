@@ -52,6 +52,28 @@ export async function listDirLocal(
   return res.entries ?? []
 }
 
+export type FindMatch = { path: string; type: 'file' | 'directory' }
+
+/**
+ * 按文件名（basename，大小写不敏感）在工作区里定位。
+ *
+ * 聊天里的工具详情常只写裸文件名（`Status.h`），而真实文件往往在 `src\` 下，
+ * 直接按工作区根打开会 404；这里按名字找回真实相对路径。
+ * 结果按「层级浅 → 名字小」排序，第一条通常就是想要的那个。
+ */
+export async function findLocal(
+  root: string,
+  name: string,
+  signal?: AbortSignal,
+): Promise<FindMatch[]> {
+  const res = await localRequest<{ matches?: FindMatch[] }>(
+    `/local/fs/find?root=${encodeURIComponent(root)}&name=${encodeURIComponent(name)}`,
+    signal,
+    30_000,
+  )
+  return res.matches ?? []
+}
+
 export async function statFile(
   root: string,
   relPath: string,

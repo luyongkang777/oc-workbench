@@ -4,7 +4,16 @@ import MarkdownText, { type OpenFile } from './MarkdownText'
 import { copyText } from './clipboard'
 import { isImageFile, messageFilePreview } from './attachments'
 import { parseFilePath } from './fileLinks'
-import { groupTurns, reasoningLabel, sameTurn, type ToolInfo, type Turn, type TurnBlock } from './turns'
+import {
+  formatDateTime,
+  groupTurns,
+  reasoningLabel,
+  sameTurn,
+  turnTimeLabel,
+  type ToolInfo,
+  type Turn,
+  type TurnBlock,
+} from './turns'
 import type { ChatMessage, MessageFile } from '../api/chat'
 
 function summarize(tools: ToolInfo[]): string {
@@ -110,6 +119,59 @@ function ReasoningBlock({ block }: { block: Extract<TurnBlock, { kind: 'reasonin
 }
 
 /**
+ * 压缩摘要。服务端把历史重写成一段文本，存在 `type: 'compaction'` 消息的
+ * `summary` 字段里（`content` 是空的），原来整个被丢掉了。
+ *
+ * 默认展开：压缩之后这是唯一还能看到「之前聊了什么」的地方。摘要可能很长，
+ * 所以正文限高内部滚动，不把后面的历史顶下去。
+ */
+function SummaryBlock({
+  text,
+  error,
+  at,
+  root,
+  onOpenFile,
+  onOpenMenu,
+}: {
+  text: string
+  /** 压缩失败原因（服务端 200 + message.error），有值时标题标红 */
+  error?: string
+  at?: number
+  root?: string
+  onOpenFile?: OpenFile
+  onOpenMenu: (e: ReactMouseEvent, text: string) => void
+}) {
+  const [open, setOpen] = useState(Boolean(text))
+  const date = at ? new Date(at) : null
+  const time = date
+    ? `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    : ''
+
+  return (
+    <div className={`chat-summary${error ? ' fail' : ''}`}>
+      <button
+        type="button"
+        className="chat-summary-head"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span className="chat-summary-caret">{open ? '▾' : '▸'}</span>
+        <span className="chat-summary-title">{error && !text ? '压缩未完成' : '压缩摘要'}</span>
+        {time ? <span className="chat-summary-time">{time}</span> : null}
+        <span className="chat-summary-hint">{open ? '收起' : '展开'}</span>
+      </button>
+      {open ? (
+        <div className="chat-summary-body" onContextMenu={(e) => onOpenMenu(e, text)}>
+          {text ? <MarkdownText text={text} root={root} onOpenFile={onOpenFile} /> : null}
+          {error ? <div className="chat-summary-error">服务端：{error}</div> : null}
+          {text ? <CopyButton text={text} title="复制摘要" /> : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
  * 一轮对话。memo + sameTurn：只有内容真的变了才重渲染。
  *
  * 长会话里流式输出时，原来每来一次事件就把整页几百轮全部重建一遍，
@@ -129,6 +191,9 @@ const TurnView = memo(
     onOpenMenu: (e: ReactMouseEvent, text: string) => void
     onOpenImage: (image: { url: string; name: string }) => void
   }) {
+    const stamp = turnTimeLabel(turn)
+    const startTitle = turn.startedAt === undefined ? '' : `提问时间 ${formatDateTime(turn.startedAt)}`
+    const endTitle = turn.endedAt === undefined ? '' : `结束时间 ${formatDateTime(turn.endedAt)}`
     return (
       <div className="chat-turn">
         {turn.user !== undefined || turn.files.length > 0 ? (
@@ -140,7 +205,23 @@ const TurnView = memo(
               </div>
               {turn.user ? <CopyButton text={turn.user} title="复制这条提问" /> : null}
             </div>
+            {stamp?.start ? (
+              <span className="chat-stamp" title={startTitle}>
+                {stamp.start} 提问
+              </span>
+            ) : null}
           </div>
+        ) : null}
+
+        {turn.summary || turn.summaryError ? (
+          <SummaryBlock
+            text={turn.summary ?? ''}
+            error={turn.summaryError}
+            at={turn.summaryAt}
+            root={root}
+            onOpenFile={onOpenFile}
+            onOpenMenu={onOpenMenu}
+          />
         ) : null}
 
         {turn.blocks.map((block) => {
@@ -161,6 +242,14 @@ const TurnView = memo(
             </div>
           )
         })}
+
+        {/* 纯压缩摘要轮没有提问也没有回复段，标题上已经有时间，别再补一条结束行 */}
+        {stamp?.end && (turn.user !== undefined || turn.blocks.length > 0) ? (
+          <div className="chat-stamp chat-stamp-end" title={`${startTitle}${startTitle && endTitle ? '，' : ''}${endTitle}`}>
+            <span>{stamp.end} 结束</span>
+            {stamp.span ? <span className="chat-stamp-span">用时 {stamp.span}</span> : null}
+          </div>
+        ) : null}
       </div>
     )
   },

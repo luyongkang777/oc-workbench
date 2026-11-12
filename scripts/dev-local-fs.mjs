@@ -37,6 +37,15 @@ const CACHE_CAP = 8
 /** 单次保存的正文上限，与 Rust 外壳保持一致。 */
 const WRITE_MAX_BYTES = 8 * 1024 * 1024
 
+// ---------- 按文件名定位（/local/fs/find）----------
+// 聊天里的工具详情常常只写裸文件名（`Status.h`、`Protocol.h`），点开时按工作区根去找
+// 必然 404（真实文件在 src\ 下）。前端因此会二次询问「这个文件名在哪」。
+/** 搜索时跳过的重目录：和文件树的隐藏规则保持一致。 */
+const FIND_SKIP = new Set(['node_modules', '.git', 'dist', 'target', '.vite', '.vite-temp', '.cache'])
+const FIND_MAX_DEPTH = 8
+const FIND_MAX_VISITS = 20000
+const FIND_MAX_MATCHES = 50
+
 // ---------- 保存（PUT /local/fs/write）用的小工具 ----------
 
 /** 读完整个请求体；超限直接 413，不把内存吃光。 */
@@ -576,6 +585,53 @@ async function fsOps(req, action, root, rel, url) {
   return { ok: true, path: rel }
 }
 
+/**
+ * 按文件名（basename，大小写不敏感）在工作区里找文件。
+ *
+ * 返回的 path 是相对 root 的路径（反斜杠分隔），按「层级浅的、名字小的」排前面：
+ * 顶层同名文件优先于深层同名文件，前端取第一条即可。
+ */
+async function findByName(root, name) {
+  if (!root) throw httpError(400, '缺少 root 参数')
+  const rootReal = await realpath(root).catch(() => {
+    throw httpError(404, `目录不存在：${root}`)
+  })
+  const needle = name.toLowerCase()
+  const matches = []
+  let visits = 0
+
+  const walk = async (dirAbs, rel, depth) => {
+    if (matches.length >= FIND_MAX_MATCHES || visits >= FIND_MAX_VISITS || depth > FIND_MAX_DEPTH) return
+    let entries
+    try {
+      entries = await readdir(dirAbs, { withFileTypes: true })
+    } catch {
+      // 权限/占用导致的读不到，跳过这个目录，不影响其它分支
+      return
+    }
+    visits += entries.length
+    for (const entry of entries) {
+      if (matches.length >= FIND_MAX_MATCHES || visits >= FIND_MAX_VISITS) return
+      const childRel = rel ? `${rel}\\${entry.name}` : entry.name
+      if (entry.isDirectory()) {
+        if (FIND_SKIP.has(entry.name)) continue
+        await walk(path.join(dirAbs, entry.name), childRel, depth + 1)
+        continue
+      }
+      if (entry.name.toLowerCase() === needle) matches.push({ path: childRel, type: 'file' })
+    }
+  }
+
+  await walk(rootReal, '', 0)
+  matches.sort((a, b) => {
+    const da = a.path.split('\\').length
+    const db = b.path.split('\\').length
+    if (da !== db) return da - db
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0
+  })
+  return { matches }
+}
+
 async function handle(req, res) {
   const method = req.method || 'GET'
   if (method !== 'GET' && method !== 'HEAD' && method !== 'PUT' && method !== 'POST') {
@@ -590,6 +646,13 @@ async function handle(req, res) {
   if (STRUCTURE_ACTIONS.has(action)) {
     const result = await fsOps(req, action, root, rel, url)
     return sendJson(res, 200, result)
+  }
+
+  // 按文件名在工作区里定位（裸文件名打开失败时用）
+  if (action === 'find') {
+    const name = (url.searchParams.get('name') || rel || '').trim()
+    if (!name) throw httpError(400, '缺少 name 参数')
+    return sendJson(res, 200, await findByName(root, name))
   }
 
   const target = await resolveTarget(root, rel)

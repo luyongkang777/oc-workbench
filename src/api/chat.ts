@@ -61,6 +61,20 @@ export type PromptFile = {
   source?: { type: 'uri'; uri: string }
 }
 
+/**
+ * 一次调用的 token 用量（opencode 原样返回）。
+ *
+ * `input` 是没命中缓存的那部分提示词，`cache.read` 是命中缓存的提示词；
+ * 两者相加才是这次请求实际带上的上下文规模——上下文用量必须按这个算，
+ * 只看 `input` 会把几百 k 的缓存前缀漏掉。
+ */
+export type MessageTokens = {
+  input?: number
+  output?: number
+  reasoning?: number
+  cache?: { read?: number; write?: number }
+}
+
 export type ChatMessage = {
   id: string
   type: string
@@ -69,6 +83,18 @@ export type ChatMessage = {
   files?: MessageFile[]
   time?: { created?: number; completed?: number }
   model?: { id?: string; providerID?: string }
+  tokens?: MessageTokens
+  /**
+   * 压缩摘要。只在 `type: 'compaction'` 的消息上有意义：
+   * 服务端把摘要放在这里，`content` 是空的。
+   */
+  summary?: string
+  /**
+   * 压缩失败原因。服务端可能回 200 但消息带 error
+   * （例如 `compaction.unavailable / Nothing to compact yet`），
+   * 不看这个字段就会把失败当成成功。
+   */
+  error?: { type?: string; message?: string }
 }
 
 /** 表单选项（question 工具里的一个可选项）。 */
@@ -125,6 +151,8 @@ export type ModelInfo = {
   providerID: string
   name?: string
   variants?: { id: string; name?: string; settings?: Record<string, unknown> }[]
+  /** 能力上限：context 是上下文窗口，用来算上下文占用百分比 */
+  limit?: { context?: number; output?: number }
 }
 
 function token(): string {
@@ -181,31 +209,162 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
   return matches
 }
 
+/**
+ * 建会话。
+ *
+ * `title` 只在调用方确实要指定名字时才传。不传时**不要**塞占位标题：
+ * 服务端只在「会话还没有标题」的前提下，收到第一条消息后自动生成摘要标题
+ * （和 TUI 一样，实测首条消息后二十来秒写入）。先塞一个固定标题，服务端就
+ * 再也不会改名了——这正是以前一屏全是「工作台会话」的原因。
+ */
 export async function createSession(
   root: string,
   title?: string,
   model?: ModelRef,
 ): Promise<SessionInfo> {
+  const body: Record<string, unknown> = {
+    model,
+    location: { directory: root },
+    // metadata 原样存到服务端并在列表接口返回，用它区分「工作台会话」和外部会话
+    metadata: { source: WORKBENCH_SOURCE },
+  }
+  if (title) body.title = title
   const data = await call<{ data?: SessionInfo }>('/api/session', {
     method: 'POST',
-    // metadata 原样存到服务端并在列表接口返回，用它区分「工作台会话」和外部会话
-    body: JSON.stringify({
-      title,
-      model,
-      location: { directory: root },
-      metadata: { source: WORKBENCH_SOURCE },
-    }),
+    body: JSON.stringify(body),
   })
   const session = data.data
   if (!session?.id) throw new Error('创建会话失败：响应里没有 id')
   return session
 }
 
-export async function listMessages(sessionID: string): Promise<ChatMessage[]> {
-  const data = await call<{ data?: ChatMessage[] }>(
-    `/api/session/${encodeURIComponent(sessionID)}/message`,
+/** 改名（PATCH 只带 title 时，服务端会保留 metadata，实测不会丢掉工作台标记）。 */
+export async function renameSession(sessionID: string, title: string): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  })
+}
+
+/** 旧版本建会话时硬写进去的占位标题，用来认出需要补名字的历史会话。 */
+export const LEGACY_PLACEHOLDER_TITLE = '工作台会话'
+
+/**
+ * 会话里的第一条用户消息（纯文本）。用来给没有标题的会话起名。
+ *
+ * 消息列表是最新在前、单页上限 200 条，所以必须沿 cursor 一路翻到最早那页：
+ * 页内越靠后越早，取最早一页里最后一条 user 文本。
+ * 只翻 maxPages 页：超长会话全翻一遍要几十个请求，而越早的消息越能代表主题，
+ * 翻到第 4 页时拿到的已经足够起名。
+ */
+export async function firstUserText(sessionID: string, maxPages = 4): Promise<string> {
+  let cursor: string | undefined
+  let earliest = ''
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await listMessagePage(sessionID, cursor)
+    if (result.messages.length === 0) break
+    for (let i = result.messages.length - 1; i >= 0; i -= 1) {
+      const message = result.messages[i]
+      if (message.type !== 'user') continue
+      const text = (message.text ?? '').trim()
+      if (text) earliest = text
+    }
+    if (!result.next) break
+    cursor = result.next
+  }
+  return earliest
+}
+
+/**
+ * 把首条消息压成一行标题：去掉附件占位（`[Image 1]` 之类）、折叠空白、超长截断。
+ * 只是服务端标题还没生成时的兜底，比露一串会话 id 体面。
+ */
+export function titleFromText(text: string, max = 24): string {
+  const line = text
+    .replace(/\[[^\]\n]{1,24}\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!line) return ''
+  return line.length > max ? `${line.slice(0, max)}…` : line
+}
+
+/** 服务端单页上限是 200，传更大会 400。 */
+const MESSAGE_PAGE_LIMIT = 200
+/** 一次最多翻多少页：200 × 50 = 一万条，够长会话用，也防病理会话把内存吃光。 */
+const MAX_MESSAGE_PAGES = 50
+
+export type MessagePage = {
+  /** 本页消息（服务端倒序：最新在前） */
+  messages: ChatMessage[]
+  /** 继续往更早翻的游标；空 = 已经到底 */
+  next?: string
+}
+
+/**
+ * 一页消息。
+ *
+ * 服务端默认只回最新 50 条，且翻页参数只能靠响应里的 `cursor.next`
+ * （传 `previous` 或裸 id 都是空/400）。所以调用方必须沿 next 往回走。
+ */
+export async function listMessagePage(sessionID: string, cursor?: string): Promise<MessagePage> {
+  const params = new URLSearchParams({ limit: String(MESSAGE_PAGE_LIMIT) })
+  if (cursor) params.set('cursor', cursor)
+  const data = await call<{ data?: ChatMessage[]; cursor?: { next?: string } }>(
+    `/api/session/${encodeURIComponent(sessionID)}/message?${params.toString()}`,
   )
-  return data.data ?? []
+  return { messages: data.data ?? [], next: data.cursor?.next }
+}
+
+/**
+ * 拉完整历史。
+ *
+ * 原来只请求一次、拿默认的 50 条：会话一长，往上一翻就只剩最近 50 条，
+ * 表现就是「聊多了之前的记录丢了」。这里沿 cursor.next 一页页翻到最早，
+ * 拼成完整的倒序列表；超过页数上限时把游标交回去，界面可以按需续拉。
+ */
+export async function listMessages(
+  sessionID: string,
+  maxPages = MAX_MESSAGE_PAGES,
+): Promise<{ messages: ChatMessage[]; hasMore: boolean; next?: string }> {
+  const all: ChatMessage[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  let hasMore = false
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await listMessagePage(sessionID, cursor)
+    // 到底时服务端仍会给一个 next，但下一页为空：以「本页为空」为终点
+    if (result.messages.length === 0) break
+    for (const message of result.messages) {
+      if (seen.has(message.id)) continue
+      seen.add(message.id)
+      all.push(message)
+    }
+    cursor = result.next
+    if (!cursor) break
+    if (page === maxPages - 1) hasMore = true
+  }
+
+  return { messages: all, hasMore, next: hasMore ? cursor : undefined }
+}
+
+/**
+ * 合并「最新一页」和「本地已有历史」。
+ *
+ * 事件触发的刷新只拉最新一页，本地旧消息必须留住，否则每刷一次历史就短一截。
+ * 顺序按 `time.created` 倒序（服务端约定最新在前）；没有 created 的
+ * （流式事件刚插进来的骨架）当最新处理，免得被挤到列表底部。
+ */
+export function mergeMessages(prev: ChatMessage[], fresh: ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>()
+  for (const message of fresh) byId.set(message.id, message)
+  for (const message of prev) if (!byId.has(message.id)) byId.set(message.id, message)
+  const list = [...byId.values()]
+  list.sort(
+    (a, b) =>
+      (b.time?.created ?? Number.MAX_SAFE_INTEGER) - (a.time?.created ?? Number.MAX_SAFE_INTEGER),
+  )
+  return list
 }
 
 /** 从当前会话分叉（复制完整历史）。 */
@@ -365,6 +524,18 @@ export function isSessionBusy(session: SessionInfo): boolean {
   const busy = session.time?.busy ?? 0
   const idle = session.time?.idle ?? 0
   return busy > idle
+}
+
+/**
+ * 会话条目上的「最后一次对话」时间。
+ *
+ * 服务端每次会话更新（包括消息落库）都会刷 `time.updated`，所以它就是我们能拿到的
+ * 最后活跃时间；`busy` / `idle` 只在生成过程中有意义，不能当历史时间用。
+ * 返回 0 / 缺字段时返回 undefined，调用方据此决定要不要渲染时间。
+ */
+export function sessionLastAt(session: SessionInfo): number | undefined {
+  const at = session.time?.updated ?? session.time?.created
+  return typeof at === 'number' && at > 0 ? at : undefined
 }
 
 /** 服务端推来的事件。字段按实际用到的那几个声明，其余不管。 */
