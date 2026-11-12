@@ -1,0 +1,203 @@
+/* 会话回复的 Markdown 渲染（面板窄，尺寸整体压小） */
+.md {
+  /* .chat-bubble 是 pre-wrap 的，块级渲染不能继承，否则空行会翻倍 */
+  white-space: normal;
+  font-size: 12.5px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 6px 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 10px 0 6px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #e8e8e8;
+}
+
+.md h1 {
+  font-size: 15px;
+}
+
+.md h2 {
+  font-size: 14px;
+}
+
+.md h3 {
+  font-size: 13px;
+}
+
+.md h4 {
+  font-size: 12.5px;
+}
+
+.md ul,
+.md ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.md li {
+  margin: 2px 0;
+}
+
+.md li > p {
+  margin: 2px 0;
+}
+
+/* 行内代码 */
+.md code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #1b1b1b;
+  color: #ce9178;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11.5px;
+}
+
+/* 代码块：行内那个 padding 要还原成整块 */
+.md pre {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #1b1b1b;
+  border: 1px solid #333;
+  overflow: auto;
+  max-height: 380px;
+}
+
+.md pre code {
+  padding: 0;
+  background: transparent;
+  color: #d4d4d4;
+  font-size: 11.5px;
+  line-height: 1.55;
+  display: block;
+  white-space: pre;
+}
+
+.md blockquote {
+  margin: 8px 0;
+  padding: 2px 10px;
+  border-left: 3px solid #0e639c;
+  color: #a0a0a0;
+  background: #262626;
+}
+
+.md hr {
+  margin: 10px 0;
+  border: none;
+  border-top: 1px solid #3c3c3c;
+}
+
+.md a {
+  color: #4daafc;
+  text-decoration: underline;
+}
+
+.md a:hover {
+  color: #79c0ff;
+}
+
+.md table {
+  margin: 8px 0;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  display: block;
+  overflow-x: auto;
+}
+
+.md th,
+.md td {
+  padding: 3px 8px;
+  border: 1px solid #3c3c3c;
+  text-align: left;
+}
+
+.md th {
+  background: #2f2f2f;
+  font-weight: 600;
+}
+
+/* 图片不自动加载（防远程图片静默外联），只显示占位 */
+.md-img {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px dashed #555;
+  border-radius: 3px;
+  color: #9d9d9d;
+  font-size: 11.5px;
+}
+
+/* 聊天/预览里的可点文件路径：长得像链接，点了在中间栏打开 */
+.md-file {
+  display: inline;
+  padding: 0 2px;
+  border: none;
+  border-radius: 2px;
+  background: rgba(122, 167, 214, 0.14);
+  color: #7fb3e0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.md-file:hover {
+  background: rgba(122, 167, 214, 0.26);
+  color: #a9d1f5;
+}
+
+.md-file:focus-visible {
+  outline: 1px solid #7aa7d6;
+  outline-offset: 1px;
+}
+
+/* 远程图片的「点击加载」按钮：沿用占位样式，但要是可点的按钮 */
+button.md-img {
+  font-family: inherit;
+  font-size: 11.5px;
+  background: transparent;
+  cursor: pointer;
+}
+
+button.md-img:hover {
+  border-color: #7aa7d6;
+  color: #cfd8e3;
+}
+
+/* 真正渲染出来的图片（data URL / 本地截图） */
+.md-image {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  margin: 4px 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: #1e1e1e;
+}
+
+.md strong {
+  color: #ffffff;
+  font-weight: 600;
+}
