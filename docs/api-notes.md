@@ -82,6 +82,19 @@
     "cursor": { "previous": "...", "next": "..." } }
   ```
 
+- **消息是分页的，默认只回最新 50 条**。`limit` 最大 200（传 500 报 400
+  `Expected a value less than or equal to 200`）。翻更早的页必须把响应里的
+  `cursor.next` 原样当 `cursor` 传回去；传 `cursor.previous`、裸消息 id、
+  `before=` 都是空页或 400（`InvalidCursorError`）。`cursor` 不能和 `order` 同时传
+  （400 `Cursor cannot be combined with order`）。到底时仍会给一个 `next`，
+  但下一页为空——以「本页为空」判断终点。
+  客户端不翻页的话，长会话看起来就是「聊多了以前的记录丢了」（实测一条会话 656 条，
+  只看到 50 条）。
+- 上下文用量：最近一条 assistant 的 `tokens`。`input` 只是未命中缓存的部分，
+  真实提示词 ≈ `input + cache.read + cache.write`，再加 `output` 就是下一次请求
+  会带上的上下文规模。上限取 `/api/model` 里该模型的 `limit.context`
+  （如 262144 / 1048576）。
+
 - 删除 `DELETE /api/session/<id>` → 204。
 
 ## 5. 事件流 `GET /api/event`
@@ -150,6 +163,7 @@
 | `POST /local/fs/create` | `root`, `path` | 新建空文件；同名 409 |
 | `POST /local/fs/rename` | `root`, `path`, `to` | 重命名 / 同盘移动；目标已存在 409 |
 | `POST /local/fs/delete` | `root`, `path` | 删除文件，或递归删除目录；不能删根 |
+| `GET /local/fs/find` | `root`, `name` | `{ matches: [{ path, type }] }`；按文件名（basename，大小写不敏感）在工作区里定位，浅层优先，跳过 `node_modules` / `.git` / `dist` / `target` 等重目录，最多 50 条 |
 
 - 编码：UTF-8（含 BOM）、UTF-16LE/BE（按 BOM）；没有 BOM 时先按「合法 UTF-8」判，不是合法 UTF-8
   再按 GB18030 严格解一次——解得动就当 GBK（`enc = "gbk"`），否则仍按 UTF-8 lossy 显示。
@@ -170,6 +184,10 @@
 - **结构操作（POST）**：`mkdir` / `create` / `rename` / `delete` 只接受 POST。
   最后一段名字按 Windows 规则校验（`<>:"/\|?*`、控制字符、尾随空格/点、CON/PRN 等保留名都拒）；
   父目录必须已存在且落在 root 内（不帮忙建多级目录）；`delete` 对目录是递归删除，`path` 为空直接 400。
+- **`find` 为什么存在**：聊天里的工具详情常常只写裸文件名（`Status.h`、`Protocol.h`），
+  真实文件往往在 `src\` 下。页面若拿这个名字直接 `stat` 会按 root 拼路径得到
+  `404 文件不存在`（截图里那个报错）。所以点开裸文件名时先 `find` 定位真实相对路径，
+  找不到再提示并刷新文件树。搜索受深度（8 层）与访问量（2 万条目）上限保护，不会扫爆 `target/`。
 
 ### dev 中间件（scripts/dev-local-fs.mjs）的已知差异
 

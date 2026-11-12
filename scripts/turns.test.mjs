@@ -2,7 +2,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { groupTurns, reasoningLabel, sameTurn } from '../src/components/turns.ts'
+import {
+  formatClock,
+  formatSpan,
+  groupTurns,
+  reasoningLabel,
+  sameTurn,
+  turnTimeLabel,
+} from '../src/components/turns.ts'
 
 const assistant = (content, time) => ({ id: 'msg_a', type: 'assistant', content, time })
 const user = (id, text) => ({ id, type: 'user', text })
@@ -261,4 +268,118 @@ test('sameTurn：块数量变化要判为不同', () => {
   ])[0]
 
   assert.equal(sameTurn(one, two), false)
+})
+
+test('压缩消息的 summary 要成为一轮，正文来自 summary 而不是 content', () => {
+  const turns = groupTurns([
+    { id: 'msg_c', type: 'compaction', summary: '## Objective\n- 之前的任务', content: [], time: { completed: 100 } },
+    user('u1', '压缩摘要'),
+  ])
+  assert.equal(turns.length, 2)
+  assert.equal(turns[0].user, '压缩摘要')
+  assert.equal(turns[1].summary, '## Objective\n- 之前的任务')
+  assert.equal(turns[1].summaryAt, 100)
+  assert.equal(turns[1].user, undefined)
+  assert.equal(turns[1].blocks.length, 0)
+})
+
+test('没有正文的压缩消息（content 空、summary 也空）直接跳过，不造空轮次', () => {
+  const turns = groupTurns([
+    { id: 'msg_c', type: 'compaction', content: [] },
+    user('u1', '你好'),
+  ])
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].user, '你好')
+})
+
+test('sameTurn：摘要内容变化必须重渲染', () => {
+  const build = (summary) =>
+    groupTurns([{ id: 'msg_c', type: 'compaction', summary, time: { completed: 1 } }])[0]
+  assert.equal(sameTurn(build('a'), build('a')), true)
+  assert.equal(sameTurn(build('a'), build('b')), false)
+})
+
+test('压缩失败的消息（服务端 200 + error）也要占一轮，带上原因', () => {
+  const turns = groupTurns([
+    {
+      id: 'msg_c',
+      type: 'compaction',
+      content: [],
+      error: { type: 'compaction.unavailable', message: 'Nothing to compact yet' },
+      time: { created: 5 },
+    },
+  ])
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].summary, undefined)
+  assert.equal(turns[0].summaryError, 'Nothing to compact yet')
+  assert.equal(turns[0].summaryAt, 5)
+})
+
+test('轮次时间：起点取用户提问，终点取最后一条回复的完成时间', () => {
+  const turns = groupTurns([
+    { id: 'a2', type: 'assistant', content: [{ type: 'text', text: '补充' }], time: { created: 5000, completed: 8000 } },
+    { id: 'a1', type: 'assistant', content: [{ type: 'text', text: '答案' }], time: { created: 1200, completed: 4000 } },
+    { id: 'u1', type: 'user', text: '问题', time: { created: 1000 } },
+  ])
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].startedAt, 1000)
+  assert.equal(turns[0].endedAt, 8000)
+})
+
+test('轮次时间：还在生成时没有结束时间，起点退回首条回复的 created', () => {
+  const turns = groupTurns([
+    { id: 'a1', type: 'assistant', content: [{ type: 'reasoning', text: '', time: { created: 4 } }], time: { created: 3000 } },
+  ])
+  assert.equal(turns[0].startedAt, 3000)
+  assert.equal(turns[0].endedAt, undefined)
+})
+
+test('轮次时间：user 消息没有 time 时仍能从回复拿到起点', () => {
+  const turns = groupTurns([
+    { id: 'a1', type: 'assistant', content: [{ type: 'text', text: '嗯' }], time: { created: 700, completed: 900 } },
+    { id: 'u1', type: 'user', text: '在吗' },
+  ])
+  assert.equal(turns[0].startedAt, 700)
+  assert.equal(turns[0].endedAt, 900)
+})
+
+test('时间文案：当天只给时分，跨天带日期，跨年带年份', () => {
+  const now = new Date(2026, 10, 12, 20, 0, 0).getTime()
+  assert.equal(formatClock(new Date(2026, 10, 12, 19, 42, 30).getTime(), now), '19:42')
+  assert.equal(formatClock(new Date(2026, 10, 10, 9, 5, 0).getTime(), now), '11-10 09:05')
+  assert.equal(formatClock(new Date(2025, 11, 31, 23, 59, 0).getTime(), now), '2025-12-31 23:59')
+})
+
+test('耗时文案：秒 / 分秒 / 整分 / 小时分', () => {
+  assert.equal(formatSpan(12_000), '12 秒')
+  assert.equal(formatSpan(0), '0 秒')
+  assert.equal(formatSpan(332_000), '5 分 32 秒')
+  assert.equal(formatSpan(600_000), '10 分')
+  assert.equal(formatSpan(3_780_000), '1 小时 3 分')
+})
+
+test('turnTimeLabel：没有时间不给文案，只有起点时不显示结束与用时', () => {
+  const now = new Date(2026, 10, 12, 20, 0, 0).getTime()
+  assert.equal(turnTimeLabel({}, now), null)
+  assert.deepEqual(turnTimeLabel({ startedAt: new Date(2026, 10, 12, 19, 42, 0).getTime() }, now), {
+    start: '19:42',
+    end: '',
+    span: '',
+  })
+  assert.deepEqual(
+    turnTimeLabel(
+      {
+        startedAt: new Date(2026, 10, 12, 19, 42, 0).getTime(),
+        endedAt: new Date(2026, 10, 12, 19, 48, 12).getTime(),
+      },
+      now,
+    ),
+    { start: '19:42', end: '19:48', span: '6 分 12 秒' },
+  )
+})
+
+test('sameTurn：结束时间补上必须重渲染，否则界面上永远看不到结束时间', () => {
+  const running = groupTurns([assistant([{ type: 'text', text: 'a' }], { created: 10 })])[0]
+  const done = groupTurns([assistant([{ type: 'text', text: 'a' }], { created: 10, completed: 50 })])[0]
+  assert.equal(sameTurn(running, done), false)
 })

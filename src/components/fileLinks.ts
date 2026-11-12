@@ -119,10 +119,46 @@ function findPathInToken(token: string): { index: number; core: string; ref: Fil
 }
 
 /**
+ * 绝对路径可能带空格（`C:\Program Files\App\a.txt`），按空白切词会把它拦腰切断。
+ * 这里从起点向后找：把所有「空白 / 中文 / 全角」位置当候选终点，从最长的往回试，
+ * 第一个能被 parseFilePath 认下的就是完整路径。同一段里若还有下一个绝对路径起点，
+ * 就强制截在它前面，免得把两条路径连成一条。
+ */
+function tryAbsolutePath(text: string, start: number): { ref: FileRef; core: string } | null {
+  const head = text.slice(start, start + 4)
+  if (!/^(?:[a-zA-Z]:[\\/]|\/[a-zA-Z]\/)/.test(head)) return null
+
+  let limit = Math.min(text.length, start + MAX_PATH_LEN)
+  const nextAbs = /[a-zA-Z]:[\\/]|\/[a-zA-Z]\//g
+  nextAbs.lastIndex = start + 3
+  const next = nextAbs.exec(text)
+  if (next && next.index < limit) limit = next.index
+
+  const ends: number[] = []
+  for (let i = start; i < limit; i += 1) {
+    if (/\s/.test(text[i]) || CJK_RE.test(text[i])) {
+      ends.push(i)
+      if (ends.length >= 16) break
+    }
+  }
+  if (ends[ends.length - 1] !== limit) ends.push(limit)
+
+  for (let i = ends.length - 1; i >= 0; i -= 1) {
+    const raw = text.slice(start, ends[i]).trim()
+    if (!raw) continue
+    const core = stripTrailing(raw)
+    if (!core) continue
+    const ref = parseFilePath(core)
+    if (ref) return { ref, core }
+  }
+  return null
+}
+
+/**
  * 把一段纯文本切成「文字 / 文件路径」片段，保持原始顺序和空白。
  *
  * 路径边界同时认空白和中文/全角字符：`src/a.ts，然后看` 里路径在中文逗号处断开，
- * 尾随的标点也不会进路径。
+ * 尾随的标点也不会进路径。绝对路径额外允许内含空格（`C:\Program Files\...`）。
  */
 export function splitTextPaths(text: string): TextChunk[] {
   const chunks: TextChunk[] = []
@@ -131,10 +167,23 @@ export function splitTextPaths(text: string): TextChunk[] {
   let match: RegExpExecArray | null
 
   while ((match = re.exec(text)) !== null) {
+    const tokenStart = match.index
+    if (tokenStart < cursor) continue
+
+    // 绝对路径先试：路径里可能有空格，不能按 token 切
+    const abs = tryAbsolutePath(text, tokenStart)
+    if (abs) {
+      if (tokenStart > cursor) chunks.push({ kind: 'text', text: text.slice(cursor, tokenStart) })
+      chunks.push({ kind: 'file', ref: abs.ref, text: abs.core })
+      cursor = tokenStart + abs.core.length
+      re.lastIndex = cursor
+      continue
+    }
+
     const found = findPathInToken(match[0])
     if (!found) continue
 
-    const start = match.index + found.index
+    const start = tokenStart + found.index
     if (start > cursor) chunks.push({ kind: 'text', text: text.slice(cursor, start) })
     chunks.push({ kind: 'file', ref: found.ref, text: found.core })
     cursor = start + found.core.length

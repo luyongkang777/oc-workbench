@@ -27,7 +27,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 export default function Terminal({ root, connected }: Props) {
-  const [collapsed, setCollapsed] = useState(false)
+  // 默认收起：900px 高的窗口里，展开会吃掉 260px，主区只剩 606px
+  const [collapsed, setCollapsed] = useState(true)
   const [draft, setDraft] = useState('')
   const [running, setRunning] = useState(false)
   const [blocks, setBlocks] = useState<Block[]>([])

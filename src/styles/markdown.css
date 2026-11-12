@@ -26,7 +26,7 @@
   margin: 10px 0 6px;
   font-weight: 600;
   line-height: 1.4;
-  color: #e8e8e8;
+  color: var(--text-1);
 }
 
 .md h1 {
@@ -62,9 +62,9 @@
 /* 行内代码 */
 .md code {
   padding: 1px 4px;
-  border-radius: 3px;
-  background: #1b1b1b;
-  color: #ce9178;
+  border-radius: var(--r-2);
+  background: var(--bg-inset);
+  color: var(--warn);
   font-family: 'Cascadia Mono', Consolas, monospace;
   font-size: 11.5px;
 }
@@ -73,9 +73,9 @@
 .md pre {
   margin: 8px 0;
   padding: 8px 10px;
-  border-radius: 4px;
-  background: #1b1b1b;
-  border: 1px solid #333;
+  border-radius: var(--r-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-1);
   overflow: auto;
   max-height: 380px;
 }
@@ -83,7 +83,7 @@
 .md pre code {
   padding: 0;
   background: transparent;
-  color: #d4d4d4;
+  color: var(--text-1);
   font-size: 11.5px;
   line-height: 1.55;
   display: block;
@@ -93,24 +93,24 @@
 .md blockquote {
   margin: 8px 0;
   padding: 2px 10px;
-  border-left: 3px solid #0e639c;
-  color: #a0a0a0;
-  background: #262626;
+  border-left: 3px solid var(--accent-line);
+  color: var(--text-2);
+  background: var(--bg-2);
 }
 
 .md hr {
   margin: 10px 0;
   border: none;
-  border-top: 1px solid #3c3c3c;
+  border-top: 1px solid var(--line-2);
 }
 
 .md a {
-  color: #4daafc;
+  color: var(--info);
   text-decoration: underline;
 }
 
 .md a:hover {
-  color: #79c0ff;
+  color: var(--info);
 }
 
 .md table {
@@ -124,12 +124,12 @@
 .md th,
 .md td {
   padding: 3px 8px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--line-2);
   text-align: left;
 }
 
 .md th {
-  background: #2f2f2f;
+  background: var(--bg-2);
   font-weight: 600;
 }
 
@@ -137,9 +137,9 @@
 .md-img {
   display: inline-block;
   padding: 1px 6px;
-  border: 1px dashed #555;
-  border-radius: 3px;
-  color: #9d9d9d;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-2);
+  color: var(--text-2);
   font-size: 11.5px;
 }
 
@@ -148,9 +148,9 @@
   display: inline;
   padding: 0 2px;
   border: none;
-  border-radius: 2px;
+  border-radius: var(--r-1);
   background: rgba(122, 167, 214, 0.14);
-  color: #7fb3e0;
+  color: var(--info);
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
@@ -164,11 +164,11 @@
 
 .md-file:hover {
   background: rgba(122, 167, 214, 0.26);
-  color: #a9d1f5;
+  color: var(--info);
 }
 
 .md-file:focus-visible {
-  outline: 1px solid #7aa7d6;
+  outline: 1px solid var(--accent-line);
   outline-offset: 1px;
 }
 
@@ -181,8 +181,8 @@ button.md-img {
 }
 
 button.md-img:hover {
-  border-color: #7aa7d6;
-  color: #cfd8e3;
+  border-color: var(--accent-line);
+  color: var(--text-1);
 }
 
 /* 真正渲染出来的图片（data URL / 本地截图） */
@@ -192,12 +192,12 @@ button.md-img:hover {
   max-height: 360px;
   object-fit: contain;
   margin: 4px 0;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 3px;
-  background: #1e1e1e;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-0);
 }
 
 .md strong {
-  color: #ffffff;
+  color: var(--text-1);
   font-weight: 600;
 }

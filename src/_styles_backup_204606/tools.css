@@ -1,0 +1,116 @@
+/* 一轮对话：用户气泡 + 回复 + 工具摘要 */
+.chat-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 92%;
+}
+
+.chat-tools-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 8px;
+  background: #232323;
+  border: 1px solid #3c3c3c;
+  border-left: 3px solid #0e639c;
+  color: #b0b0b0;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-tools-summary:hover {
+  border-color: #0e639c;
+}
+
+.chat-tools-caret {
+  color: #7a7a7a;
+  font-size: 10px;
+  width: 10px;
+}
+
+.chat-tools-kinds {
+  color: #6e6e6e;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid #333;
+}
+
+.chat-tool-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: #9d9d9d;
+  padding: 1px 0;
+}
+
+.chat-tool-name {
+  color: #9cdcfe;
+  flex: 0 0 auto;
+}
+
+.chat-tool-detail {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  color: #8a8a8a;
+}
+
+.chat-tool-status {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+/* 工具详情是文件路径时：保留等宽字体，但做成可点的按钮（重置 button 默认外观） */
+.chat-tool-file {
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.chat-tool-file:hover {
+  color: #9fc3ef;
+}
+
+.chat-tool-file:focus-visible {
+  outline: 1px solid #7aa7d6;
+  outline-offset: 1px;
+}
+
+.chat-tool-row.done .chat-tool-status {
+  color: #4ec9b0;
+}
+
+.chat-tool-row.run .chat-tool-status {
+  color: #e2c08d;
+}
+
+.chat-tool-row.fail .chat-tool-status {
+  color: #f14c4c;
+}

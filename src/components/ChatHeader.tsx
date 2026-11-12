@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ModelInfo, SessionInfo } from '../api/chat'
+import {
+  LEGACY_PLACEHOLDER_TITLE,
+  sessionLastAt,
+  type AgentInfo,
+  type ModelInfo,
+  type SessionInfo,
+} from '../api/chat'
+import type { ContextUsage } from './contextUsage'
+import ContextMeter from './ContextMeter'
+import { formatClock, formatDateTime } from './turns'
 
 type ModelKey = { id: string; providerID: string; variant?: string }
 
@@ -11,7 +20,14 @@ type Props = {
   modelsLoading?: boolean
   modelsError?: string | null
   onRetryModels?: () => void
+  /** 静默重新拉取模型列表（不显示 loading，打开下拉时调用） */
+  onRefreshModels?: () => void
   currentModel: ModelKey | null
+  /** 可切换的模式（服务端 agent，已滤掉 hidden 与 subagent） */
+  agents: AgentInfo[]
+  /** 当前模式 id；空串表示跟随服务端默认 */
+  currentAgent: string
+  onPickAgent: (id: string) => void
   connected: boolean
   onToggleSessions: () => void
   onPickSession: (id: string) => void
@@ -23,19 +39,20 @@ type Props = {
   hiddenCount: number
   showAll: boolean
   onToggleShowAll: () => void
+  /** 上下文用量面板；不传就不显示（终端等场景用不到） */
+  context?: {
+    usage: ContextUsage
+    compacting: boolean
+    onCompact: () => void
+  }
 }
 
 export function shortTitle(session: SessionInfo): string {
   const title = session.title?.trim()
-  if (title) return title
-  return session.id.replace(/^ses_/, '').slice(0, 10)
-}
-
-function formatTime(ms?: number): string {
-  if (!ms) return ''
-  const date = new Date(ms)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+  // 空标题＝刚建、服务端还在等第一条消息起名；占位标题＝老版本写死的那种。
+  // 两种都显示「新会话」，别把会话 id 片段当成名字露出来。
+  if (!title || title === LEGACY_PLACEHOLDER_TITLE) return '新会话'
+  return title
 }
 
 /** 思考强度档位的中文名；模型自定义档位（如 high-fast）直接回退到 id。 */
@@ -65,8 +82,12 @@ export default function ChatHeader({
   modelsLoading,
   modelsError,
   onRetryModels,
+  onRefreshModels,
   currentModel,
   connected,
+  agents,
+  currentAgent,
+  onPickAgent,
   onToggleSessions,
   onPickSession,
   onNewSession,
@@ -75,8 +96,11 @@ export default function ChatHeader({
   hiddenCount,
   showAll,
   onToggleShowAll,
+  context,
 }: Props) {
   const [modelsOpen, setModelsOpen] = useState(false)
+  const [modesOpen, setModesOpen] = useState(false)
+  const modesBox = useRef<HTMLDivElement | null>(null)
   const [filter, setFilter] = useState('')
   /** 点开一个有思考档位的模型后，先选档位再切换 */
   const [pendingModel, setPendingModel] = useState<ModelInfo | null>(null)
@@ -94,6 +118,22 @@ export default function ChatHeader({
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
   }, [modelsOpen])
+
+  // 点外面收起模式下拉
+  useEffect(() => {
+    if (!modesOpen) return
+    const onDown = (event: MouseEvent) => {
+      if (modesBox.current && !modesBox.current.contains(event.target as Node)) {
+        setModesOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [modesOpen])
+
+  const activeAgent = agents.find((a) => a.id === currentAgent)
+  // 没有 name 的 agent（自定义配置常见）用 id 兜底
+  const agentLabel = activeAgent?.name ?? activeAgent?.id ?? currentAgent ?? '模式'
 
   const active = currentModel
     ? models.find((m) => m.id === currentModel.id && m.providerID === currentModel.providerID)
@@ -137,6 +177,40 @@ export default function ChatHeader({
           {current ? shortTitle(current) : '会话'} ▾
         </button>
 
+        <div className="mode-picker" ref={modesBox}>
+          <button
+            type="button"
+            className={`mode-toggle${modesOpen ? ' open' : ''}`}
+            title={`模式：${agentLabel}${activeAgent?.description ? `\n${activeAgent.description}` : ''}`}
+            onClick={() => setModesOpen((value) => !value)}
+            disabled={agents.length === 0}
+          >
+            <span className="mode-toggle-text">{agentLabel}</span>
+            <span className="mode-toggle-caret">▾</span>
+          </button>
+          {modesOpen ? (
+            <div className="mode-menu">
+              {agents.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`mode-item${item.id === currentAgent ? ' active' : ''}`}
+                  title={item.description}
+                  onClick={() => {
+                    onPickAgent(item.id)
+                    setModesOpen(false)
+                  }}
+                >
+                  <span className="mode-item-name">{item.name ?? item.id}</span>
+                  {item.description ? (
+                    <span className="mode-item-desc">{item.description}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
         <div className="model-picker" ref={modelsBox}>
           <button
             type="button"
@@ -144,7 +218,11 @@ export default function ChatHeader({
             title={`${active?.name ?? modelLabel}${variantText}`}
             onClick={() => {
               if (modelsOpen) closeMenu()
-              else setModelsOpen(true)
+              else {
+                // 每次打开都静默同步一次：网关刚加的模型点开就能看到，不必等轮询或重连
+                onRefreshModels?.()
+                setModelsOpen(true)
+              }
             }}
           >
             <span className="model-toggle-text">
@@ -198,13 +276,23 @@ export default function ChatHeader({
                 </div>
               ) : (
                 <>
-                  <input
-                    className="model-filter"
-                    value={filter}
-                    onChange={(event) => setFilter(event.target.value)}
-                    placeholder="筛选模型"
-                    autoFocus
-                  />
+                  <div className="model-filter-row">
+                    <input
+                      className="model-filter"
+                      value={filter}
+                      onChange={(event) => setFilter(event.target.value)}
+                      placeholder="筛选模型"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="model-refresh"
+                      title="重新拉取模型列表"
+                      onClick={() => onRefreshModels?.()}
+                    >
+                      刷新
+                    </button>
+                  </div>
                   <div className="model-list">
                     {modelsError ? (
                       <button type="button" className="model-retry" onClick={() => onRetryModels?.()}>
@@ -253,6 +341,8 @@ export default function ChatHeader({
           ) : null}
         </div>
 
+        {context ? <ContextMeter {...context} /> : null}
+
         <button type="button" className="chat-new" onClick={onNewSession} disabled={!connected}>
           + 新会话
         </button>
@@ -263,19 +353,21 @@ export default function ChatHeader({
           {sessions.length === 0 ? (
             <div className="chat-session-empty">还没有会话</div>
           ) : (
-            sessions.map((session) => (
-              <button
-                key={session.id}
-                type="button"
-                className={`chat-session-item${session.id === current?.id ? ' active' : ''}`}
-                onClick={() => onPickSession(session.id)}
-              >
-                <span>{shortTitle(session)}</span>
-                <span className="chat-session-time">
-                  {formatTime(session.time?.updated ?? session.time?.created)}
-                </span>
-              </button>
-            ))
+            sessions.map((session) => {
+              const at = sessionLastAt(session)
+              return (
+                <button
+                  key={session.id}
+                  type="button"
+                  className={`chat-session-item${session.id === current?.id ? ' active' : ''}`}
+                  title={at ? `最后一次对话 ${formatDateTime(at)}` : undefined}
+                  onClick={() => onPickSession(session.id)}
+                >
+                  <span className="chat-session-title">{shortTitle(session)}</span>
+                  {at ? <span className="chat-session-time">{formatClock(at)}</span> : null}
+                </button>
+              )
+            })
           )}
           {hiddenCount > 0 || showAll ? (
             <button type="button" className="chat-session-more" onClick={onToggleShowAll}>

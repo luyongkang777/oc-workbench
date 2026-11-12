@@ -58,3 +58,41 @@ test('纯文本原样返回一个 text 片段', () => {
   assert.equal(chunks.length, 1)
   assert.equal(chunks[0].kind, 'text')
 })
+
+test('带空格的绝对路径整条识别，不被空白切断', () => {
+  const chunks = splitTextPaths('打开 C:\\Program Files\\App\\readme.md 看看')
+  const files = chunks.filter((c) => c.kind === 'file')
+  assert.equal(files.length, 1)
+  assert.equal(files[0].ref.path, 'C:\\Program Files\\App\\readme.md')
+  assert.equal(files[0].text, 'C:\\Program Files\\App\\readme.md')
+})
+
+test('带空格路径紧跟中文：中文不进路径，也不丢字', () => {
+  const chunks = splitTextPaths('看 C:\\Program Files\\a.txt，然后改')
+  const files = chunks.filter((c) => c.kind === 'file')
+  assert.equal(files[0].ref.path, 'C:\\Program Files\\a.txt')
+  const rebuilt = chunks.map((c) => c.text).join('')
+  assert.equal(rebuilt, '看 C:\\Program Files\\a.txt，然后改')
+})
+
+test('带空格路径后面跟英文单词也不会被吞', () => {
+  const chunks = splitTextPaths('check C:\\Program Files\\a.txt and then')
+  const files = chunks.filter((c) => c.kind === 'file')
+  assert.equal(files.length, 1)
+  assert.equal(files[0].ref.path, 'C:\\Program Files\\a.txt')
+  const rebuilt = chunks.map((c) => c.text).join('')
+  assert.equal(rebuilt, 'check C:\\Program Files\\a.txt and then')
+})
+
+test('带空格路径的行号后缀仍然生效', () => {
+  const chunks = splitTextPaths('C:\\Program Files\\a.txt:12')
+  const files = chunks.filter((c) => c.kind === 'file')
+  assert.equal(files[0].ref.path, 'C:\\Program Files\\a.txt')
+  assert.equal(files[0].ref.line, 12)
+})
+
+test('同一行两个带空格路径不会连成一条', () => {
+  const chunks = splitTextPaths('C:\\a b\\c.md 和 C:\\d e\\f.md')
+  const files = chunks.filter((c) => c.kind === 'file').map((c) => c.ref.path)
+  assert.deepEqual(files, ['C:\\a b\\c.md', 'C:\\d e\\f.md'])
+})

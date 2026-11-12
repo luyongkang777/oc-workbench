@@ -4,7 +4,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: #1e1e1e;
+  background: var(--bg-0);
 }
 
 .review-head {
@@ -13,19 +13,19 @@
   gap: 10px;
   height: 30px;
   padding: 0 12px;
-  background: #252526;
-  border-bottom: 1px solid #333;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
   flex: 0 0 auto;
 }
 
 .review-title {
   font-size: 12px;
-  color: #cccccc;
+  color: var(--text-1);
 }
 
 .review-count {
   font-size: 11px;
-  color: #7a7a7a;
+  color: var(--text-3);
 }
 
 .review-spacer {
@@ -34,29 +34,29 @@
 
 .review-refresh {
   background: transparent;
-  border: 1px solid #3c3c3c;
-  color: #cccccc;
+  border: 1px solid var(--line-2);
+  color: var(--text-1);
   font-size: 11px;
   padding: 2px 8px;
   cursor: pointer;
 }
 
 .review-refresh:hover:not(:disabled) {
-  border-color: #0e639c;
-  color: #ffffff;
+  border-color: var(--accent-line);
+  color: var(--text-1);
 }
 
 .review-refresh:disabled {
-  color: #777;
+  color: var(--text-3);
   cursor: default;
 }
 
 .review-error {
   padding: 6px 12px;
-  background: #2d1b1b;
-  color: #f48771;
+  background: var(--danger-weak);
+  color: var(--danger);
   font-size: 12px;
-  border-bottom: 1px solid #5a1d1d;
+  border-bottom: 1px solid var(--danger-line);
 }
 
 .review-main {
@@ -69,8 +69,8 @@
   width: 280px;
   flex: 0 0 280px;
   overflow: auto;
-  border-right: 1px solid #333;
-  background: #252526;
+  border-right: 1px solid var(--line-1);
+  background: var(--bg-1);
 }
 
 .review-item {
@@ -85,7 +85,7 @@
   padding: 0 10px;
   background: transparent;
   border: none;
-  color: #cccccc;
+  color: var(--text-1);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
@@ -94,12 +94,12 @@
 }
 
 .review-item:hover {
-  background: #2a2d2e;
+  background: var(--bg-hover);
 }
 
 .review-item.active {
-  background: #094771;
-  color: #ffffff;
+  background: var(--accent-weak);
+  color: var(--text-1);
 }
 
 .review-mark {
@@ -110,15 +110,15 @@
 }
 
 .review-mark.a {
-  color: #4ec9b0;
+  color: var(--accent);
 }
 
 .review-mark.m {
-  color: #e2c08d;
+  color: var(--warn);
 }
 
 .review-mark.d {
-  color: #f14c4c;
+  color: var(--danger);
 }
 
 .review-file {
@@ -135,11 +135,11 @@
 }
 
 .review-stat .add {
-  color: #4ec9b0;
+  color: var(--accent);
 }
 
 .review-stat .del {
-  color: #f14c4c;
+  color: var(--danger);
 }
 
 .review-diff {
@@ -155,9 +155,9 @@
   line-height: 28px;
   padding: 0 12px;
   font-size: 11.5px;
-  color: #9d9d9d;
-  background: #252526;
-  border-bottom: 1px solid #2b2b2b;
+  color: var(--text-2);
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -186,30 +186,57 @@
 .diff-line {
   white-space: pre;
   padding: 0 12px;
-  color: #cccccc;
+  color: var(--text-1);
+}
+
+/* 换行态：断行规则与文件查看器一致（满一行在任意字符处断、Tab 走 4 列）。
+   高度用 min-height 给，浏览器真多折一行时盒子自己长高，不压字。 */
+.diff-line.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  tab-size: 4;
+}
+
+/* 换行时不需要横向滚动条 */
+.diff-scroll.wrap {
+  overflow-x: hidden;
+}
+
+/* 「换行」开关激活态 */
+.review-refresh.active {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.review-refresh.active:hover {
+  color: var(--text-inverse);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .diff-line.add {
   background: rgba(46, 160, 67, 0.16);
-  color: #b7e8b7;
+  color: var(--success);
 }
 
 .diff-line.del {
   background: rgba(248, 81, 73, 0.16);
-  color: #f2b0ad;
+  color: var(--danger-soft);
 }
 
 .diff-line.hunk {
-  color: #569cd6;
-  background: #20242a;
+  color: var(--info);
+  background: var(--info-weak);
 }
 
 .diff-line.meta {
-  color: #7a7a7a;
+  color: var(--text-3);
 }
 
 .review-empty {
   padding: 16px 12px;
-  color: #6e6e6e;
+  color: var(--text-3);
   font-size: 12px;
 }

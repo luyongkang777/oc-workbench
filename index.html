@@ -3,7 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>OpenCode 工作台</title>
+    <script>
+      /* 首屏前定主题：React 挂载前先把 <html data-theme> 写成解析后的值，
+         否则「跟随系统浅白」的用户会先看到一帧暗色。逻辑与 components/theme.ts 一致。 */
+      ;(function () {
+        var pref = 'system'
+        try {
+          var saved = window.localStorage.getItem('oc-workbench:theme')
+          if (saved === 'dark' || saved === 'light' || saved === 'system') pref = saved
+        } catch (e) {
+          /* 存储不可用：按跟随系统处理 */
+        }
+        var media = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null
+        var dark = pref === 'system' ? !media || media.matches : pref === 'dark'
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        document.documentElement.dataset.themePref = pref
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

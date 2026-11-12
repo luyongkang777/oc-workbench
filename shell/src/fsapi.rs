@@ -35,6 +35,21 @@ const HEX_HARD_MAX: usize = 64 * 1024;
 /// 单次保存的正文上限：编辑器只放 2MB 的文件进来，这里留一倍余量。
 const WRITE_BODY_LIMIT: usize = 8 * 1024 * 1024;
 
+/// `find` 的搜索边界：深目录（target/node_modules）不进去，避免一次点击扫几十万个文件。
+const FIND_MAX_DEPTH: usize = 8;
+const FIND_MAX_VISITS: usize = 20_000;
+const FIND_MAX_MATCHES: usize = 50;
+/// 与前端文件树的隐藏规则一致。
+const FIND_SKIP: [&str; 7] = [
+    "node_modules",
+    ".git",
+    "dist",
+    "target",
+    ".vite",
+    ".vite-temp",
+    ".cache",
+];
+
 #[derive(Debug)]
 struct PathError {
     code: u16,
@@ -63,6 +78,18 @@ pub fn handle(request: tiny_http::Request, path: &str, url: &str) {
     // 结构操作（新建/重命名/删除）：目标可能还不存在，不能走 resolve。
     if matches!(action, "mkdir" | "create" | "rename" | "delete") {
         fs_ops(request, action, &root, &rel, &pairs);
+        return;
+    }
+
+    // 按文件名在工作区里定位：聊天里的裸文件名（`Status.h`）实际常在 src\ 下，
+    // 直接按 root 拼接会 404，前端拿这个接口找真实位置。
+    if action == "find" {
+        let name = param(&pairs, "name").unwrap_or(&rel).trim().to_string();
+        if name.is_empty() {
+            let _ = json_error(request, 400, "缺少 name 参数");
+            return;
+        }
+        find(request, &root, &name);
         return;
     }
 
@@ -321,6 +348,73 @@ fn list(request: tiny_http::Request, dir: &Path, rel: &str) {
     rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     let entries: Vec<serde_json::Value> = rows.into_iter().map(|row| row.2).collect();
     let _ = respond_json(request, 200, json!({ "entries": entries }).to_string());
+}
+
+/// 按文件名（basename，大小写不敏感）在工作区里定位。
+///
+/// 返回 `{ matches: [{ path, type }] }`，path 相对 root；按「层级浅 → 名字小」排序，
+/// 前端取第一条。深层/重目录按 [`FIND_SKIP`] 跳过，并受深度与访问量上限保护。
+fn find(request: tiny_http::Request, root: &str, name: &str) {
+    match find_matches(Path::new(root), name) {
+        Ok(paths) => {
+            let items: Vec<serde_json::Value> = paths
+                .into_iter()
+                .map(|path| json!({ "path": path, "type": "file" }))
+                .collect();
+            let _ = respond_json(request, 200, json!({ "matches": items }).to_string());
+        }
+        Err(err) => {
+            let _ = json_error(request, err.code, &err.message);
+        }
+    }
+}
+
+/// [`find`] 的纯逻辑部分（便于单测）：返回相对 root 的匹配路径，浅层优先。
+fn find_matches(root: &Path, name: &str) -> Result<Vec<String>, PathError> {
+    let root_canon = root
+        .canonicalize()
+        .map_err(|_| PathError::new(404, format!("目录不存在：{}", root.display())))?;
+    if !root_canon.is_dir() {
+        return Err(PathError::new(400, "root 不是目录"));
+    }
+
+    let needle = name.to_lowercase();
+    let mut matches: Vec<(usize, String)> = Vec::new();
+    let mut visits = 0usize;
+    let mut stack: Vec<(PathBuf, String, usize)> = vec![(root_canon, String::new(), 0)];
+
+    while let Some((dir, rel, depth)) = stack.pop() {
+        if matches.len() >= FIND_MAX_MATCHES || visits >= FIND_MAX_VISITS {
+            break;
+        }
+        let Ok(reader) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in reader.flatten() {
+            if matches.len() >= FIND_MAX_MATCHES || visits >= FIND_MAX_VISITS {
+                break;
+            }
+            visits += 1;
+            let entry_name = item.file_name().to_string_lossy().to_string();
+            let is_dir = item.metadata().map(|meta| meta.is_dir()).unwrap_or(false);
+            let child_rel = if rel.is_empty() {
+                entry_name.clone()
+            } else {
+                format!("{rel}\\{entry_name}")
+            };
+            if is_dir {
+                if FIND_SKIP.contains(&entry_name.as_str()) || depth + 1 > FIND_MAX_DEPTH {
+                    continue;
+                }
+                stack.push((item.path(), child_rel, depth + 1));
+            } else if entry_name.to_lowercase() == needle {
+                matches.push((child_rel.split('\\').count(), child_rel));
+            }
+        }
+    }
+
+    matches.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    Ok(matches.into_iter().map(|(_, path)| path).collect())
 }
 
 /// 查询参数里的 `encoding`：None = 自动；名字不认识就回一句错误（调用方转 400）。

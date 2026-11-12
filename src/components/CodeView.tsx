@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   readLines,
   readText,
@@ -12,8 +12,9 @@ import CodeEditor from './CodeEditor'
 import CodeSourceBody from './CodeSourceBody'
 import CodeSearchBar from './CodeSearchBar'
 import CodeToolbar from './CodeToolbar'
-import { coveringEntry, isFailure, loadedEnd, type Entry } from './codeCache'
+import { coveringEntry, isFailure, loadedEnd, type Entry, type Page } from './codeCache'
 import {
+  LINE_HEIGHT,
   MAX_PAGES,
   WINDOW_LINES,
   cycleIndex,
@@ -24,6 +25,18 @@ import {
   scrollTopForLine,
   visibleRange,
 } from './codeWindow'
+import {
+  buildWrapLayout,
+  lineAtRow,
+  lineAtScrollTop as lineAtScrollTopWrapped,
+  rowOffsetOf,
+  scrollTopForLineIn,
+  visibleRangeIn,
+  wrapRows,
+  type WrapLayout,
+} from './wrapLayout'
+import { measureCodeMetrics, type CodeMetrics } from './textMetrics'
+import { readWrapPref, writeWrapPref } from './wrapPrefs'
 import MarkdownText from './MarkdownText'
 import { useFilePreview } from '../hooks/useFilePreview'
 
@@ -31,6 +44,15 @@ import { useFilePreview } from '../hooks/useFilePreview'
 const EDIT_MAX_BYTES = 2 * 1024 * 1024
 /** 后端支持的保存编码；stat.encoding 返回的也是这几个名字。 */
 const SAVE_ENCODINGS = ['utf8', 'utf16le', 'utf16be', 'gbk']
+/** 自动换行的偏好（与审查面板共用，按项目根记忆）。 */
+/** 行号栏宽度，与 `.line-no { flex: 0 0 56px }` 一致（含右侧内边距）。 */
+const GUTTER_PX = 56
+/**
+ * 文本区右边留多少像素余量。实测（240~1100px 共 1.2 万个样本）：
+ * 0~3px 都不会低估，1px 的「估多一行」最少。真低估了也不会压字——
+ * 行用 min-height，内容多一点盒子自己长高，再被实测回填。
+ */
+const WRAP_SLACK_PX = 1
 
 type Props = {
   root: string
@@ -47,6 +69,42 @@ type Props = {
   onSaved?: (path: string) => void
   /** 外层要求「打开后直接进编辑」（双击文件树时自增）。 */
   autoEditSeq?: number
+  /** 当前文件在工作区外时，它自己的根目录；null/undefined 表示就在工作区里。 */
+  externalRoot?: string | null
+  /** 点「外部文件」标记：把工作区切到这个目录。 */
+  onUseExternalRoot?: (root: string) => void
+  /** 打开失败（常见于文件树里的旧条目已被删/改名）：外层可据此提示并刷新文件树。 */
+  onOpenFailed?: (path: string, message: string) => void
+}
+
+/**
+ * 路径栏：工作区外的文件在路径右边挂一个可点的「外部文件」标记，
+ * 免得文件树里没有高亮时让人以为文件没打开。
+ */
+function PathBar({
+  path,
+  externalRoot,
+  onUseExternalRoot,
+}: {
+  path: string | null
+  externalRoot?: string | null
+  onUseExternalRoot?: (root: string) => void
+}) {
+  return (
+    <div className="editor-path" title={path ?? ''}>
+      <span className="editor-path-text">{path}</span>
+      {externalRoot ? (
+        <button
+          type="button"
+          className="editor-external"
+          title={`这个文件不在当前工作区。点一下把工作区切到 ${externalRoot}`}
+          onClick={() => onUseExternalRoot?.(externalRoot)}
+        >
+          外部文件 · {externalRoot}
+        </button>
+      ) : null}
+    </div>
+  )
 }
 
 /**
@@ -68,6 +126,9 @@ export default function CodeView({
   onDirtyChange,
   onSaved,
   autoEditSeq = 0,
+  externalRoot = null,
+  onUseExternalRoot,
+  onOpenFailed,
 }: Props) {
   const [stat, setStat] = useState<FileStat | null>(null)
   const [statPath, setStatPath] = useState<string | null>(null)
@@ -85,6 +146,24 @@ export default function CodeView({
   const [truncated, setTruncated] = useState(false)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+
+  // 自动换行：默认开，按项目（root）各记各的。容器宽度 + 字体度量一起决定
+  // 每行占几个视觉行（换行后行高不再是常量）。
+  const [wrap, setWrap] = useState(() => readWrapPref(root))
+  const [viewportWidth, setViewportWidth] = useState(0)
+  const [metrics, setMetrics] = useState<CodeMetrics>({ charWidth: 7.5, wideWidth: 15 })
+  // 换项目：读回这个项目自己的换行偏好
+  useEffect(() => {
+    setWrap(readWrapPref(root))
+  }, [root])
+  // 渲染后实测到的每行视觉行数：估算对不齐时以它为准（见 handleMeasured）
+  const measuredRef = useRef(new Map<number, number>())
+  // 量过但和模型一致的行：不必再量（否则滚动时每帧都在重复读 offsetHeight）
+  const verifiedRef = useRef(new Set<number>())
+  const [measuredSeq, setMeasuredSeq] = useState(0)
+  // 每页的视觉行数缓存：一页 200 行算一次，别在每次重建时把所有缓存页重算一遍
+  const pageRowsRef = useRef(new Map<number, Uint16Array>())
+  const pageRowsKeyRef = useRef('')
 
   // 编辑态：draft 是 textarea 里的整份文本，baseline 是打开/上次保存时的原文。
   const [editing, setEditing] = useState(false)
@@ -114,8 +193,22 @@ export default function CodeView({
   const statRef = useRef<FileStat | null>(null)
   const pathRef = useRef<string | null>(path)
   pathRef.current = path
+  // 换行布局的当前值：给 rAF 里的滚动回调读，避免它依赖 layout 而反复重建
+  const layoutRef = useRef<WrapLayout | null>(null)
+  // 滚动锚点：换行布局变高时用来把画面补偿回原位
+  const anchorRef = useRef<{ line: number; offset: number; total: number } | null>(null)
+  // 视口首行（0 基）：切换换行模式后按它重新定位
+  const topLineRef = useRef(0)
 
   const bump = useCallback(() => setVersion((value) => value + 1), [])
+  /** 布局缓存全部作废（换了宽度、字体或文件内容）：行数重算、实测重做。 */
+  const resetLayoutCaches = useCallback(() => {
+    const hadMeasured = measuredRef.current.size > 0
+    measuredRef.current.clear()
+    verifiedRef.current.clear()
+    pageRowsRef.current.clear()
+    if (hadMeasured) setMeasuredSeq((value) => value + 1)
+  }, [])
   searchOpenRef.current = searchOpen
   statRef.current = stat
   const previewState = useFilePreview(root, path, stat, encodingOverride)
@@ -132,6 +225,10 @@ export default function CodeView({
     dirtyNotifyRef.current?.(dirty)
   }, [dirty])
   useEffect(() => () => dirtyNotifyRef.current?.(false), [])
+
+  // 打开失败的回调同理走 ref：effect 的依赖里不放回调，避免每次渲染重跑 stat。
+  const openFailedRef = useRef(onOpenFailed)
+  openFailedRef.current = onOpenFailed
 
   // 保存成功后的「已保存」提示两秒后自己消失。
   useEffect(() => {
@@ -210,6 +307,7 @@ export default function CodeView({
         )
         // 只更新 stat（不触发整份重读），滚动位置和阅读上下文都保留
         cacheRef.current.clear()
+        resetLayoutCaches()
         setStat((prev) =>
           prev
             ? {
@@ -266,6 +364,9 @@ export default function CodeView({
     setStatError(null)
     setScrollTop(0)
     scrollTopRef.current = 0
+    anchorRef.current = null
+    topLineRef.current = 0
+    resetLayoutCaches()
     if (!path) {
       setLoading(false)
       return
@@ -281,7 +382,10 @@ export default function CodeView({
       })
       .catch((err) => {
         if (gen !== genRef.current) return
-        setStatError((err as Error).message)
+        const message = (err as Error).message
+        setStatError(message)
+        // 文件不存在/权限不足都走这里：告诉外层，好在提示之后刷新文件树
+        openFailedRef.current?.(path, message)
       })
       .finally(() => {
         if (gen === genRef.current) setLoading(false)
@@ -309,11 +413,39 @@ export default function CodeView({
     scrollRef.current = node
     if (!node) return
     node.scrollTop = scrollTopRef.current
-    const update = () => setViewportHeight(node.clientHeight || 600)
+    const update = () => {
+      setViewportHeight(node.clientHeight || 600)
+      setViewportWidth(node.clientWidth || 0)
+      // 换行算的是「一行能放几个字符位」，必须用真实字体量出来的宽度
+      const block = node.querySelector('.code-block')
+      const next = measureCodeMetrics(block instanceof HTMLElement ? block : node)
+      setMetrics((prev) =>
+        prev.charWidth === next.charWidth && prev.wideWidth === next.wideWidth ? prev : next,
+      )
+    }
     update()
     const observer = new ResizeObserver(update)
     observer.observe(node)
     observerRef.current = observer
+  }, [])
+
+  // 中文/等宽字体加载完成后字宽会变（回退字体先顶上），重新量一次，免得第一屏行数算错
+  useEffect(() => {
+    let alive = true
+    const fonts = document.fonts
+    if (!fonts?.ready) return
+    void fonts.ready.then(() => {
+      const node = scrollRef.current
+      if (!alive || !node) return
+      const block = node.querySelector('.code-block')
+      const next = measureCodeMetrics(block instanceof HTMLElement ? block : node)
+      setMetrics((prev) =>
+        prev.charWidth === next.charWidth && prev.wideWidth === next.wideWidth ? prev : next,
+      )
+    })
+    return () => {
+      alive = false
+    }
   }, [])
 
   useEffect(
@@ -330,8 +462,26 @@ export default function CodeView({
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0
       if (!scrollRef.current) return
-      scrollTopRef.current = scrollRef.current.scrollTop
-      setScrollTop(scrollTopRef.current)
+      const top = scrollRef.current.scrollTop
+      scrollTopRef.current = top
+      setScrollTop(top)
+      // 顺手记下「视口首行」和它的偏移，布局重建后靠这两个值把画面钉在原处
+      const current = layoutRef.current
+      if (current) {
+        const per = Math.max(LINE_HEIGHT * current.scale, 0.001)
+        const line = lineAtRow(current, top / per)
+        topLineRef.current = line
+        anchorRef.current = { line, offset: rowOffsetOf(current, line), total: current.totalRows }
+        return
+      }
+      const lines = statRef.current?.lineCount ?? 0
+      const model = scrollModel(lines)
+      const per = Math.max(LINE_HEIGHT * model.scale, 0.001)
+      topLineRef.current = Math.min(
+        Math.max(0, Math.floor(top / per)),
+        Math.max(lines - 1, 0),
+      )
+      anchorRef.current = null
     })
   }, [])
 
@@ -388,16 +538,207 @@ export default function CodeView({
     input.select()
   }, [searchOpen])
 
-  const model = scrollModel(stat?.lineCount ?? 0)
+  // 文本区可用宽度（px）：容器宽度减去行号栏，再留 1px 吸收亚像素取整。
+  // 必须用像素而不是「几个字符位」：实测中文只有半角的 1.775 倍，按整数格折算
+  // 会让中文行的行数算多，多出一行空白。
+  const lineCount = stat?.lineCount ?? 0
+  const availPx = viewportWidth > 0 ? viewportWidth - GUTTER_PX - WRAP_SLACK_PX : 0
+  const wrapActive = wrap && availPx >= 40
+
+  // 可用宽度或字宽变了，之前的实测行数全部失效（重排后重新量）。
+  // 用 layout effect：在绘制前清掉，避免拿旧宽度量出来的行数闪一帧。
+  useLayoutEffect(() => {
+    resetLayoutCaches()
+  }, [availPx, metrics.charWidth, resetLayoutCaches])
+
+  /**
+   * 换行布局表。只把「比 1 行多出来的视觉行」记进前缀和，未加载的行按 1 行计，
+   * 等页面读回来（version 自增）再重建。几千条已知行重建一次可以忽略不计。
+   *
+   * 行数优先用渲染后的实测值：估算是逐字模拟折行，遇到 Chromium 的避头尾规则
+   * （`>`、`,`、`.` 前不折）会差一行。实测值一旦回填，滚动位置就是精确的。
+   */
+  const pageRowsFor = useCallback(
+    (entry: Page): Uint16Array => {
+      const key = `${availPx}|${metrics.charWidth}|${metrics.wideWidth}`
+      if (pageRowsKeyRef.current !== key) {
+        pageRowsKeyRef.current = key
+        pageRowsRef.current.clear()
+      }
+      const cached = pageRowsRef.current.get(entry.start)
+      if (cached && cached.length === entry.lines.length) return cached
+      const rows = new Uint16Array(entry.lines.length)
+      for (let i = 0; i < entry.lines.length; i += 1) {
+        rows[i] = wrapRows(entry.lines[i], availPx, metrics)
+      }
+      if (pageRowsRef.current.size > 40) pageRowsRef.current.clear()
+      pageRowsRef.current.set(entry.start, rows)
+      return rows
+    },
+    [availPx, metrics],
+  )
+
+  /**
+   * 换行布局表。每页的行数走 pageRowsFor 的缓存，这里只做累加。
+   * 没有页级缓存时，每回填一次实测 / 每加载一页都要重算全部缓存行（实测 4800 行 ≈ 2.5ms），
+   * 滚动时每帧一次就是肉眼可见的卡。
+   */
+  const layout = useMemo<WrapLayout | null>(() => {
+    if (!wrapActive || lineCount <= 0) return null
+    const measured = measuredRef.current
+    const known: [number, number][] = []
+    for (const entry of cacheRef.current.values()) {
+      if (isFailure(entry)) continue
+      // 每页的行数只算一次（换宽度才失效）：一页 200 行，别每次重建都把 24 页重算
+      const rowsOfPage = pageRowsFor(entry)
+      for (let i = 0; i < entry.lines.length; i += 1) {
+        const line = entry.start + i
+        const rows = measured.get(line) ?? rowsOfPage[i]
+        if (rows > 1) known.push([line, rows])
+      }
+    }
+    return buildWrapLayout(lineCount, known)
+    // version 每加载一页自增；measuredSeq 每次实测回填自增：两者都会改变行数分布
+    // path 也进依赖：换文件时缓存被清空，即使行数相同也要按空缓存重算一次
+  }, [path, wrapActive, lineCount, pageRowsFor, version, measuredSeq])
+
+  /** 某行占几个视觉行（实测优先）。未加载 / 加载失败的行按 1 行算。 */
+  const rowsOf = useCallback(
+    (line: number): number => {
+      const known = measuredRef.current.get(line)
+      if (known !== undefined) return known
+      const entry = coveringEntry(cacheRef.current, line)
+      if (!entry || isFailure(entry)) return 1
+      const text = entry.lines[line - entry.start]
+      return text === undefined ? 1 : wrapRows(text, availPx, metrics)
+    },
+    [availPx, metrics, measuredSeq],
+  )
+
+  /**
+   * 渲染后的实测结果。不一致的行回填进布局表；一致的行只记「已量过」，
+   * 下次滚动路过不再重复读 offsetHeight（读它要强制浏览器重排，是滚动卡顿的大头）。
+   */
+  const handleMeasured = useCallback((entries: [number, number, boolean][]) => {
+    let changed = false
+    for (const [line, rows, differs] of entries) {
+      if (differs) {
+        if (measuredRef.current.get(line) !== rows) {
+          measuredRef.current.set(line, rows)
+          changed = true
+        }
+        verifiedRef.current.delete(line)
+        continue
+      }
+      verifiedRef.current.add(line)
+      if (verifiedRef.current.size > 50_000) verifiedRef.current.clear()
+    }
+    if (changed) setMeasuredSeq((value) => value + 1)
+  }, [])
+
+  const isMeasured = useCallback(
+    (line: number) => verifiedRef.current.has(line) || measuredRef.current.has(line),
+    [],
+  )
+
+  // 当前视口的渲染区间与上下占位（px）。换行 / 不换行两套数学，其余代码只看这个结果。
+  const view = useMemo(() => {
+    if (!stat || stat.binary) return { first: 0, last: 0, topPad: 0, bottomPad: 0, scale: 1 }
+    if (layout) {
+      const range = visibleRangeIn(layout, scrollTop, viewportHeight)
+      const per = LINE_HEIGHT * layout.scale
+      return {
+        first: range.first,
+        last: range.last,
+        topPad: rowOffsetOf(layout, range.first) * per,
+        bottomPad: Math.max(0, (layout.totalRows - rowOffsetOf(layout, range.last + 1)) * per),
+        scale: layout.scale,
+      }
+    }
+    const model = scrollModel(stat.lineCount)
+    const range = visibleRange(scrollTop, viewportHeight, stat.lineCount, model.scale)
+    return {
+      first: range.first,
+      last: range.last,
+      topPad: range.first * LINE_HEIGHT * model.scale,
+      bottomPad: Math.max(0, (stat.lineCount - range.last - 1) * LINE_HEIGHT * model.scale),
+      scale: model.scale,
+    }
+  }, [stat, layout, scrollTop, viewportHeight])
+
   const currentLine =
     stat && !stat.binary && previewState.mode === 'source' && stat.lineCount > 0
-      ? lineAtScrollTop(scrollTop, stat.lineCount, model.scale)
+      ? layout
+        ? lineAtScrollTopWrapped(layout, scrollTop)
+        : lineAtScrollTop(scrollTop, stat.lineCount, view.scale)
       : null
+
+  layoutRef.current = layout
+
+  // 切换换行：内容总高度整体重排，按「当前首行」重新定位，别让用户丢坐标。
+  const wrapApplied = useRef(wrap)
+  useEffect(() => {
+    if (wrapApplied.current === wrap) return
+    wrapApplied.current = wrap
+    const node = scrollRef.current
+    if (!node) return
+    const per = Math.max(LINE_HEIGHT * (layout ? layout.scale : scrollModel(lineCount).scale), 0.001)
+    const top = layout
+      ? rowOffsetOf(layout, topLineRef.current) * per
+      : topLineRef.current * per
+    node.scrollTop = top
+    scrollTopRef.current = node.scrollTop
+    setScrollTop(node.scrollTop)
+  }, [wrap, layout, lineCount])
+
+  // 换行布局会随页面加载变高（长行从 1 行变成 N 行）。视口上方长高会把画面顶走，
+  // 所以用滚动锚点把位置补偿回去，视觉上停在原处。
+  useEffect(() => {
+    const node = scrollRef.current
+    const anchor = anchorRef.current
+    if (!node || !anchor || !layout) return
+    if (anchor.total === layout.totalRows) return
+    const per = Math.max(LINE_HEIGHT * layout.scale, 0.001)
+    const offset = rowOffsetOf(layout, anchor.line)
+    const delta = (offset - anchor.offset) * per
+    anchorRef.current = { line: anchor.line, offset, total: layout.totalRows }
+    if (!delta) return
+    node.scrollTop += delta
+    scrollTopRef.current = node.scrollTop
+    setScrollTop(node.scrollTop)
+  }, [layout])
+
+  /** 工具栏的「换行」开关：偏好存起来，下次打开同一个文件还按上次的来。 */
+  const toggleWrap = useCallback(() => {
+    setWrap((cur) => {
+      const next = !cur
+      writeWrapPref(root, next)
+      return next
+    })
+  }, [root])
+
+  /** 某一页读取失败后重试：只丢这一页的行数缓存，其它页不动。 */
+  const retryPage = useCallback(
+    (start: number) => {
+      inflightRef.current.get(start)?.abort()
+      inflightRef.current.delete(start)
+      cacheRef.current.delete(start)
+      pageRowsRef.current.delete(start)
+      bump()
+    },
+    [bump],
+  )
 
   // Ctrl+S 保存 / Ctrl+G 跳转聚焦 / Ctrl+F 打开搜索 / Esc 关闭搜索或退出编辑。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase()
+      // Alt+Z：切换自动换行（和 VS Code 的习惯一致）
+      if (event.altKey && !event.ctrlKey && !event.metaKey && key === 'z') {
+        event.preventDefault()
+        toggleWrap()
+        return
+      }
       if ((event.ctrlKey || event.metaKey) && key === 's') {
         if (!editing) return
         event.preventDefault()
@@ -434,7 +775,7 @@ export default function CodeView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [setMode, editing, save, cancelEdit])
+  }, [setMode, editing, save, cancelEdit, toggleWrap])
 
   /** 跳转到 1 基行号：把该行放到视口顶部并闪一下。 */
   const jumpToLine = useCallback(
@@ -442,7 +783,9 @@ export default function CodeView({
       if (!stat || stat.lineCount === 0) return
       const viewport = scrollRef.current?.clientHeight ?? viewportHeight
       const line = Math.min(Math.max(1, Math.trunc(target)), stat.lineCount)
-      const top = scrollTopForLine(line, stat.lineCount, viewport, model.scale)
+      const top = layout
+        ? scrollTopForLineIn(layout, line, viewport)
+        : scrollTopForLine(line, stat.lineCount, viewport, scrollModel(stat.lineCount).scale)
       scrollTopRef.current = top
       setScrollTop(top)
       if (scrollRef.current) scrollRef.current.scrollTop = top
@@ -450,7 +793,7 @@ export default function CodeView({
       if (flashTimer.current) window.clearTimeout(flashTimer.current)
       flashTimer.current = window.setTimeout(() => setFlashLine(null), 1200)
     },
-    [stat, model.scale, viewportHeight],
+    [stat, layout, viewportHeight],
   )
 
   // 聊天里点「a.ts:42」这类带行号的路径：文件读出来后跳一次。
@@ -539,7 +882,7 @@ export default function CodeView({
     if (!path || !stat || stat.binary || previewState.mode !== 'source' || statPath !== path) {
       return
     }
-    const { first, last } = visibleRange(scrollTop, viewportHeight, stat.lineCount, model.scale)
+    const { first, last } = view
     const gen = genRef.current
     const end = loadedEnd(cacheRef.current)
     let cursor = first
@@ -564,10 +907,8 @@ export default function CodeView({
     stat,
     statPath,
     previewState.mode,
-    scrollTop,
-    viewportHeight,
+    view,
     version,
-    model.scale,
     requestPage,
   ])
 
@@ -583,9 +924,7 @@ export default function CodeView({
   if (statError) {
     return (
       <div className="editor">
-        <div className="editor-path" title={path}>
-          {path}
-        </div>
+        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
         <div className="editor-error">
           <div>{statError}</div>
           <button type="button" className="editor-retry" onClick={() => setReload((v) => v + 1)}>
@@ -599,9 +938,7 @@ export default function CodeView({
   if (loading || !stat || statPath !== path) {
     return (
       <div className="editor">
-        <div className="editor-path" title={path}>
-          {path}
-        </div>
+        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
         <div className="editor-empty">读取中…</div>
       </div>
     )
@@ -612,9 +949,7 @@ export default function CodeView({
 
   return (
     <div className="editor">
-      <div className="editor-path" title={path}>
-        {path}
-      </div>
+      <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
       <CodeToolbar
         stat={stat}
         markdown={markdown}
@@ -633,6 +968,8 @@ export default function CodeView({
         onEncoding={handleEncodingChange}
         onSave={save}
         onCancel={cancelEdit}
+        wrap={wrap}
+        onWrap={toggleWrap}
       />
       {saveNote ? <div className="editor-save-note">{saveNote}</div> : null}
       {editError ? (
@@ -704,21 +1041,20 @@ export default function CodeView({
         <CodeSourceBody
           stat={stat}
           cache={cacheRef.current}
-          scrollTop={scrollTop}
-          viewportHeight={viewportHeight}
-          scale={model.scale}
+          first={view.first}
+          last={view.last}
+          topPad={view.topPad}
+          bottomPad={view.bottomPad}
+          wrap={wrapActive}
+          rowsOf={rowsOf}
+          onMeasured={handleMeasured}
+          isMeasured={isMeasured}
           onScroll={onScroll}
           attachScroll={attachScroll}
           flashLine={flashLine}
           query={searchOpen ? query.trim() : ''}
           matchLine={searchOpen ? matches[matchIndex]?.line ?? null : null}
-          onRetryPage={(start) => {
-            const controller = inflightRef.current.get(start)
-            controller?.abort()
-            inflightRef.current.delete(start)
-            cacheRef.current.delete(start)
-            bump()
-          }}
+          onRetryPage={retryPage}
           onDoubleClick={startEdit}
         />
       )}

@@ -1,0 +1,147 @@
+/* 底部终端面板 */
+.terminal {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 260px;
+  background: #1b1b1b;
+  border-top: 1px solid #3c3c3c;
+}
+
+.terminal.collapsed {
+  max-height: none;
+}
+
+.terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 10px;
+  background: #252526;
+  border-bottom: 1px solid #333;
+  flex: 0 0 auto;
+}
+
+.terminal-toggle,
+.terminal-clear {
+  background: transparent;
+  border: none;
+  color: #cccccc;
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.terminal-toggle:hover,
+.terminal-clear:hover {
+  color: #ffffff;
+}
+
+.terminal-hint {
+  color: #6e6e6e;
+  font-size: 11px;
+}
+
+.terminal-spacer {
+  flex: 1;
+}
+
+.terminal-body {
+  flex: 1 1 auto;
+  min-height: 80px;
+  overflow: auto;
+  padding: 6px 12px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #d4d4d4;
+}
+
+.terminal-empty {
+  color: #6e6e6e;
+  padding: 4px 0;
+}
+
+.terminal-block {
+  margin-bottom: 6px;
+}
+
+.terminal-cmd {
+  color: #4ec9b0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.terminal-out {
+  margin: 2px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #cccccc;
+}
+
+.terminal-exit {
+  color: #7a7a7a;
+  font-size: 10.5px;
+}
+
+.terminal-running {
+  color: #e2c08d;
+  font-size: 10.5px;
+}
+
+.terminal-error {
+  padding: 4px 12px;
+  color: #f48771;
+  font-size: 11.5px;
+  background: #2d1b1b;
+  border-top: 1px solid #5a1d1d;
+}
+
+.terminal-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid #333;
+  flex: 0 0 auto;
+}
+
+.terminal-prompt {
+  color: #4ec9b0;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.terminal-input {
+  flex: 1;
+  height: 26px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  color: #d4d4d4;
+  padding: 0 8px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  outline: none;
+}
+
+.terminal-input:focus {
+  border-color: #0e639c;
+}
+
+.terminal-run {
+  height: 26px;
+  padding: 0 12px;
+  background: #0e639c;
+  color: #ffffff;
+  border: none;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.terminal-run:disabled {
+  background: #333;
+  color: #777;
+  cursor: default;
+}
