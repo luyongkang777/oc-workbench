@@ -82,17 +82,20 @@ npm.cmd run release     # 产出 exe + README.txt + SHA256SUMS.txt + latest.json
 https://github.com/luyongkang777/oc-workbench/releases/latest/download/latest.json
 ```
 
-发一个新版本：
+发版只需要打 tag —— `.github/workflows/release.yml` 会在 `windows-latest` 上跑完：
 
 ```powershell
-npm.cmd run build:exe
-$env:OC_WORKBENCH_GITHUB = "luyongkang777/oc-workbench"
-npm.cmd run release     # 生成 exe / README / SHA256SUMS / latest.json（url 指向本次 tag）
+# 先把 package.json 和 shell/Cargo.toml 的版本改成同一个号
+git commit -am "release: 1.1.3"
+git tag v1.1.3
+git push origin main --tags
 ```
 
-然后把三个资产传进新 tag 的 release：`oc-workbench-<版本>-win64.exe`、`latest.json`、
-`oc-workbench-<版本>-win64.zip`。`releases/latest/download` 会自动指向最新那一份，
-老客户端下次检查就能看到更新。
+流水线依次：校验 tag 与 package.json 一致 → 前端测试 → 构建 dist → 外壳测试 → 构建 exe
+（含"前端真嵌进去了"核对）→ 生成 latest.json → 把 exe / latest.json / zip 传成该 tag 的 Release。
+
+本地手工出包（不上传）也保留：`npm.cmd run build:exe`，再
+`$env:OC_WORKBENCH_GITHUB="owner/repo"; npm.cmd run release`。
 
 ## 开发
 
