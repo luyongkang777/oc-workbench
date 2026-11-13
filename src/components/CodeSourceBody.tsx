@@ -36,6 +36,8 @@ type Props = {
   matchLine?: number | null
   /** 双击代码区（进入编辑）。 */
   onDoubleClick?: () => void
+  /** 查看区缩放：整块按此比例渲染。zoom 在滚动容器上时布局像素不变，虚拟滚动不用改。 */
+  zoom?: number
 }
 
 /** 单次渲染最多实测多少行：滚动时新露头的行是有限的，别对整屏反复量。 */
@@ -66,6 +68,7 @@ function CodeSourceBody({
   query = '',
   matchLine = null,
   onDoubleClick,
+  zoom = 1,
 }: Props) {
   const rows: ReactElement[] = []
   const preRef = useRef<HTMLPreElement | null>(null)
@@ -156,6 +159,7 @@ function CodeSourceBody({
       ref={attachScroll}
       onScroll={onScroll}
       onDoubleClick={onDoubleClick}
+      style={zoom !== 1 ? { zoom } : undefined}
       tabIndex={0}
       onKeyDown={(event) => {
         // 焦点在代码区时 Home/End 直达首尾；其余按键交给浏览器原生滚动。

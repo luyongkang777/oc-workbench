@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import Chat from './components/Chat'
 import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
@@ -10,6 +10,8 @@ import ProjectTabs from './components/ProjectTabs'
 import WelcomePane from './components/WelcomePane'
 import UpdateEntry from './components/UpdateEntry'
 import { Icon, IconDefs } from './components/Icon'
+import WindowControls from './components/WindowControls'
+import { isWindowDragTarget, sendWindowCommand } from './api/window'
 import { getAuthState, onIpcMessage, retryAuth, startAuth, subscribeAuth } from './api/auth'
 import { getInfo, getShellState, reconnect } from './api/client'
 import { findLocal, statFile } from './api/localfs'
@@ -692,6 +694,25 @@ export default function App() {
     }
   }
 
+  /**
+   * 无边框窗口的标题栏拖动。
+   *
+   * 顶栏空白处按下 → 交给外壳调系统拖动；按在按钮/标签/输入框上则不抢，
+   * 否则点「Git」「审查」会变成拖窗口。
+   *
+   * 双击标题栏要自己处理：我们发的是一次 WM_NCLBUTTONDOWN，系统不会替我们
+   * 合成「双击标题栏 = 最大化」。
+   */
+  function handleTopbarMouseDown(event: ReactMouseEvent<HTMLElement>) {
+    if (event.button !== 0) return
+    if (!isWindowDragTarget(event.target)) return
+    if (event.detail >= 2) {
+      sendWindowCommand('toggleMaximize')
+      return
+    }
+    sendWindowCommand('drag')
+  }
+
   // 会话状态：一次轮询同时喂顶栏项目灯和会话列表灯，别两套各打一遍
   // 面板模式记到本地：下次打开还保持同样布局
   useEffect(() => {
@@ -721,7 +742,7 @@ export default function App() {
   return (
     <div className="app">
       <IconDefs />
-      <header className="topbar">
+      <header className="topbar" onMouseDown={handleTopbarMouseDown}>
         <span className="brand">
           <Icon name="logo" size={16} />
    OpenCode 工作台
@@ -773,6 +794,7 @@ export default function App() {
             {reconnecting ? '连接中…' : '重试'}
           </button>
         ) : null}
+        <WindowControls />
         </div>
       </header>
 

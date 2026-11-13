@@ -221,3 +221,66 @@
 - 交互式终端（需要 x-opencode-ticket + WebSocket 代理）
 - 401 自动重连
 - 会话列表深翻页（当前 12 页封顶，240 条以上目录可能漏）
+
+## T22 ✅ 查看区独立缩放（文件 / 图片 / 文档）
+
+- 范围：`src/components/viewZoom.ts`（新）、`src/hooks/useViewZoom.ts`（新）、`src/components/ViewZoomBar.tsx`（新）、
+  `src/components/EditorImage.tsx`（新）、`src/components/CodeView.tsx`、`src/components/CodeToolbar.tsx`、
+  `src/components/CodeSourceBody.tsx`、`src/components/CodeEditor.tsx`、`src/styles/editor.css`、`scripts/viewZoom.test.mjs`（新）
+- 内容：中栏查看区自带缩放档位（50%~400%，默认 100%），与全局 `<html zoom>` 互不影响：
+  * 图片：按真实像素缩放，超出容器可横向纵向滚动（改前只能缩到窗口，放大是死尺寸）
+  * 源码 / Markdown 预览 / 十六进制 / 编辑态：整个滚动容器一起缩放
+  * 入口：工具栏 `-` / 百分比 / `+` / `适应`，Ctrl+滚轮（鼠标在查看区时）、`Ctrl+=` `Ctrl+-` `Ctrl+0`（焦点在查看区时）
+  * 偏好按项目根记忆（localStorage，与换行偏好同一套约定）
+- 关键实现约束（Edge 实测得出）：
+  * zoom 必须加在**滚动容器**上，不能加在 `<img>` 上（加 img 上完全不生效）
+  * zoom 加容器后 `clientWidth/clientHeight/scrollTop/scrollHeight/offsetHeight` 仍是布局像素，
+    因此虚拟滚动的 `LINE_HEIGHT` 与换行数学**一律不用改**；`ResizeObserver` 会因 zoom 变化触发、视口自动重算
+  * 图片要放大必须去掉 `max-width/max-height:100%`，改用自然尺寸 + `margin:auto` 居中，
+    否则永远被压回容器大小、出不了滚动条
+  * 缩放控件绝对定位在工具栏右侧并预留 152px，否则窗口 ≤1200px 时会被溢出裁掉
+- 验收（dev 实测，真实浏览器 CDP 驱动）：
+  * `F:\调试器开发\.gitignore`（53 行）、`Directory.Build.props`（36 行）、`out/build/*.ps1`（36 行）都能正常打开
+  * 源码 110%/120%：`scrollTop` 位置保持一致、行号栏不错位、`offsetHeight` 仍 19（布局像素）
+  * 大图 2000×1500：100% 时缩到 382px 适应窗口；200% 时 744px 且横向纵向都出滚动条；「适应」回位
+  * Markdown 预览 110%/120% 同步缩放；切文件后缩放保持；刷新后从 localStorage 恢复
+  * Ctrl+滚轮在查看区内只缩放查看区（全局 `<html zoom>` 恒为 1）；焦点在查看区外时 Ctrl+0 仍重置整个布局
+  * 窗口 1000px 宽时缩放控件仍完整可见
+- 测试：node 新增 10 项（`scripts/viewZoom.test.mjs`），`npm test` 共 417 项全过；`tsc --noEmit` 通过；`vite build` 通过
+
+## T23 — 无边框标题栏 + 思考强度独立下拉 + 模式按会话记忆
+
+- 范围：`shell/src/main.rs`、`src/api/window.ts`（新）、`src/components/WindowControls.tsx`（新）、
+  `src/components/agentMemory.ts`（新）、`src/App.tsx`、`src/components/ChatHeader.tsx`、`src/components/Chat.tsx`、
+  `src/styles/base.css`、`src/styles/panels.css`、`scripts/windowChrome.test.mjs`（新）、`package.json`
+- 内容：
+  1. 窗口改无边框（`with_decorations(false)` + 系统阴影），最小化/最大化/关闭自绘放顶栏「已连接」后面；
+     顶栏空白处拖窗口、双击最大化/还原；命令走 IPC（`oc:win-minimize` / `toggle-maximize` / `close` / `drag`），
+     最大化状态由外壳在 Resize 时推给页面换图标
+  2. 思考强度从模型下拉里拆出来，做成独立下拉（默认 / 低 / 高 / 最大 …），换模型不再被拽进档位面板
+  3. 修「切会话/切标签后模式显示回 build」：Chat 按标签 key 重挂载，agent state 归零但服务端还在 ask/plan/debug；
+     现在按「服务端 session.agent > 本地记忆」恢复，用户手动选过的不再被抢回去
+- 验收（真机 CDP + Win32）：自绘按钮 3 个贴右边缘（高度 31px）；点最大化 → 客户区 2048×1104、图标变「向下还原」；
+  点最小化 → IsIconic=True；SendInput 拖 60×36 → 窗口位移一致；点关闭 → 进程退出；
+  思考强度下拉列出 默认/低/高/最大 且当前 high 选中；会话选 ask → 新建会话（Build）→ 切回 → 仍是 ask
+- 完成信号：`tsc --noEmit` 干净、`npm test` 423 项全过（新增 6 项）、Rust `cargo test` 154 项全过、
+  dist + debug exe 重建后真机实测 2026-11-14
+
+
+## T24 ✅ 输入框草稿落盘（文字 + 待发送图片）
+
+- 范围：`shell/src/draft.rs`（新）、`src/api/draft.ts`（新）、`src/components/draftState.ts`（新）、
+  `shell/src/server.rs`、`src/components/Chat.tsx`、`src/components/ChatTabs.tsx`、`scripts/draftState.test.mjs`（新）
+- 内容：输入框文字与待发送截图按「项目路径::会话 id」各存一份（没建会话时按标签 id），
+  切标签、切会话、切项目、重开工作台都恢复；发送成功后清掉。
+  `/local/draft/load|save|clear` 走 `x-oc-token` 门禁；文件名取 FNV-1a 哈希，真实键存在 JSON 里比对。
+- 关键实现：
+  * 只改文字时请求不带 `files`，外壳沿用盘上已有图片（截图 base64 有 MB 级，不每次重传）
+  * 写盘 600ms 防抖；切标签/卸载/页面隐藏/发送前立刻落地；目录清理按写入次数节流（每 16 次扫一次）
+  * 恢复有竞态防护：generation 号挡「先发后到」，userTouched 挡「恢复覆盖用户刚打的字」，
+    skipRestore 挡「新建会话时把刚发出去的文字读回输入框」
+  * dev 无外壳时退化为 localStorage
+- 验收：切换标签/会话/项目恢复文字与图片；发送后清空；重开工作台后已建会话草稿仍在；
+  新建会话发送时输入框不再闪回已发文字
+- 测试：`scripts/draftState.test.mjs` 11 项；Rust `draft.rs` 5 项；`npm test` 426 项全过；
+  `tsc --noEmit`、`cargo test --release` 154 项全过

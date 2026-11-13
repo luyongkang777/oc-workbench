@@ -39,7 +39,9 @@ import { measureCodeMetrics, type CodeMetrics } from './textMetrics'
 import { readWrapPref, writeWrapPref } from './wrapPrefs'
 import MarkdownText from './MarkdownText'
 import { useFilePreview } from '../hooks/useFilePreview'
-
+import EditorImage from './EditorImage'
+import { useViewZoom, useZoomKeys, useZoomWheel } from '../hooks/useViewZoom'
+import { zoomFromWheel } from './viewZoom'
 /** 超过这个大小不进入编辑：整份文本要一次性载入，太大打字会卡。 */
 const EDIT_MAX_BYTES = 2 * 1024 * 1024
 /** 后端支持的保存编码；stat.encoding 返回的也是这几个名字。 */
@@ -156,6 +158,17 @@ export default function CodeView({
   useEffect(() => {
     setWrap(readWrapPref(root))
   }, [root])
+
+  // 查看区缩放：与全局界面缩放（useUiLayout）互不影响，鼠标在查看区内时 Ctrl+滚轮只缩放这里。
+  // 图片和文本各记一套比例：把代码放大到 150% 不该影响看图片时的默认「适应窗口」。
+  const isImage = Boolean(path && isImagePath(path))
+  const viewZoom = useViewZoom(root, isImage ? 'image' : 'text')
+  const zoomHostRef = useRef<HTMLDivElement | null>(null)
+  useZoomWheel(zoomHostRef, true, (deltaY) => {
+    viewZoom.setZoom(zoomFromWheel(viewZoom.zoom, deltaY))
+  })
+  useZoomKeys(zoomHostRef, true, viewZoom.zoomIn, viewZoom.zoomOut, viewZoom.resetZoom)
+
   // 渲染后实测到的每行视觉行数：估算对不齐时以它为准（见 handleMeasured）
   const measuredRef = useRef(new Map<number, number>())
   // 量过但和模型一致的行：不必再量（否则滚动时每帧都在重复读 offsetHeight）
@@ -691,12 +704,55 @@ export default function CodeView({
     setScrollTop(node.scrollTop)
   }, [wrap, layout, lineCount])
 
+  // 缩放会改变「一行能放几个字符」→ 换行模式下每行折成几个视觉行整体重排，
+  // 内容总高度跟着变；如果什么都不做，视口会顺着新布局滑走几十行。
+  // 做法：记住缩放瞬间的视口首行，再用若干帧 rAF 反复把它顶回视口顶部
+  // （布局重排要等 ResizeObserver 回报新宽度，单次 set 会落空）。
+  const zoomApplied = useRef(viewZoom.zoom)
+  const zoomFixRef = useRef<{ line: number; frames: number } | null>(null)
+  useEffect(() => {
+    if (zoomApplied.current === viewZoom.zoom) return
+    zoomApplied.current = viewZoom.zoom
+    zoomFixRef.current = { line: topLineRef.current, frames: 10 }
+    let raf = 0
+    const step = () => {
+      const fix = zoomFixRef.current
+      if (!fix) return
+      const node = scrollRef.current
+      // 图片 / Markdown 预览等视图没有代码滚动容器：这一轮不用修正，标记也要清掉，
+      // 否则回到文本视图时锚点补偿会被它永久挡住。
+      if (!node) {
+        zoomFixRef.current = null
+        return
+      }
+      const current = layoutRef.current
+      if (current) {
+        const per = Math.max(LINE_HEIGHT * current.scale, 0.001)
+        node.scrollTop = rowOffsetOf(current, fix.line) * per
+        scrollTopRef.current = node.scrollTop
+        setScrollTop(node.scrollTop)
+      }
+      fix.frames -= 1
+      if (fix.frames <= 0) {
+        zoomFixRef.current = null
+        return
+      }
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      zoomFixRef.current = null
+    }
+  }, [viewZoom.zoom])
+
   // 换行布局会随页面加载变高（长行从 1 行变成 N 行）。视口上方长高会把画面顶走，
   // 所以用滚动锚点把位置补偿回去，视觉上停在原处。
+  // 缩放正在收敛时（zoomFixRef 非空）跳过，免得两套补偿互相打架。
   useEffect(() => {
     const node = scrollRef.current
     const anchor = anchorRef.current
-    if (!node || !anchor || !layout) return
+    if (!node || !anchor || !layout || zoomFixRef.current) return
     if (anchor.total === layout.totalRows) return
     const per = Math.max(LINE_HEIGHT * layout.scale, 0.001)
     const offset = rowOffsetOf(layout, anchor.line)
@@ -948,7 +1004,7 @@ export default function CodeView({
   const markdown = isMarkdownPath(path) && !stat.binary
 
   return (
-    <div className="editor">
+    <div className="editor" ref={zoomHostRef}>
       <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
       <CodeToolbar
         stat={stat}
@@ -970,6 +1026,11 @@ export default function CodeView({
         onCancel={cancelEdit}
         wrap={wrap}
         onWrap={toggleWrap}
+        zoom={viewZoom.zoom}
+        onZoomIn={viewZoom.zoomIn}
+        onZoomOut={viewZoom.zoomOut}
+        onZoomReset={viewZoom.resetZoom}
+        onZoomFit={isImage ? viewZoom.resetZoom : undefined}
       />
       {saveNote ? <div className="editor-save-note">{saveNote}</div> : null}
       {editError ? (
@@ -1008,25 +1069,33 @@ export default function CodeView({
             saving={saving}
             root={root}
             path={path}
+            zoom={viewZoom.zoom}
           />
         )
       ) : image ? (
-        <div className="editor-image">
-          {imageError ? (
+        imageError ? (
+          <div className="editor-image">
             <div className="editor-error">{imageError}</div>
-          ) : imageUrl ? (
-            <img src={imageUrl} alt={path} />
-          ) : (
+          </div>
+        ) : imageUrl ? (
+          <EditorImage src={imageUrl} alt={path} zoom={viewZoom.zoom} />
+        ) : (
+          <div className="editor-image">
             <div className="editor-empty">加载图片…</div>
-          )}
-        </div>
+          </div>
+        )
       ) : stat.binary ? (
-        <div className="editor-hex">
+        <div className="editor-hex" style={viewZoom.zoom !== 1 ? { zoom: viewZoom.zoom } : undefined}>
           <div className="editor-note">二进制文件，显示前 4 KB 的十六进制内容。</div>
           <pre className="hex-dump">{hexError ?? hex ?? '读取中…'}</pre>
         </div>
       ) : markdown && mode === 'preview' ? (
-        <div className="editor-preview" onDoubleClick={startEdit} title="双击编辑">
+        <div
+          className="editor-preview"
+          onDoubleClick={startEdit}
+          title="双击编辑"
+          style={viewZoom.zoom !== 1 ? { zoom: viewZoom.zoom } : undefined}
+        >
           {previewError ? (
             <div className="editor-note">{previewError}</div>
           ) : preview === null ? (
@@ -1056,6 +1125,7 @@ export default function CodeView({
           matchLine={searchOpen ? matches[matchIndex]?.line ?? null : null}
           onRetryPage={retryPage}
           onDoubleClick={startEdit}
+          zoom={viewZoom.zoom}
         />
       )}
     </div>

@@ -408,6 +408,12 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             crate::purge::handle(request, &path, &url);
             return;
         }
+        // 输入框草稿（文字 + 待发送图片）：按「项目::会话」落盘，切换标签/项目、
+        // 重开工作台都能恢复。localStorage 跨不了启动（端口每次变，origin 跟着变）。
+        if path.starts_with("/local/draft/") {
+            crate::draft::handle(request, &path, &url);
+            return;
+        }
         crate::fsapi::handle(request, &path, &url);
         return;
     }

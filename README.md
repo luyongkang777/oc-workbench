@@ -33,6 +33,9 @@ OpenCode 工作台：Rust + WebView2 桌面外壳，内嵌前端，自带本地 
 6. 项目清单也走 IPC：页面发 `oc:projects` 要清单、发 `oc:projects-save:<json>` 存清单，外壳落到
    `%LOCALAPPDATA%\oc-workbench\projects.json`。清单内容（去重/排序/每个项目的界面状态）在前端算，
    外壳只当存储，避免两套规则走偏。端口每次启动都变，所以不放 localStorage
+6.5 输入框草稿（文字 + 待发送截图）落盘：走 /local/draft/*，按「项目路径::会话 id」各存一份，
+   切标签、切会话、切项目、重开工作台都自动带回来，发送成功后清掉。打字只发文字，
+   图片没变就由外壳沿用盘上那份（截图 base64 有 MB 级，每 200ms 重传一次太浪费）
 7. 后端没起来不白屏：页面照常渲染，显示「未连接」，后台每 5 秒重试；
    文件树与文件查看走本地通道，后端断开也能照常浏览。
    `GET /api/state` 只读地回「是否连上 / 连到哪 / 最近一次失败原因」，
@@ -238,6 +241,7 @@ shell/          Rust 外壳（tao + wry / WebView2 + tiny_http）
   src/body.rs   请求体读取（10MB 上限 + 15s 超时）
   src/auth.rs   定位 opencode（env→PATH→已知安装位置）+ 配对换 cookie（错误串里链接打码）
   src/projects.rs 项目清单落盘（projects.json 原样读写，测试在 projects_tests.rs）
+  src/draft.rs   输入框草稿落盘（按「项目::会话」一个文件，超过 200 份按最旧清理）
   src/update.rs 在线更新（清单解析/版本比较/下载校验/替换脚本）
   src/fsapi.rs  /local/fs/* 本地文件接口（list/stat/read/text/raw/hex，路径越界校验）
   src/fsindex.rs 行索引（一次扫描 + 每 4096 行一个检查点，按 size+mtime 缓存）
@@ -253,6 +257,9 @@ docs/           接口实测笔记；RELEASING.md 是发版手册
 - 项目清单最多 40 条（按最近使用排序，超出的从最旧开始丢），存 `%LOCALAPPDATA%\oc-workbench\projects.json`；
   从列表移除只是不再显示，磁盘上的目录一点不动。多个窗口各开一个项目时 `root.txt` 是全局的，
   最后关闭的那个决定下次启动打开哪个项目
+- 输入框草稿存 `%LOCALAPPDATA%\oc-workbench\drafts\`：按「项目路径::会话 id」一个文件，最多留 200 份
+  （超出按最旧删）。带截图的草稿按 data URL 存，单份最多约 9MB。还没建会话的空白标签按标签 id 存，
+  而标签本身是 localStorage（端口每次启动都变）——重开工作台后空标签那份草稿恢复不了，已建会话的不受影响
 - 源码编辑：上限 2 MB；编码支持 UTF-8 / UTF-16LE / UTF-16BE / GBK（GBK 走 Windows 代码页 54936，
   dev 模式下 GB18030 四字节字符——emoji 等——不支持，会提示改用 UTF-8）；二进制文件仍只读
   保存时若文件已被别处改过（mtime 不一致）会提示重新加载，不会静默覆盖

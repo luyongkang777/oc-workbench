@@ -325,3 +325,42 @@
   - `ChatHeader.shortTitle`：空标题与占位标题统一显示「新会话」，不再把会话 id 前缀当名字
   - 实测：点「+ 新会话」服务端 title 为空、下拉显示「新会话」；带消息的老会话切换目录后按首条消息改名
   - 测试：`npm test` 189 项全过；`npm run build`（tsc + vite）通过
+
+- 2026-11-14 **查看区独立缩放**（用户反馈：图片只能缩到窗口、ps1/bat 等文件也要能放大看）：
+  - 先实测澄清：`F:\调试器开发\.gitignore`（53 行）、`Directory.Build.props`（36 行）、`out/build/*.ps1`（36 行）
+    本来就能正常打开（后端只按「前 8KB 有无 NUL」判二进制，没有扩展名白名单）；真正缺的是**缩放**
+  - 新增 `src/components/viewZoom.ts`（比例取值/取整/持久化）、`src/hooks/useViewZoom.ts`（状态 + 滚轮 + 快捷键）、
+    `src/components/ViewZoomBar.tsx`（工具栏 − 100% + 适应）、`src/components/EditorImage.tsx`（按像素算图片尺寸）
+  - 范围 50%~400%，默认 100%；文本与图片**各记一套**（把代码放大到 150% 不影响图片默认「适应窗口」）
+  - 入口：工具栏按钮、Ctrl+滚轮（鼠标在查看区时）、Ctrl+= / Ctrl+-、Ctrl+0（焦点在查看区时）
+  - 关键实测结论（Edge CDP 真跑）：
+    * `zoom` 必须加在**滚动容器**上：加在 `<img>` 上不生效；加在内容层会让 scrollHeight 与 scrollTop 坐标系错位
+    * 加在滚动容器上时 clientWidth/clientHeight/scrollTop/scrollHeight/offsetHeight 全是**布局像素** →
+      虚拟滚动的 LINE_HEIGHT 与换行数学**一行没改**；ResizeObserver 会因 zoom 变化触发、视口自动重算
+    * 图片放大必须去掉 max-width/max-height:100%，否则永远压回容器大小、不出滚动条
+    * 工具栏缩放控件要绝对定位并预留 152px，否则窗口 ≤1200px 时被溢出裁掉
+    * 换行模式下缩放会让折行重排、视口滑走几十行 → 记「缩放前首行」，用 10 帧 rAF 反复顶回去（实测漂移 41 行 → 2 行）
+  - 真机验收（exe + WebView2 CDP）：png 100%→150%→适应 全部正确、Ctrl+滚轮只缩放查看区（全局 zoom 恒 1）、
+    换行/不换行下首行漂移 2 / 0 行、文本↔图片来回切换各自记忆（150% / 130%）不串、1000px 窄窗口控件仍可见
+  - 测试：新增 `scripts/viewZoom.test.mjs` 11 项，`npm test` 419 项全过；`tsc --noEmit` 与 `vite build` 通过；exe 已重建
+
+  - REVIEW: 中 | 🔴0 🟡2 🟢2 | 结论: Approve（审查中修掉 3 个真 bug：Ctrl+0 抢全局、缓存图片尺寸被清空后不再恢复、图片视图下缩放修正标记不清导致锚点补偿永久失效；余 2 个 🟡 为可接受项）
+
+- 2026-11-14 **无边框标题栏 + 思考强度独立下拉 + 模式按会话记忆**（T23）：
+  - 窗口去系统边框（`with_decorations(false)` + 系统阴影），最小化/最大化/关闭自绘在顶栏右侧；
+    顶栏空白处拖动、双击最大化；命令走 IPC 白名单（`oc:win-*`），最大化状态由外壳 Resize 时推回页面
+  - 思考强度从模型下拉里拆成独立下拉：换模型不再被拽进档位面板；只列当前模型自己声明的档位
+  - 切会话/切标签后模式不再显示回 build：服务端 `session.agent` 优先，没有就用 localStorage 记忆；
+    用户手动选过后不被轮询抢回
+  - 测试：`scripts/windowChrome.test.mjs` 7 项；`npm test` 426 项；`cargo test --release` 154 项；`tsc` 干净
+  - REVIEW: 高 | 🔴0 🟡2 🟢3 | 结论: Approve（修掉 2 个：模式记忆 localStorage 无限增长加 200 条上限；
+    恢复草稿时 setAttachments updater 里做 revoke 副作用改为 updater 外执行）
+
+- 2026-11-14 **输入框草稿落盘（文字 + 待发送图片）**（T24）：
+  - 新增 `shell/src/draft.rs`（`/local/draft/load|save|clear`）、`src/api/draft.ts`、`src/components/draftState.ts`；
+    Chat 按「项目::会话」恢复，没建会话按标签 id，发送成功清掉
+  - 只改文字时不重传图片（请求不带 files，外壳沿用盘上那份）；写盘 600ms 防抖 + 切走/隐藏/发送前立刻落地；
+    目录清理按写入次数节流（每 16 次）
+  - 竞态防护：generation 挡先发后到、userTouched 挡覆盖输入、skipRestore 挡新建会话时的草稿闪回
+  - 测试：node 11 项 + Rust 5 项；`npm test` 426 项、`cargo test --release` 154 项、`tsc --noEmit` 全过
+  - REVIEW: 高 | 🔴0 🟡1 🟢1 | 结论: Approve（修掉 1 个真 bug：新建会话发送时已发文字会被草稿恢复闪回输入框）

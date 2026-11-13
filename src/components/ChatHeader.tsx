@@ -136,9 +136,10 @@ export default function ChatHeader({
   const [modesOpen, setModesOpen] = useState(false)
   const modesBox = useRef<HTMLDivElement | null>(null)
   const [filter, setFilter] = useState('')
-  /** 点开一个有思考档位的模型后，先选档位再切换 */
-  const [pendingModel, setPendingModel] = useState<ModelInfo | null>(null)
+  /** 思考强度是独立下拉：和模型列表分开，选模型不会再被拽进档位面板 */
+  const [variantsOpen, setVariantsOpen] = useState(false)
   const modelsBox = useRef<HTMLDivElement | null>(null)
+  const variantsBox = useRef<HTMLDivElement | null>(null)
 
   // 点外面收起模型下拉
   useEffect(() => {
@@ -146,7 +147,6 @@ export default function ChatHeader({
     const onDown = (event: MouseEvent) => {
       if (modelsBox.current && !modelsBox.current.contains(event.target as Node)) {
         setModelsOpen(false)
-        setPendingModel(null)
       }
     }
     window.addEventListener('mousedown', onDown)
@@ -164,6 +164,18 @@ export default function ChatHeader({
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
   }, [modesOpen])
+
+  // 点外面收起思考强度下拉
+  useEffect(() => {
+    if (!variantsOpen) return
+    const onDown = (event: MouseEvent) => {
+      if (variantsBox.current && !variantsBox.current.contains(event.target as Node)) {
+        setVariantsOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [variantsOpen])
 
   const activeAgent = agents.find((a) => a.id === currentAgent)
   // 没有 name 的 agent（自定义配置常见）用 id 兜底
@@ -185,18 +197,12 @@ export default function ChatHeader({
 
   // opencode 在「不带 variant」切换后会把 variant 记成 "default"，显示时当作没选档位
   const variantId = currentModel?.variant && currentModel.variant !== 'default' ? currentModel.variant : ''
-  const variantText = variantId ? ` · ${variantId}` : ''
+  // 只有当前模型自己声明了档位，独立下拉才有内容可选
+  const variantList = active?.variants ?? []
 
   function closeMenu() {
     setModelsOpen(false)
-    setPendingModel(null)
     setFilter('')
-  }
-
-  function chooseVariant(variant?: string) {
-    if (!pendingModel) return
-    onPickVariant(pendingModel, variant)
-    closeMenu()
   }
 
   const currentLight = current
@@ -256,7 +262,7 @@ export default function ChatHeader({
           <button
             type="button"
             className="model-toggle"
-            title={`${active?.name ?? modelLabel}${variantText}`}
+            title={active?.name ?? modelLabel}
             onClick={() => {
               if (modelsOpen) closeMenu()
               else {
@@ -266,56 +272,11 @@ export default function ChatHeader({
               }
             }}
           >
-            <span className="model-toggle-text">
-              {modelLabel}
-              {variantText ? <span className="model-toggle-variant">{variantText}</span> : null}
-            </span>
+            <span className="model-toggle-text">{modelLabel}</span>
             <span className="model-toggle-caret">▾</span>
           </button>
           {modelsOpen ? (
             <div className="model-menu">
-              {pendingModel ? (
-                <div className="model-variants">
-                  <button type="button" className="model-back" onClick={() => setPendingModel(null)}>
-                    ← {pendingModel.name ?? pendingModel.id}
-                  </button>
-                  <div className="model-variant-title">思考强度</div>
-                  <div className="model-variant-list">
-                    <button
-                      type="button"
-                      className={`model-variant-item${
-                        currentModel?.id === pendingModel.id &&
-                        currentModel.providerID === pendingModel.providerID &&
-                        (!currentModel.variant || currentModel.variant === 'default')
-                          ? ' active'
-                          : ''
-                      }`}
-                      onClick={() => chooseVariant(undefined)}
-                    >
-                      <span>默认</span>
-                      <span className="model-variant-id">default</span>
-                    </button>
-                    {(pendingModel.variants ?? []).map((variant) => {
-                      const isActive =
-                        currentModel?.id === pendingModel.id &&
-                        currentModel.providerID === pendingModel.providerID &&
-                        currentModel.variant === variant.id
-                      return (
-                        <button
-                          key={variant.id}
-                          type="button"
-                          className={`model-variant-item${isActive ? ' active' : ''}`}
-                          title={variant.id}
-                          onClick={() => chooseVariant(variant.id)}
-                        >
-                          <span>{variantLabel(variant.id)}</span>
-                          <span className="model-variant-id">{variant.id}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              ) : (
                 <>
                   <div className="model-filter-row">
                     <input
@@ -358,12 +319,7 @@ export default function ChatHeader({
                               hasVariants ? ' · 可选思考强度' : ''
                             }`}
                             onClick={() => {
-                              // 有档位的模型先进档位面板，选完档位再切换
-                              if (hasVariants) {
-                                setPendingModel(model)
-                                setFilter('')
-                                return
-                              }
+                              // 档位不再塞在模型里：这里只切模型，思考强度用右边独立下拉
                               onPickModel(model)
                               closeMenu()
                             }}
@@ -377,7 +333,61 @@ export default function ChatHeader({
                     )}
                   </div>
                 </>
-              )}
+            </div>
+          ) : null}
+        </div>
+
+        {/* 思考强度：独立下拉，只作用于当前模型。换模型后列表跟着新模型走。 */}
+        <div className="variant-picker" ref={variantsBox}>
+          <button
+            type="button"
+            className={`variant-toggle${variantsOpen ? ' open' : ''}`}
+            title={
+              active
+                ? variantList.length > 0
+                  ? `${active.name ?? active.id} 的思考强度`
+                  : `${active.name ?? active.id} 没有可选档位`
+                : '先选一个模型'
+            }
+            onClick={() => {
+              if (variantList.length === 0) return
+              setVariantsOpen((value) => !value)
+            }}
+            disabled={!active || variantList.length === 0}
+          >
+            <span className="variant-toggle-text">
+              思考：{variantId ? variantLabel(variantId) : '默认'}
+            </span>
+            <span className="model-toggle-caret">▾</span>
+          </button>
+          {variantsOpen && active ? (
+            <div className="variant-menu">
+              <button
+                type="button"
+                className={`variant-item${!variantId ? ' active' : ''}`}
+                onClick={() => {
+                  onPickVariant(active, undefined)
+                  setVariantsOpen(false)
+                }}
+              >
+                <span>默认</span>
+                <span className="model-variant-id">default</span>
+              </button>
+              {variantList.map((variant) => (
+                <button
+                  key={variant.id}
+                  type="button"
+                  className={`variant-item${variantId === variant.id ? ' active' : ''}`}
+                  title={variant.id}
+                  onClick={() => {
+                    onPickVariant(active, variant.id)
+                    setVariantsOpen(false)
+                  }}
+                >
+                  <span>{variantLabel(variant.id)}</span>
+                  <span className="model-variant-id">{variant.id}</span>
+                </button>
+              ))}
             </div>
           ) : null}
         </div>

@@ -242,6 +242,60 @@ body {
   flex: 1;
 }
 
+/* ---------- 自绘窗口按钮（最小化 / 最大化 / 关闭） ---------- */
+/* 窗口已经没有系统边框，这三个按钮就是唯一的窗口控制入口。
+   高度撑满顶栏、右侧贴住窗口边缘（负 margin 抵消顶栏的 12px 内边距）。 */
+.win-controls {
+  display: flex;
+  /* 顶栏高 32px、下边框 1px：按钮区正好占满剩下的 31px，
+     这样鼠标不用瞄准，也符合 Windows 标题栏按钮的手感。 */
+  height: 31px;
+  margin-left: 2px;
+  /* 负 margin 抵消顶栏 12px 右内边距，关闭按钮贴住窗口右边缘 */
+  margin-right: -12px;
+}
+
+.win-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition:
+    background var(--ease),
+    color var(--ease);
+}
+
+.win-control svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+}
+
+.win-control:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.win-control:active {
+  background: var(--bg-control);
+}
+
+/* 关闭按钮沿用 Windows 习惯：悬停红底白叉 */
+.win-close:hover {
+  background: #d33a2c;
+  color: #fff;
+}
+
+.win-close:active {
+  background: #b83024;
+  color: #fff;
+}
+
 /* ---------- 连接状态 ---------- */
 .status-dot {
   width: 6px;

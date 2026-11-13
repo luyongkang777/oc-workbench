@@ -1,6 +1,7 @@
 import { useState, type RefObject } from 'react'
 import type { FileStat } from '../api/localfs'
 import { formatBytes } from './codeWindow'
+import ViewZoomBar from './ViewZoomBar'
 
 type Props = {
   stat: FileStat
@@ -30,6 +31,13 @@ type Props = {
   /** 自动换行是否开启（长行折行显示）。 */
   wrap: boolean
   onWrap: () => void
+  /** 查看区缩放（只影响中栏，与整块界面缩放无关）。不传就不显示缩放条。 */
+  zoom?: number
+  onZoomIn?: () => void
+  onZoomOut?: () => void
+  onZoomReset?: () => void
+  /** 图片视图才有：缩到刚好放得下。 */
+  onZoomFit?: () => void
 }
 
 /** 编辑器顶部的文件信息条：大小 / 行数 / 编码 / 跳转 / 双击编辑 / 保存编码。 */
@@ -53,6 +61,11 @@ export default function CodeToolbar({
   onCancel,
   wrap,
   onWrap,
+  zoom,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  onZoomFit,
 }: Props) {
   const [jumpText, setJumpText] = useState('')
   const canJump = !stat.binary && stat.lineCount > 0 && mode === 'source' && !editing
@@ -185,6 +198,15 @@ export default function CodeToolbar({
             源码
           </button>
         </span>
+      ) : null}
+      {zoom !== undefined && onZoomIn && onZoomOut && onZoomReset ? (
+        <ViewZoomBar
+          zoom={zoom}
+          onZoomIn={onZoomIn}
+          onZoomOut={onZoomOut}
+          onReset={onZoomReset}
+          onFit={onZoomFit}
+        />
       ) : null}
     </div>
   )

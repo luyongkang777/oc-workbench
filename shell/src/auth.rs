@@ -717,44 +717,85 @@ fn probe_ready(base: &str) {
     }
 }
 
-fn trimmed(text: &str, start: usize) -> String {
-    let rest = &text[start..];
-    let end = rest
-        .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-        .unwrap_or(rest.len());
-    rest[..end].to_string()
+/// 把 `http://<主机>:<端口>/<路径>` 拆开，并把主机归一成可连的形式。
+///
+/// 不是 http URL、没有端口、端口不是纯数字一律 None。
+fn split_url(token: &str) -> Option<(String, String, String)> {
+    let token = token.trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';');
+    let rest = token.strip_prefix("http://")?;
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, String::new()),
+    };
+    let (host, port) = split_authority(authority)?;
+    Some((normalize_host(&host), port, path))
 }
 
-/// 从一段文本里截出一个 http://127.0.0.1:<port> 形式的地址。
+/// 拆分 authority，兼容 IPv6 字面量（`[::1]:4096`）。
+fn split_authority(authority: &str) -> Option<(String, String)> {
+    let (host, port) = match authority.strip_prefix('[') {
+        Some(rest) => {
+            let (host, tail) = rest.split_once(']')?;
+            (format!("[{host}]"), tail.strip_prefix(':')?)
+        }
+        None => {
+            let (host, port) = authority.rsplit_once(':')?;
+            (host.to_string(), port)
+        }
+    };
+    if host.is_empty() || port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some((host.to_string(), port.to_string()))
+}
+
+/// 通配地址、localhost、127.x 一律归一成 127.0.0.1。
+///
+/// 服务监听在 `0.0.0.0` 时回环必然通；把 `0.0.0.0` 当客户端目标用并不可靠。
+/// 绑在具体网卡地址上的服务（极少见）保留原地址，不自作主张改成回环。
+fn normalize_host(host: &str) -> String {
+    let lower = host.to_ascii_lowercase();
+    match lower.as_str() {
+        "0.0.0.0" | "::" | "[::]" | "[::1]" | "::1" | "localhost" => "127.0.0.1".to_string(),
+        _ if lower.starts_with("127.") => "127.0.0.1".to_string(),
+        _ => host.to_string(),
+    }
+}
+
+/// 从一段文本里截出第一个服务地址（`http://<主机>:<端口>`）。
+///
+/// 老实现只认字面量 `http://127.0.0.1:`。服务端配了 host 时 `service status`
+/// 会打印 `http://0.0.0.0:4096`（实测某台机器就是），于是永远解析不到地址，
+/// 面板卡在「服务已启动，但 150 秒内 service status 仍没有地址」。
 fn find_base(text: &str) -> Option<String> {
-    let start = text.find("http://127.0.0.1:")?;
-    let base = trimmed(text, start);
-    let base = base.trim_end_matches('/');
-    if base.len() > "http://127.0.0.1:".len() {
-        Some(base.to_string())
-    } else {
-        None
-    }
+    text.split_whitespace().find_map(|token| {
+        split_url(token).map(|(host, port, _path)| format!("http://{host}:{port}"))
+    })
 }
 
+/// 从 `opencode pair` 的输出里找配对链接。优先回环地址那一条。
+///
+/// v2.3.0 一次会打印多条（回环 + 各网卡地址），取回环那条发请求最稳。
 fn find_link(text: &str) -> Option<String> {
-    let start = text.find("http://127.0.0.1:")?;
-    let link = trimmed(text, start);
-    if link.contains("/auth/connect/") {
-        Some(link)
-    } else {
-        None
+    let mut fallback: Option<String> = None;
+    for token in text.split_whitespace() {
+        let Some((host, port, path)) = split_url(token) else {
+            continue;
+        };
+        if !path.contains("/auth/connect/") {
+            continue;
+        }
+        let link = format!("http://{host}:{port}{path}");
+        if host == "127.0.0.1" {
+            return Some(link);
+        }
+        fallback.get_or_insert(link);
     }
+    fallback
 }
 
 fn port_of(url: &str) -> Option<String> {
-    let after = url.strip_prefix("http://127.0.0.1:")?;
-    let port: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if port.is_empty() {
-        None
-    } else {
-        Some(port)
-    }
+    split_url(url).map(|(_, port, _path)| port)
 }
 
 pub fn discover() -> Result<Backend, String> {
@@ -806,7 +847,7 @@ fn discover_inner() -> Result<Backend, String> {
     }
     let base = find_base(&status).ok_or_else(|| {
         format!(
-            "`opencode service status` 输出里没有 http://127.0.0.1:<端口>：{}",
+            "`opencode service status` 输出里没有服务地址（http://<主机>:<端口>）：{}",
             snippet(&status, 200)
         )
     })?;
@@ -820,7 +861,7 @@ fn discover_inner() -> Result<Backend, String> {
     // 解析失败时**不回显 pair 原文**：那是一枚 5 分钟有效的一次性配对链接，
     // 不能因为格式变化就把它写进 gui-error.log（后台每 5 秒重试会反复写）。
     let link = find_link(&pair).ok_or_else(|| {
-        "`opencode pair` 输出里没有 127.0.0.1 的 /auth/connect/ 链接（原文已省略，避免配对链接落日志）"
+        "`opencode pair` 输出里没有 /auth/connect/ 配对链接（原文已省略，避免配对链接落日志）"
             .to_string()
     })?;
 
@@ -1105,5 +1146,59 @@ mod tests {
         assert_eq!(decode_console(&gbk), r"F:\tmp\测试目录\opencode.cmd");
         // 纯 ASCII（本机常见情况）走原样
         assert_eq!(decode_console(b"C:\\a\\opencode.cmd"), r"C:\a\opencode.cmd");
+    }
+
+    /// `service status` 打印的地址不一定是 127.0.0.1：服务端配了 host 时会打印
+    /// `http://0.0.0.0:4096`（实测某台机器就是这样），旧实现只认 `http://127.0.0.1:`，
+    /// 于是永远解析不到地址，白等 150 秒再报「仍没有地址」。
+    #[test]
+    fn find_base_accepts_wildcard_and_localhost() {
+        assert_eq!(
+            find_base("http://0.0.0.0:4096\n").as_deref(),
+            Some("http://127.0.0.1:4096")
+        );
+        assert_eq!(
+            find_base("http://127.0.0.1:28894\n").as_deref(),
+            Some("http://127.0.0.1:28894")
+        );
+        assert_eq!(
+            find_base("http://localhost:4096/\n").as_deref(),
+            Some("http://127.0.0.1:4096")
+        );
+        assert_eq!(
+            find_base("http://[::1]:4096\n").as_deref(),
+            Some("http://127.0.0.1:4096")
+        );
+        // 绑在具体网卡上的地址保留原样，不硬改成回环
+        assert_eq!(
+            find_base("http://10.10.10.36:4096\n").as_deref(),
+            Some("http://10.10.10.36:4096")
+        );
+        // 服务没跑时的写法
+        assert_eq!(find_base("stopped"), None);
+        assert_eq!(find_base(""), None);
+    }
+
+    /// `opencode pair` 一次打印多条链接（回环 + 各网卡），要挑回环那条。
+    #[test]
+    fn find_link_prefers_loopback_among_many() {
+        let text = "  http://10.10.10.36:4096/auth/connect/AAA\n  http://127.0.0.1:4096/auth/connect/BBB\n";
+        assert_eq!(
+            find_link(text).as_deref(),
+            Some("http://127.0.0.1:4096/auth/connect/BBB")
+        );
+        // 通配地址归一成回环后也能用
+        assert_eq!(
+            find_link("http://0.0.0.0:4096/auth/connect/CCC").as_deref(),
+            Some("http://127.0.0.1:4096/auth/connect/CCC")
+        );
+        assert_eq!(find_link("no link here"), None);
+    }
+
+    #[test]
+    fn port_of_accepts_any_host() {
+        assert_eq!(port_of("http://127.0.0.1:4096").as_deref(), Some("4096"));
+        assert_eq!(port_of("http://10.10.10.36:28894/").as_deref(), Some("28894"));
+        assert_eq!(port_of("http://nope"), None);
     }
 }

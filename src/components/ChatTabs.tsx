@@ -336,6 +336,7 @@ export default function ChatTabs({
           // 换标签就重挂载：每个标签各自的历史/滚动/草稿互不串
           key={`${root}:${activeTab.id}`}
           root={root}
+          tabID={activeTab.id}
           connected={connected}
           onOpenFile={onOpenFile}
           initialSessionID={activeTab.sessionID}

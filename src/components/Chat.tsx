@@ -6,6 +6,7 @@ import CompactLog from './CompactLogPanel'
 import MessageList from './MessageList'
 import QuestionForm from './QuestionForm'
 import { copyText } from './clipboard'
+import { recallSessionAgent, rememberSessionAgent, resolveSessionAgent } from './agentMemory'
 import {
   appendCompactRecord,
   clearCompactLog,
@@ -35,6 +36,17 @@ import {
   MAX_RAW_BYTES,
   type ChatAttachment,
 } from './attachments'
+import {
+  draftSignature,
+  draftKeyOf,
+  filesSignature,
+  fromStored,
+  isBlankDraftKey,
+  isDirtyDraft,
+  toStored,
+  DRAFT_SAVE_DELAY_MS,
+} from './draftState'
+import { clearDraft, loadDraft, saveDraft, type StoredDraft } from '../api/draft'
 import {
   cancelForm,
   compactSession,
@@ -70,6 +82,12 @@ import {
 
 type Props = {
   root: string
+  /**
+   * 这一格标签的 id。
+   * 只用于草稿键：会话还没建起来时，几个空标签需要一个互不相同的后缀，
+   * 否则同一个项目里的两个空标签会共用一份草稿，互相把字盖掉。
+   */
+  tabID?: string
   connected: boolean
   /** 聊天里点文件路径时，用中间栏打开（line 是 1 基行号） */
   onOpenFile: (path: string, line?: number) => void
@@ -126,6 +144,7 @@ const TITLE_BACKFILL_LIMIT = 6
 
 export default function Chat({
   root,
+  tabID,
   connected,
   onOpenFile,
   initialSessionID,
@@ -185,15 +204,192 @@ export default function Chat({
   // 都不能把他拽回底部；只有本来就贴底时才跟随新内容。
   const stickRef = useRef(true)
   const [atBottom, setAtBottom] = useState(true)
+  /**
+   * 草稿存取：按「项目 + 会话」各存一份，切换标签/项目、重开工作台都能拿回来。
+   *
+   * 以前这里是「切会话就丢掉待发送附件」，文字也从来没落过盘：切一下标签回来，
+   * 打了半天的字和截图全没了。现在切走前先把旧内容存下来，切回来再恢复。
+   *
+   * 两个坑必须防：
+   *   1. 恢复是异步的（要读盘）。用户切过来就开始打字时，晚到的空草稿不能把他
+   *      刚打的字冲掉 —— 用 userTouched 挡住。
+   *   2. 快速连切几个标签时先发出的 load 可能后回来 —— 用 generation 号挡。
+   */
+  const draftKey = draftKeyOf(root, currentID, tabID)
+  const prevKeyRef = useRef<string | null>(null)
+  /** 已经恢复完成的键：只有它等于当前键时，才允许把输入框内容回写到盘上。 */
+  const loadedKeyRef = useRef('')
+  const userTouchedRef = useRef(false)
+  const restoreGenRef = useRef(0)
+  const saveSigRef = useRef('')
+  /** 上一次写盘时的附件指纹：用它判断「这次要不要连图片一起发」。 */
+  const filesSigRef = useRef('')
+  const saveTimerRef = useRef<number | null>(null)
+  const pendingSaveRef = useRef<{ key: string; draft: StoredDraft; keepFiles: boolean } | null>(null)
+  /**
+   * 刚建出来的会话键：那一次恢复要直接跳过。
+   *
+   * ensureSession 会把空标签的草稿搬到新会话键上，紧接着 setCurrentID 触发下面的
+   * 恢复 effect——读到的正是刚准备发出去的文字，会在输入框里闪回来。标记一下，
+   * 让那次恢复保持现状，交给发送成功后的 setDraft('') 收尾。
+   */
+  const skipRestoreRef = useRef('')
+  const draftRef = useRef(draft)
+  draftRef.current = draft
 
-  // 切会话时丢掉待发送附件：图是给上一个会话准备的，带过去会发错地方
+  /** 把排队的写入立刻落地（切会话、卸载、关窗口前都要来一次）。 */
+  const flushDraft = useCallback(() => {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    const pending = pendingSaveRef.current
+    pendingSaveRef.current = null
+    if (!pending) return
+    void saveDraft(pending.key, pending.draft, { keepFiles: pending.keepFiles })
+  }, [])
+
+  /**
+   * 消息已经发出去了：把这条会话的草稿删掉。
+   *
+   * 必须连排队中的那次写入一起取消 —— 否则「清空」刚落地，200ms 前排队的
+   * 旧内容又写回去，下次切回来输入框里又冒出刚发过的文字。
+   */
+  const dropDraft = useCallback(
+    (key: string) => {
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+      pendingSaveRef.current = null
+      saveSigRef.current = ''
+      void clearDraft(key)
+    },
+    [],
+  )
+
+  /**
+   * 消息发出去了，输入框已经清空：把这条草稿从盘上删掉，同时做好善后。
+   *
+   * 必须让「在途的恢复」失效：建会话会让 draftKey 变，那次恢复还在路上，
+   * 回来时会把刚发出去的文字又塞回输入框。bump 一下 generation 就把它作废；
+   * 同时把当前键标成「已恢复」，否则后续打字不会再触发保存。
+   */
+  const markDraftCleared = useCallback(
+    (key: string) => {
+      dropDraft(key)
+      restoreGenRef.current += 1
+      loadedKeyRef.current = key
+      saveSigRef.current = draftSignature('', [])
+      filesSigRef.current = filesSignature([])
+    },
+    [dropDraft],
+  )
+
   useEffect(() => {
-    if (!currentID) return
-    const pending = attachmentsRef.current
-    if (pending.length === 0) return
-    pending.forEach(releaseAttachment)
-    setAttachments([])
-  }, [currentID])
+    const key = draftKey
+    const prevKey = prevKeyRef.current
+    prevKeyRef.current = key
+    const generation = ++restoreGenRef.current
+    // 先把排队中的那次写入落地（它自带旧键）：紧接着的恢复要读内存，
+    // 不落地就会读到盘上的旧内容——来回快速切会话时肉眼可见地回退。
+    flushDraft()
+    loadedKeyRef.current = ''
+    userTouchedRef.current = false
+    let alive = true
+    void (async () => {
+      const stored = await loadDraft(key)
+      if (!alive || generation !== restoreGenRef.current) return
+
+      // 刚搬过草稿的新会话键：内容已经在输入框里等着发送，别再读回来覆盖。
+      if (key === skipRestoreRef.current) {
+        skipRestoreRef.current = ''
+        const files = toStored(attachmentsRef.current)
+        loadedKeyRef.current = key
+        saveSigRef.current = draftSignature(draftRef.current, files)
+        filesSigRef.current = filesSignature(files)
+        return
+      }
+      // 会话是刚建出来的（标签占位键 → 真会话键）：把正在编辑的内容带过去。
+      // 这时发消息的结果还没回来，清空等于把用户没发出去的字吞掉。
+      // 只有「空标签 → 真会话」这一种切换才搬草稿；会话 A → 会话 B 必须各归各的，
+      // 否则 A 里打的字会被塞到 B 里（这是把条件写成「前缀相同」时踩到的坑）。
+      const fromBlankTab =
+        prevKey !== null && prevKey !== key && isBlankDraftKey(prevKey) && !isBlankDraftKey(key)
+      const carried = toStored(attachmentsRef.current)
+      if (!stored && fromBlankTab && isDirtyDraft(draftRef.current, carried)) {
+        loadedKeyRef.current = key
+        saveSigRef.current = draftSignature(draftRef.current, carried)
+        filesSigRef.current = filesSignature(carried)
+        await saveDraft(key, { text: draftRef.current, files: carried })
+        return
+      }
+
+      // 用户在恢复回来之前已经动手输入了：保留他的内容，并让他这次的输入
+      // 成为这份草稿（盘上旧的那份让位）。不清 loadedKey，否则之后打字都不再保存。
+      if (userTouchedRef.current) {
+        loadedKeyRef.current = key
+        saveSigRef.current = ''
+        pendingSaveRef.current = {
+          key,
+          draft: { text: draftRef.current, files: toStored(attachmentsRef.current) },
+          keepFiles: false,
+        }
+        flushDraft()
+        return
+      }
+      setDraft(stored?.text ?? '')
+      const restoredFiles = stored?.files ?? []
+      // 释放旧附件放在 updater 外：StrictMode 会把 updater 跑两遍，副作用不能进去。
+      attachmentsRef.current.forEach(releaseAttachment)
+      const idBase = Date.now()
+      setAttachments(
+        stored ? fromStored(stored.files, (index) => `att-restore-${idBase}-${index}`) : [],
+      )
+      loadedKeyRef.current = key
+      saveSigRef.current = draftSignature(stored?.text ?? '', restoredFiles)
+      filesSigRef.current = filesSignature(restoredFiles)
+    })()
+    return () => {
+      alive = false
+    }
+  }, [draftKey, root])
+
+  // 输入框变了就排队写盘：200ms 合并一次，别每敲一个键都发一个请求。
+  // 附件没变时只发文字（keepFiles）：截图 base64 有几 MB，打字时重传太浪费。
+  useEffect(() => {
+    if (loadedKeyRef.current !== draftKey) return
+    const files = toStored(attachments)
+    const signature = draftSignature(draft, files)
+    if (signature === saveSigRef.current) return
+    const filesChanged = filesSigRef.current !== filesSignature(files)
+    saveSigRef.current = signature
+    filesSigRef.current = filesSignature(files)
+    userTouchedRef.current = true
+    pendingSaveRef.current = { key: draftKey, draft: { text: draft, files }, keepFiles: !filesChanged }
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null
+      flushDraft()
+    }, DRAFT_SAVE_DELAY_MS)
+  }, [draft, attachments, draftKey, flushDraft])
+
+  // 关窗口 / 切标签（Chat 卸载）时把还在队列里的那次写入落地
+  useEffect(() => () => flushDraft(), [flushDraft])
+
+  // 页面被隐藏（最小化、切到别的应用）时也落一次：窗口被直接关掉时
+  // 卸载回调不一定来得及跑，visibilitychange 是最后一道保险。
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') flushDraft()
+    }
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('beforeunload', flushDraft)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('beforeunload', flushDraft)
+    }
+  }, [flushDraft])
 
   const modelsApi = useChatModels(root, connected)
   const purgeApi = usePurge(connected)
@@ -652,6 +848,18 @@ export default function Chat({
     try {
       const session = await createSession(root, undefined, modelsApi.model ?? undefined)
       setSessions((prev) => [session, ...prev])
+      // 先把「空标签」这份草稿搬到真会话键上，再切 currentID：
+      // 上面那个恢复 effect 会用新键去读，读不到就会把输入框清空。
+      const carriedText = draftRef.current
+      const carriedFiles = toStored(attachmentsRef.current)
+      if (isDirtyDraft(carriedText, carriedFiles)) {
+        await saveDraft(draftKeyOf(root, session.id, tabID), {
+          text: carriedText,
+          files: carriedFiles,
+        })
+      }
+      // 这一次恢复不是「切会话」，是「把当前内容搬进新会话」：跳过读回。
+      skipRestoreRef.current = draftKeyOf(root, session.id, tabID)
       setCurrentID(session.id)
       currentRef.current = session.id
       return session.id
@@ -806,6 +1014,8 @@ export default function Chat({
     try {
       await switchAgent(sessionID, id)
       setAgent(id)
+      // 记到本地：切标签重挂载后服务端会话数据可能还没轮询回来，先用这份兜底
+      rememberSessionAgent(sessionID, id)
       await reloadMessages(sessionID)
     } catch (err) {
       setError((err as Error).message)
@@ -854,12 +1064,14 @@ export default function Chat({
   async function send() {
     const text = draft.trim()
     const files = attachments
+    // 发送前记下草稿键：建会话会让 currentID 变成新 id，事后算会算错键、
+    // 把旧内容留在盘上，切回来又是这条已经发出去的文字。
+    const keyAtSend = draftKey
     // 生成中不发送：界面上只有「停止」，按 Enter 也不该偷偷追加 steer
     if ((!text && files.length === 0) || busy || runningApi.running) return
     setError(null)
     // 用户已经继续往下走了：上一条压缩结果提示让位
     setNotice(null)
-
     // 斜杠命令只处理纯文本：带附件时按普通消息发，别把图片丢给 /command
     const parsed = files.length === 0 ? parseSlash(text) : null
     if (parsed) {
@@ -873,6 +1085,7 @@ export default function Chat({
         return
       }
       if (command?.builtin) {
+        markDraftCleared(keyAtSend)
         setDraft('')
         await runBuiltin(command.builtin)
         return
@@ -880,6 +1093,8 @@ export default function Chat({
       if (command?.group === 'server') {
         const sessionID = await ensureSession()
         if (!sessionID) return
+        markDraftCleared(keyAtSend)
+        markDraftCleared(draftKeyOf(root, sessionID, tabID))
         setDraft('')
         setBusy(true)
         try {
@@ -906,6 +1121,9 @@ export default function Chat({
         name: file.name,
       }))
       await sendPrompt(sessionID, text, promptFiles)
+      // 会话是刚建的：占位键和真会话键都清掉（建会话那一下会把草稿搬到新键上）
+      markDraftCleared(keyAtSend)
+      markDraftCleared(draftKeyOf(root, sessionID, tabID))
       setDraft('')
       files.forEach(releaseAttachment)
       setAttachments([])
@@ -1078,6 +1296,27 @@ export default function Chat({
     ? sessions.filter((session) => !isWorkbenchTerminal(session))
     : ownSessions
 
+  /**
+   * 每条会话恢复它自己的模式。
+   *
+   * Chat 是按标签 key 挂载的：切走再切回来 agent 会回到空串、显示成第一个 agent（build），
+   * 而服务端那条会话还在 ask/plan/debug 上跑。这里在会话数据到手后恢复一次；
+   * syncedAgentRef 记住已经同步过哪条，之后用户手动换模式不会被抢回去。
+   */
+  const syncedAgentRef = useRef('')
+  useEffect(() => {
+    if (!currentID) {
+      syncedAgentRef.current = ''
+      setAgent('')
+      return
+    }
+    // 会话数据还没到：先别把 agent 写成空串，等 current 出现再同步
+    if (current?.id !== currentID) return
+    if (syncedAgentRef.current === currentID) return
+    syncedAgentRef.current = currentID
+    setAgent(resolveSessionAgent(current.agent, recallSessionAgent(currentID)))
+  }, [currentID, current])
+
   // 把当前会话信息报给标签栏：子会话不在轮询列表里，标题和灯只能从这儿来
   useEffect(() => {
     if (current) onSessionInfo?.(current)
@@ -1207,13 +1446,23 @@ export default function Chat({
         commands={commands}
         agents={agents}
         attachments={attachments}
-        onDraftChange={setDraft}
+        // 用户一动手就标记：恢复还没回来时，不能让盘上的旧草稿盖掉他刚打的字
+        onDraftChange={(value) => {
+          userTouchedRef.current = true
+          setDraft(value)
+        }}
         onSend={() => void send()}
         onStop={() => void stop()}
         onBuiltin={(name) => void runBuiltin(name)}
         onPickAgent={(id) => void pickAgent(id)}
-        onAddFiles={(files) => void addFiles(files)}
-        onRemoveAttachment={removeAttachment}
+        onAddFiles={(files) => {
+          userTouchedRef.current = true
+          void addFiles(files)
+        }}
+        onRemoveAttachment={(id) => {
+          userTouchedRef.current = true
+          removeAttachment(id)
+        }}
         footer={<SessionStatsBar stats={stats} />}
       />
     </div>

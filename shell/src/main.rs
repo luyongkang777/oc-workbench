@@ -14,6 +14,7 @@
 mod auth;
 mod body;
 mod cli;
+mod draft;
 mod fetch;
 mod fsapi;
 mod fsdecode;
@@ -45,6 +46,8 @@ use tao::dpi::{LogicalSize, PhysicalPosition as TaoPosition, PhysicalSize as Tao
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::WindowBuilder;
+#[cfg(windows)]
+use tao::platform::windows::WindowExtWindows;
 use wry::dpi::{PhysicalPosition, PhysicalSize, Position, Size};
 use wry::{Rect, WebViewBuilder};
 #[cfg(debug_assertions)]
@@ -153,8 +156,11 @@ fn run() -> Result<(), String> {
     let initial_logical = initial.logical;
     let auto_logical = initial.auto;
 
+    // 自绘标题栏：去掉系统边框，最小化/最大化/关闭由前端顶栏画。
+    // tao 在 Windows 上会保留 WS_THICKFRAME，所以边缘拖拽改大小仍然可用。
     let mut window_builder = WindowBuilder::new()
         .with_title(APP_TITLE)
+        .with_decorations(false)
         .with_inner_size(TaoSize::new(initial.physical.0, initial.physical.1))
         .with_min_inner_size(LogicalSize::new(WINDOW_MIN_PX.0, WINDOW_MIN_PX.1));
     if let Some((x, y)) = initial.position {
@@ -163,6 +169,9 @@ fn run() -> Result<(), String> {
     let window = window_builder
         .build(&event_loop)
         .map_err(|e| format!("创建窗口失败：{e}"))?;
+    // 无边框窗口补一层系统阴影，不然和桌面糊在一起，看着像没有窗口边界。
+    #[cfg(windows)]
+    window.set_undecorated_shadow(true);
 
     // token 由 main 生成，同时给本地服务和 IPC（页面加载后经 'oc:auth' 索取）。
     let token = server::new_token();
@@ -176,6 +185,10 @@ fn run() -> Result<(), String> {
     // 事件循环会永远停在 GetMessageW 上（实测 ResumeTimeReached 一次都不来）。
     let pending: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let ipc_queue = pending.clone();
+    // 自绘标题栏发来的窗口命令（最小化/最大化/关闭/拖动）。同样只入队，
+    // 真正调 tao 窗口 API 的地方在主循环——IPC 回调里拿不到 window 的移动权。
+    let win_queue: Rc<RefCell<Vec<WinCmd>>> = Rc::new(RefCell::new(Vec::new()));
+    let win_queue_ipc = win_queue.clone();
     // 跨线程回执：打开链接在子线程做，失败消息经这里回主循环下发页面。
     let failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     // ipc_handler 和主循环是两个独立 move 闭包，各持一份 Arc。
@@ -213,6 +226,23 @@ fn run() -> Result<(), String> {
                 return;
             }
             let body = request.body().trim().to_string();
+            if let Some(raw) = body.strip_prefix("oc:win-") {
+                let cmd = match raw {
+                    "minimize" => Some(WinCmd::Minimize),
+                    "toggle-maximize" => Some(WinCmd::ToggleMaximize),
+                    "close" => Some(WinCmd::Close),
+                    "drag" => Some(WinCmd::Drag),
+                    _ => None,
+                };
+                match cmd {
+                    Some(cmd) => {
+                        win_queue_ipc.borrow_mut().push(cmd);
+                        let _ = proxy.send_event(());
+                    }
+                    None => append_log(&format!("[ipc] 未知窗口命令 oc:win-{raw}\n")),
+                }
+                return;
+            }
             if let Some(url) = body.strip_prefix("oc:open-url:") {
                 // 页面里的链接不直接导航：wry 会取消新窗口请求，导航器又只放行本站。
                 // 统一交给系统默认浏览器打开。open::that 在 Windows 上会跑 PowerShell
@@ -317,6 +347,8 @@ fn run() -> Result<(), String> {
     let size = window.inner_size();
     let _ = webview.set_bounds(view_rect(size.width, size.height));
 
+    // 上一次报给页面的最大化状态：只有变化时才 evaluate，避免 resize 期间刷屏。
+    let mut last_maximized = false;
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::WindowEvent {
@@ -334,9 +366,29 @@ fn run() -> Result<(), String> {
             } => {
                 // 窗口大小变化时 WebView 不会自己跟，必须手动 set_bounds。
                 let _ = webview.set_bounds(view_rect(size.width, size.height));
+                // 最大化/还原也会走到这里：顺手把标题栏按钮图标换过来。
+                sync_maximized_state(&webview, &window, &mut last_maximized);
             }
             // IPC handler 用 EventLoopProxy 发来的唤醒信号。
             Event::UserEvent(()) => {
+                // 窗口命令先处理：拖动要在用户的鼠标还按着的时候立刻进系统拖动循环。
+                for cmd in win_queue.borrow_mut().drain(..) {
+                    match cmd {
+                        WinCmd::Minimize => window.set_minimized(true),
+                        WinCmd::ToggleMaximize => window.set_maximized(!window.is_maximized()),
+                        WinCmd::Drag => {
+                            if let Err(err) = window.drag_window() {
+                                append_log(&format!("[ipc] 拖动窗口失败：{err}\n"));
+                            }
+                        }
+                        WinCmd::Close => {
+                            remember_window_size(&window, initial_logical, auto_logical);
+                            *control_flow = ControlFlow::Exit;
+                            return;
+                        }
+                    }
+                }
+                sync_maximized_state(&webview, &window, &mut last_maximized);
                 drain_ipc(&webview, &pending);
                 if let Ok(mut list) = failures.lock() {
                     let items: Vec<String> = list.drain(..).collect();
@@ -579,6 +631,31 @@ fn window_memory_decision(
         return WindowMemory::Clear;
     }
     WindowMemory::Save
+}
+
+/// 前端自绘标题栏发来的窗口命令。只允许这四件事，页面拿不到任意窗口操作。
+#[derive(Clone, Copy)]
+enum WinCmd {
+    Minimize,
+    ToggleMaximize,
+    Close,
+    Drag,
+}
+
+/// 最大化状态变化时告诉页面，前端据此在「最大化」和「还原」图标之间切换。
+fn sync_maximized_state(
+    webview: &wry::WebView,
+    window: &tao::window::Window,
+    last: &mut bool,
+) {
+    let maxed = window.is_maximized();
+    if maxed == *last {
+        return;
+    }
+    *last = maxed;
+    let _ = webview.evaluate_script(&format!(
+        "window.__ocWinState && window.__ocWinState({maxed});"
+    ));
 }
 
 /// 关窗时记住用户拖出来的尺寸，下次启动沿用（再按当时屏幕夹一次）。

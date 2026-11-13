@@ -77,6 +77,90 @@
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
+  position: relative;
+  /* 右侧给缩放控件留固定位置：它是「被裁掉就没法用」的入口，不能被别的信息挤掉 */
+  padding-right: 152px;
+}
+
+/* 查看区缩放：− 100% + 适应。只影响中栏，不动整块界面（整块缩放见 useUiLayout）。 */
+.view-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding-left: 10px;
+  background: var(--bg-1);
+}
+
+.view-zoom-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.view-zoom-btn:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+.view-zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.view-zoom-value {
+  min-width: 40px;
+  height: 18px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+/* 非 100% 时高亮，让人一眼看出「现在是放大状态，不是显示 bug」 */
+.view-zoom-value.active {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
+.view-zoom-value:hover {
+  background: var(--bg-hover);
+}
+
+.view-zoom-fit {
+  height: 18px;
+  padding: 0 8px;
+  margin-left: 2px;
+  font-size: 11px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.view-zoom-fit:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
 }
 
 .editor-toolbar-spacer {
@@ -1320,21 +1404,29 @@
   line-height: 1.6;
 }
 
+/* 图片：按真实像素铺开，放大后靠容器滚动查看。
+   居中不能用 flex（内容比容器大时 flex 居中会裁掉左上角，滚动条到不了图片起点），
+   改用 margin:auto + 内层 min-width/height:100%。 */
 .editor-image {
   flex: 1;
   min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: auto;
   padding: 16px;
   background: var(--bg-0);
 }
 
+.editor-image-inner {
+  display: flex;
+  min-width: 100%;
+  min-height: 100%;
+}
+
 .editor-image img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  /* 不能留 max-width/max-height:100%：那会把图永远压回容器大小，放大了也看不出变化 */
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  display: block;
   background: var(--bg-2);
 }
 

@@ -40,6 +40,8 @@ type Props = {
   /** 工作区根目录与当前文件（相对 root），用来索引同目录符号与 import 路径 */
   root?: string
   path?: string
+  /** 查看区缩放：整块按此比例渲染（行高/补全浮层坐标都用布局像素，见 viewZoom.ts）。 */
+  zoom?: number
 }
 
 type Popup = {
@@ -63,7 +65,16 @@ const EMPTY_INDEX: WorkspaceIndex = { entries: [], symbols: [] }
  * 补全：本地符号 + 同目录符号 + 关键字 + import 路径，Tab/Enter 接受、Esc 关闭、
  * Ctrl+Space 手动叫出。不依赖语言服务器，跨语言都能用。
  */
-export default function CodeEditor({ text, onChange, onSave, onCancel, saving, root, path = '' }: Props) {
+export default function CodeEditor({
+  text,
+  onChange,
+  onSave,
+  onCancel,
+  saving,
+  root,
+  path = '',
+  zoom = 1,
+}: Props) {
   const areaRef = useRef<HTMLTextAreaElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -336,7 +347,7 @@ export default function CodeEditor({ text, onChange, onSave, onCancel, saving, r
   }, [popup])
 
   return (
-    <div className="code-edit" ref={wrapRef}>
+    <div className="code-edit" ref={wrapRef} style={zoom !== 1 ? { zoom } : undefined}>
       <div className="code-edit-gutter" aria-hidden="true">
         {numbers.map((line) => (
           <div
