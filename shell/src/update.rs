@@ -260,15 +260,30 @@ pub fn source() -> Option<String> {
     resolve_source(env.as_deref(), &load_settings())
 }
 
+/// 建一个带 TLS 的 agent。
+///
+/// ureq 的 `native-tls` feature 只是提供了 `impl TlsConnector for native_tls::TlsConnector`，
+/// **不会自动装进 Agent**：不显式传，HTTPS 一律报 "cannot make HTTPS request because
+/// no TLS backend is configured"（这个问题只有在第一次访问 https 时才会暴露）。
+fn build_agent(overall: Duration, read: Option<Duration>) -> Result<ureq::Agent, String> {
+    let connector = native_tls::TlsConnector::new()
+        .map_err(|err| format!("初始化 TLS 连接器失败：{err}"))?;
+    let mut builder = ureq::AgentBuilder::new()
+        .tls_connector(std::sync::Arc::new(connector))
+        .timeout_connect(CONNECT_TIMEOUT)
+        .timeout(overall);
+    if let Some(read) = read {
+        builder = builder.timeout_read(read);
+    }
+    Ok(builder.build())
+}
+
 /// 拉清单。只接受 http/https，避免被 settings 里塞进 file:// 之类的路径。
 pub fn fetch_manifest(source_url: &str) -> Result<Manifest, String> {
     if !is_http_url(source_url) {
         return Err(format!("更新源只支持 http/https：{source_url}"));
     }
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout(MANIFEST_TIMEOUT)
-        .build();
+    let agent = build_agent(MANIFEST_TIMEOUT, None)?;
     let response = agent
         .get(source_url)
         .set("cache-control", "no-cache")
@@ -379,10 +394,7 @@ pub fn download(manifest: &Manifest, dir: &Path) -> Result<PathBuf, String> {
     let part_path = dir.join(format!("oc-workbench-{safe_version}.exe.part"));
     let _ = fs::remove_file(&part_path);
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout_read(READ_TIMEOUT)
-        .build();
+    let agent = build_agent(Duration::from_secs(300), Some(READ_TIMEOUT))?;
     let response = agent.get(&manifest.url).call().map_err(|err| match err {
         ureq::Error::Status(code, _) => format!("下载失败：HTTP {code}"),
         other => format!("下载失败：{other}"),

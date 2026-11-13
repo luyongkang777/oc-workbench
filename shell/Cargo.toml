@@ -1,6 +1,6 @@
 [package]
 name = "oc-workbench-shell"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "OpenCode 工作台桌面外壳（tao + wry / WebView2）"
 publish = false
@@ -15,6 +15,10 @@ wry = "0.57"
 serde_json = "1"
 tiny_http = "0.12"
 ureq = { version = "2", default-features = false, features = ["native-tls", "json"] }
+# ureq 的 native-tls feature 只提供「impl TlsConnector」，不会自动装进 Agent——
+# 不显式传 connector 时 HTTPS 会直接报 "no TLS backend is configured"。
+# 显式用 Windows 证书库（schannel），比内置 webpki 根证书更适配企业代理。
+native-tls = "0.2"
 include_dir = "0.7"
 rfd = "0.15"
 open = "5"

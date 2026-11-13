@@ -73,6 +73,27 @@ npm.cmd run release     # 产出 exe + README.txt + SHA256SUMS.txt + latest.json
 
 把 `latest.json` 和 exe 传到同一个目录，客户端更新源指向 `latest.json` 即可。
 
+### 发布到 GitHub
+
+仓库：<https://github.com/luyongkang777/oc-workbench>（公开）。更新走 Release 资产，
+**不用 `api.github.com`**——没有匿名限流，客户端也不需要带 token：
+
+```
+https://github.com/luyongkang777/oc-workbench/releases/latest/download/latest.json
+```
+
+发一个新版本：
+
+```powershell
+npm.cmd run build:exe
+$env:OC_WORKBENCH_GITHUB = "luyongkang777/oc-workbench"
+npm.cmd run release     # 生成 exe / README / SHA256SUMS / latest.json（url 指向本次 tag）
+```
+
+然后把三个资产传进新 tag 的 release：`oc-workbench-<版本>-win64.exe`、`latest.json`、
+`oc-workbench-<版本>-win64.zip`。`releases/latest/download` 会自动指向最新那一份，
+老客户端下次检查就能看到更新。
+
 ## 开发
 
 ```powershell
