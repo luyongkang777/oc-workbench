@@ -1,6 +1,3 @@
-- 在线更新默认走 GitHub Release（releases/latest/download 别名，无 API 限流、无需 token）
-- 修复 HTTPS 拉取：ureq 的 native-tls 特性需要显式注入连接器，否则一直报「no TLS backend is configured」
-- 更新流程：下载 → 校验体积/SHA256/MZ → 外部脚本重试覆盖 → 自动重启（旧版留 .bak）
-- opencode 定位改为多路径（环境变量 → PATH → .local\bin / .opencode\bin / npm 全局 / exe 同目录）
-- 首次启动改为「选择项目」页，不再依赖写死的开发目录
-- 连不上后端时直接显示具体原因；日志改到 %LOCALAPPDATA%\oc-workbench\gui-error.log
+- 发版自动化：打 tag（如 v1.1.2）自动跑测试 → 构建 exe → 生成 latest.json → 发布 Release
+- tag 与 package.json 版本不一致时流水线直接失败，避免发出对不上号的包
+- 客户端默认更新源仍是 releases/latest/download 别名，新版本发布后老客户端自动可见

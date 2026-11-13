@@ -1,0 +1,92 @@
+name: release
+
+# 打 tag 即发版：构建 exe → 出 latest.json → 传成 Release 资产。
+# 客户端默认更新源指向 releases/latest/download/latest.json，所以这里产出的东西
+# 只要传上去，所有已装的客户端下次检查就能看到新版本。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # tag 和 package.json 必须一致，否则打出来的包版本号和 tag 对不上，
+      # 客户端会一直「已是最新」或者反复提示同一个版本。
+      - name: 校验版本号
+        id: ver
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($tag -ne $version) {
+            Write-Error "tag $env:GITHUB_REF_NAME 与 package.json ($version) 不一致"
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shell
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 前端测试
+        run: npm test
+
+      # 用 --release 跑：后面 build:exe 也是 release，依赖只编一次。
+      - name: 外壳测试
+        working-directory: shell
+        run: cargo test --release
+
+      - name: 构建 exe（含"前端真的嵌进去了"核对）
+        run: npm run build:exe
+
+      - name: 出发布包与清单
+        env:
+          OC_WORKBENCH_GITHUB: ${{ github.repository }}
+        run: npm run release
+
+      # 资产名必须是 oc-workbench-<版本>-win64.exe：latest.json 里的 url 就指向它。
+      - name: 规整资产文件名
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.ver.outputs.version }}'
+          Copy-Item "release/oc-workbench-$ver-win64/oc-workbench.exe" "release/oc-workbench-$ver-win64.exe"
+
+      - name: 发布 Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ver = '${{ steps.ver.outputs.version }}'
+          gh release create $env:GITHUB_REF_NAME `
+            "release/oc-workbench-$ver-win64.exe" `
+            "release/latest.json" `
+            "release/oc-workbench-$ver-win64.zip" `
+            --title "OpenCode 工作台 $env:GITHUB_REF_NAME" `
+            --notes-file RELEASE_NOTES.md
+
+      - name: 回读发布结果
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release view $env:GITHUB_REF_NAME
