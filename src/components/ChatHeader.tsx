@@ -11,11 +11,14 @@ import ContextMeter from './ContextMeter'
 import PurgeToggle from './PurgeToggle'
 import type { PurgeController } from '../hooks/usePurge'
 import { formatClock, formatDateTime } from './turns'
+import { sessionLight, sessionLightTitle, type SessionLike } from './sessionLight'
 
 type ModelKey = { id: string; providerID: string; variant?: string }
 
 type Props = {
   sessions: SessionInfo[]
+  /** 会话 id → 最新 busy/idle 快照，用来点亮每一条的状态灯 */
+  lights?: Map<string, SessionLike>
   current: SessionInfo | undefined
   expanded: boolean
   models: ModelInfo[]
@@ -34,6 +37,10 @@ type Props = {
   onToggleSessions: () => void
   onPickSession: (id: string) => void
   onNewSession: () => void
+  /** 在新面板里打开这条会话（分屏），不传就不显示按钮 */
+  onOpenInPanel?: (id: string) => void
+  /** 已经开在别的面板里的会话 id：列表里标一下，免得重复开 */
+  panelIDs?: Set<string>
   onPickModel: (model: ModelInfo) => void
   /** 选模型 + 思考强度；variant 为空 = 该模型默认档位 */
   onPickVariant: (model: ModelInfo, variant: string | undefined) => void
@@ -49,6 +56,8 @@ type Props = {
   }
   /** 破甲注入开关；不传就不显示（终端等场景用不到） */
   purge?: PurgeController
+  /** 窄列模式（分屏列）：文字按钮收成图标，把宽度让给会话标题和模型名 */
+  compact?: boolean
 }
 
 export function shortTitle(session: SessionInfo): string {
@@ -80,6 +89,7 @@ export function variantLabel(id: string): string {
 
 export default function ChatHeader({
   sessions,
+  lights,
   current,
   expanded,
   models,
@@ -95,6 +105,8 @@ export default function ChatHeader({
   onToggleSessions,
   onPickSession,
   onNewSession,
+  onOpenInPanel,
+  panelIDs,
   onPickModel,
   onPickVariant,
   hiddenCount,
@@ -102,6 +114,7 @@ export default function ChatHeader({
   onToggleShowAll,
   context,
   purge,
+  compact,
 }: Props) {
   const [modelsOpen, setModelsOpen] = useState(false)
   const [modesOpen, setModesOpen] = useState(false)
@@ -170,6 +183,10 @@ export default function ChatHeader({
     closeMenu()
   }
 
+  const currentLight = current
+    ? sessionLight(lights?.get(current.id) ?? current, connected)
+    : 'unknown'
+
   return (
     <>
       <div className="chat-header">
@@ -179,7 +196,10 @@ export default function ChatHeader({
           onClick={onToggleSessions}
           title="切换会话"
         >
-          {current ? shortTitle(current) : '会话'} ▾
+          <span className={`chat-session-light ${currentLight}`} aria-hidden="true" />
+          <span className="chat-session-toggle-text">
+            {current ? shortTitle(current) : '会话'} ▾
+          </span>
         </button>
 
         <div className="mode-picker" ref={modesBox}>
@@ -353,6 +373,7 @@ export default function ChatHeader({
         <button type="button" className="chat-new" onClick={onNewSession} disabled={!connected}>
           + 新会话
         </button>
+
       </div>
 
       {expanded ? (
@@ -362,17 +383,38 @@ export default function ChatHeader({
           ) : (
             sessions.map((session) => {
               const at = sessionLastAt(session)
+              const light = sessionLight(lights?.get(session.id) ?? session, connected)
+              const opened = panelIDs?.has(session.id) ?? false
               return (
-                <button
+                <div
                   key={session.id}
-                  type="button"
                   className={`chat-session-item${session.id === current?.id ? ' active' : ''}`}
-                  title={at ? `最后一次对话 ${formatDateTime(at)}` : undefined}
-                  onClick={() => onPickSession(session.id)}
                 >
-                  <span className="chat-session-title">{shortTitle(session)}</span>
+                  <button
+                    type="button"
+                    className="chat-session-main"
+                    title={`${sessionLightTitle(light)}${
+                      at ? `\n最后一次对话 ${formatDateTime(at)}` : ''
+                    }${opened ? '\n已在并排面板中打开' : ''}`}
+                    onClick={() => onPickSession(session.id)}
+                  >
+                    <span className={`chat-session-light ${light}`} aria-hidden="true" />
+                    <span className="chat-session-title">{shortTitle(session)}</span>
+                  </button>
                   {at ? <span className="chat-session-time">{formatClock(at)}</span> : null}
-                </button>
+                  {onOpenInPanel ? (
+                    <button
+                      type="button"
+                      className="chat-session-split"
+                      title={opened ? '已在并排面板中' : '在并排面板中打开'}
+                      aria-label={opened ? '已在并排面板中' : '在并排面板中打开'}
+                      disabled={opened}
+                      onClick={() => onOpenInPanel(session.id)}
+                    >
+                      ⧉
+                    </button>
+                  ) : null}
+                </div>
               )
             })
           )}

@@ -37,6 +37,22 @@ export function cliStateLabel(status: CliStatus | null): string {
   return `v${status.version}`
 }
 
+/**
+ * 「版本读取失败」时给人看的原因，正常情况返回 null。
+ *
+ * 状态行那句「已安装，版本读取失败」不带原因，用户没法判断是装错版本、
+ * 还是路径定位到了跑不起来的包装脚本。这里只挑最常见的一种给出可操作的话，
+ * 其余原样透出后端原因（不替它编）。
+ */
+export function cliVersionHint(status: CliStatus | null): string | null {
+  if (!status || !status.installed || status.version) return null
+  const reason = status.error ?? ''
+  if (/193|Win32/i.test(reason)) {
+    return '定位到的不是可执行文件（可能是 npm 的脚本包装），点下面的按钮装成 .exe 即可'
+  }
+  return reason || null
+}
+
 /** 主按钮能不能点。装/更新中、或者当前平台不支持时都不能点。 */
 export function cliCanInstall(status: CliStatus | null): boolean {
   if (!status) return false

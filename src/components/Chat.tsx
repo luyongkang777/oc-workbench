@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { SessionLike } from './sessionLight'
 import ChatHeader from './ChatHeader'
 import ChatInput from './ChatInput'
 import CompactLog from './CompactLogPanel'
@@ -72,6 +73,26 @@ type Props = {
   connected: boolean
   /** 聊天里点文件路径时，用中间栏打开（line 是 1 基行号） */
   onOpenFile: (path: string, line?: number) => void
+  /** 一进来就打开这条会话：标签栏靠它带着指定会话启动 */
+  initialSessionID?: string
+  /**
+   * 没有 initialSessionID 时要不要自动挑一条最近的会话。
+   * 默认要（首次进入工作台得有内容）；标签栏里「+ 新标签」那种空槽位传 false，
+   * 否则会自动绑到最近那条会话，和已有的标签指向同一个。
+   */
+  autoPickSession?: boolean
+  /** 会话 id → 最新 busy/idle 快照，用来点亮列表和标题上的状态灯 */
+  lights?: Map<string, SessionLike>
+  /** 把某条会话开进标签栏；不传就不显示「开成标签」入口 */
+  onOpenInPanel?: (id: string) => void
+  /** 已经开在标签里的会话 id：列表里标灰、按钮禁用 */
+  panelIDs?: Set<string>
+  /** 当前会话变了（含自动建会话）：主界面靠它知道该列谁的子智能体 */
+  onSessionChange?: (sessionID: string | null) => void
+  /** 当前会话的信息（哪怕它不在本目录顶层列表里）：标签栏靠它显示标题和灯 */
+  onSessionInfo?: (session: SessionInfo) => void
+  /** 当前会话是否在生成：子会话不在轮询列表里，标签灯靠这个兜底 */
+  onSessionRunning?: (sessionID: string, running: boolean) => void
 }
 
 /**
@@ -99,9 +120,26 @@ const TITLE_POLL_TRIES = 18
 /** 一次加载最多给几条历史会话补名字：每个都要翻消息，别在首屏一次开一堆请求。 */
 const TITLE_BACKFILL_LIMIT = 6
 
-export default function Chat({ root, connected, onOpenFile }: Props) {
+export default function Chat({
+  root,
+  connected,
+  onOpenFile,
+  initialSessionID,
+  autoPickSession = true,
+  lights,
+  onOpenInPanel,
+  panelIDs,
+  onSessionChange,
+  onSessionInfo,
+  onSessionRunning,
+}: Props) {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
-  const [currentID, setCurrentID] = useState<string | null>(null)
+  const [currentID, setCurrentID] = useState<string | null>(initialSessionID ?? null)
+  /**
+   * 子会话（子智能体）不在顶层会话列表里，按 id 补查到的信息放这里。
+   * 顶部标题和标签栏都靠它，否则点进子智能体会显示成「会话 / 新会话」。
+   */
+  const [extraSession, setExtraSession] = useState<SessionInfo | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -133,6 +171,11 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
   attachmentsRef.current = attachments
   currentRef.current = currentID
   sessionsRef.current = sessions
+  // 上报当前会话：主界面的子智能体面板靠它知道该列谁的子孙。
+  // 回调每次渲染都可能是新函数，不进依赖，只在会话 id 变化时通知。
+  useEffect(() => {
+    onSessionChange?.(currentID)
+  }, [currentID])
 
   // 是否「贴着底部」。用户往上翻看历史后，任何一次刷新（会话重拉、流式追加）
   // 都不能把他拽回底部；只有本来就贴底时才跟随新内容。
@@ -383,6 +426,9 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
   // 连上（或 root 变化触发重挂载）时拉本目录的会话列表。
   // 不用 booted 守卫：StrictMode 会把 effect 跑两遍，守卫会让第二遍直接跳过、
   // 而第一遍的结果又被 alive 丢弃，导致列表永远为空。
+  //
+  // initialSessionID 有值 = 这是并排面板：只补自己那条会话的名字。
+  // 几列同时开时一起跑补名字会对同一条会话发好几遍改名请求。
   useEffect(() => {
     if (!connected) return
     let alive = true
@@ -395,13 +441,16 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
         // 优先落到工作台自己建的会话上：同目录里 CLI/审核脚本建的会话不该抢默认视图。
         setCurrentID((prev) => {
           if (prev && list.some((s) => s.id === prev)) return prev
+          // 标签栏的「+ 新标签」是一个空槽位：不要自动挑一条最近的会话塞进去，
+          // 否则会和已有标签指向同一条，看着像两个标签是同一份历史
+          if (!autoPickSession) return prev
           const own = list.find(isWorkbenchSession)
           // 回退时也要跳过终端会话：否则 current 会落到「工作台终端」上，
           // 它既不该出现在下拉里，也不该接收聊天消息。
           return own?.id ?? list.find((item) => !isWorkbenchTerminal(item))?.id ?? null
         })
         // 老数据补名字：标题还是占位符的那些，用首条消息改写（后台跑，不挡列表）
-        void backfillTitles(list)
+        void backfillTitles(initialSessionID ? list.filter((s) => s.id === initialSessionID) : list)
       } catch (err) {
         if (alive) setError((err as Error).message)
       }
@@ -409,19 +458,54 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     return () => {
       alive = false
     }
-  }, [connected, root, backfillTitles])
+  }, [connected, root, backfillTitles, initialSessionID, autoPickSession])
 
-  // 会话切换：模型显示跟着会话走（无 model 时用默认模型），并拉一次历史
+  // 会话切换：拉一次历史。
+  //
+  // 只认 currentID 和 connected：会话列表会随轮询不断换引用（灯要跟着亮），
+  // 把它放进依赖会让历史每 1.5 秒重拉一遍。但断线期间漏掉的消息必须在
+  // 重连后补回来，所以 connected 变 true 时也重拉一次。
   const syncSessionModel = modelsApi.syncSession
   useEffect(() => {
     if (!currentID) {
       setMessages([])
       return
     }
-    const session = sessions.find((item) => item.id === currentID)
-    syncSessionModel(session)
+    if (!connected) return
     void loadSession(currentID)
-  }, [currentID, sessions, syncSessionModel, loadSession])
+  }, [currentID, connected, loadSession])
+
+  // 会话元数据变化（换了模型/改了标题）时同步显示，但不重拉历史
+  const currentSession = sessions.find((item) => item.id === currentID)
+  useEffect(() => {
+    syncSessionModel(currentSession)
+  }, [currentSession, syncSessionModel])
+
+  /**
+   * 子会话（子智能体）不在顶层列表里：按 id 补查一次，供标题/标签用。
+   * 查不到就把上一次的丢掉，别让标题粘在别的会话上。
+   */
+  useEffect(() => {
+    if (!connected || !currentID) {
+      setExtraSession(null)
+      return
+    }
+    if (sessions.some((item) => item.id === currentID)) {
+      setExtraSession(null)
+      return
+    }
+    let alive = true
+    void getSession(currentID)
+      .then((session) => {
+        if (alive) setExtraSession(session)
+      })
+      .catch(() => {
+        if (alive) setExtraSession(null)
+      })
+    return () => {
+      alive = false
+    }
+  }, [connected, currentID, sessions])
 
   useChatEvents(connected, currentID, refreshSession, applyStream)
 
@@ -972,7 +1056,10 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
   }, [messages, runningApi.running, streaming])
   const stats = useMemo(() => computeSessionStats(statsSource, Date.now()), [statsSource, statsNow])
 
-  const current = sessions.find((session) => session.id === currentID)
+  // 当前会话：顶层列表里有就用它，没有就用补查到的子会话信息
+  const current =
+    sessions.find((session) => session.id === currentID) ??
+    (extraSession && extraSession.id === currentID ? extraSession : undefined)
   // 下拉默认只列工作台会话；当前正在看的会话即使是外部会话也保留，
   // 否则顶部标题和高亮会消失。
   const ownSessions = sessions.filter(
@@ -987,10 +1074,21 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     ? sessions.filter((session) => !isWorkbenchTerminal(session))
     : ownSessions
 
+  // 把当前会话信息报给标签栏：子会话不在轮询列表里，标题和灯只能从这儿来
+  useEffect(() => {
+    if (current) onSessionInfo?.(current)
+  }, [current, onSessionInfo])
+
+  // 生成状态也报一份：标签上的黄灯对子会话同样要准
+  useEffect(() => {
+    if (currentID) onSessionRunning?.(currentID, runningApi.running)
+  }, [currentID, runningApi.running, onSessionRunning])
+
   return (
     <div className="chat">
       <ChatHeader
         sessions={visibleSessions}
+        lights={lights}
         hiddenCount={hiddenCount}
         showAll={showAllSessions}
         agents={agents}
@@ -1012,6 +1110,8 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
           setExpanded(false)
         }}
         onNewSession={() => void newSession()}
+        onOpenInPanel={onOpenInPanel}
+        panelIDs={panelIDs}
         onPickModel={(next) => void pickModel(next)}
         onPickVariant={(next, variant) => void pickModelVariant(next, variant)}
         context={{

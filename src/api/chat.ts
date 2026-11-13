@@ -3,10 +3,19 @@
 export type SessionInfo = {
   id: string
   title?: string
-  time?: { created?: number; updated?: number; busy?: number; idle?: number }
+  /** 有值说明这是某个会话的子智能体（子会话），值是父会话 id */
+  parentID?: string
+  /** 子会话用的 agent（explore / debug / general …） */
+  agent?: string
+  time?: { created?: number; updated?: number; busy?: number; idle?: number; archived?: number }
   location?: { directory?: string }
   model?: { id?: string; providerID?: string; variant?: string }
   metadata?: Record<string, unknown>
+  /** 会话累计用量（子智能体面板要显示烧了多少） */
+  tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } }
+  cost?: number
+  /** 上一轮结束时的结局；还在跑时没有 */
+  outcome?: 'succeeded' | 'failed' | 'interrupted'
 }
 
 /**
@@ -226,6 +235,56 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
   }
 
   return matches
+}
+
+/**
+ * 某个会话的直接子会话（只看一层）。
+ *
+ * 服务端支持 `parentID` 参数，但 `listSessions` 为了只列顶层会话写死了 `parentID=null`；
+ * 这里单独走一条，不去动那个函数（改了会影响会话列表和项目灯）。
+ */
+export async function listChildSessions(parentID: string, limit = 50): Promise<SessionInfo[]> {
+  const params = new URLSearchParams({ limit: String(limit), order: 'desc', parentID })
+  const data = await call<{ data?: SessionInfo[] } | SessionInfo[]>(
+    `/api/session?${params.toString()}`,
+  )
+  return Array.isArray(data) ? data : (data.data ?? [])
+}
+
+/** 子会话树里的一项：多带一个 depth（1 = 直接子智能体）。 */
+export type SubagentNode = SessionInfo & { depth: number }
+
+/**
+ * 一个会话下的所有子孙会话（自己爬 parentID，最多三层）。
+ *
+ * 服务端没有「给我整棵树」的接口，只能一层层问。三层足够：子智能体再派孙辈已经
+ * 很少见，再深只会把面板刷满、请求数也翻倍。归档的会话就跳过。
+ */
+export async function listSubagentTree(rootID: string, maxDepth = 3): Promise<SubagentNode[]> {
+  const out: SubagentNode[] = []
+  const seen = new Set<string>([rootID])
+  let frontier: string[] = [rootID]
+
+  for (let depth = 1; depth <= maxDepth; depth += 1) {
+    const lists = await Promise.all(
+      frontier.map((id) => listChildSessions(id).catch(() => [] as SessionInfo[])),
+    )
+    const next: string[] = []
+    for (const list of lists) {
+      for (const session of list) {
+        if (!session?.id || seen.has(session.id)) continue
+        seen.add(session.id)
+        // 归档的会话不显示：那是用户主动收起来的历史
+        if (session.time?.archived) continue
+        out.push({ ...session, depth })
+        next.push(session.id)
+      }
+    }
+    if (next.length === 0) break
+    frontier = next
+  }
+
+  return out
 }
 
 /**

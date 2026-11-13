@@ -9,6 +9,7 @@ import {
   cliProgress,
   cliStateLabel,
   cliTag,
+  cliVersionHint,
   formatBytes,
 } from '../src/components/cliState.ts'
 
@@ -97,4 +98,26 @@ test('进度：有总大小才给百分比，没给就只显示阶段', () => {
   const unknown = cliProgress(base({ busy: true, done: 12, total: 0, phase: '解压安装包' }))
   assert.equal(unknown.percent, null)
   assert.equal(unknown.text, '解压安装包')
+})
+
+test('版本读取失败时给出可操作提示：193 指向脚本包装，其余透出后端原因', () => {
+  // 正常情况没有提示
+  assert.equal(cliVersionHint(base()), null)
+  assert.equal(cliVersionHint(null), null)
+  assert.equal(cliVersionHint(base({ installed: false, version: null })), null)
+
+  // 193 / Win32：这是 npm 无扩展名 shim 被当成 exe 的典型报错
+  const shim = base({
+    version: null,
+    error: '启动 C:\\x\\opencode 失败：%1 不是有效的 Win32 应用程序。 (os error 193)',
+  })
+  assert.match(cliVersionHint(shim) ?? '', /脚本包装/)
+  assert.match(cliVersionHint(shim) ?? '', /装成 \.exe/)
+
+  // 其他原因原样透出，不自己编
+  const timeout = base({ version: null, error: 'opencode --version 超过 30 秒没返回' })
+  assert.equal(cliVersionHint(timeout), 'opencode --version 超过 30 秒没返回')
+
+  // 没给原因时返回 null（不显示空提示条）
+  assert.equal(cliVersionHint(base({ version: null, error: null })), null)
 })

@@ -342,15 +342,15 @@ pub fn latest_release(force: bool) -> Result<Latest, String> {
 
 /// 跑 `<exe> --version`，返回解析出的版本号。
 ///
+/// **必须经 [crate::auth::command_for_path]**：老实现直接 `Command::new(exe)`，
+/// 遇到非 PE 的 shim（npm 的无扩展名 bash 脚本、.cmd）就必然失败，
+/// 页面于是显示「已安装，版本读取失败」+ os error 193。
+///
 /// 几百 MB 的 exe 冷启动可能就要几秒，所以给 30 秒；超时一律杀进程树，
 /// 免得留下一个「半启动」的 opencode 占着服务锁。
 fn exe_version(exe: &Path) -> Result<String, String> {
-    let mut command = Command::new(exe);
-    command
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let mut command = crate::auth::command_for_path(exe, &["--version"]);
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -551,16 +551,28 @@ fn extract(zip: &Path, out: &Path) -> Result<PathBuf, String> {
     find_exe(out, 3).ok_or_else(|| "解压后没找到 opencode.exe（包结构可能变了）".to_string())
 }
 
-/// 安装落点：优先「已经装着的那个 exe」（原地升级，PATH 与 shim 都不用动）；
-/// 否则用官方安装器的目录 `%USERPROFILE%\.opencode\bin`。
+/// 安装落点。
+///
+/// 三种情况：
+///   1. 定位到的是**真 PE**（`opencode.exe`）→ 原地升级，PATH 与 shim 都不用动。
+///   2. 定位到的是脚本 shim（npm 的无扩展名 bash 脚本 / .cmd）→ 装到**同一个目录**
+///      下的 `opencode.exe`。不能装到别处：用户 PATH 指的是这个目录，
+///      装远了下一次定位仍然被 shim 抢先，面板会永远停在「要更新」。
+///   3. 什么都没定位到 → 官方安装器的目录 `%USERPROFILE%\.opencode\bin`。
 fn install_target() -> Result<PathBuf, String> {
     if let Some(exe) = crate::auth::locate() {
         let is_exe = exe
             .extension()
             .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe"))
             .unwrap_or(false);
-        if is_exe {
+        let is_pe = std::fs::read(&exe)
+            .map(|bytes| bytes.len() >= 2 && &bytes[..2] == b"MZ")
+            .unwrap_or(false);
+        if is_exe && is_pe {
             return Ok(exe);
+        }
+        if let Some(dir) = exe.parent() {
+            return Ok(dir.join("opencode.exe"));
         }
     }
     let home = std::env::var_os("USERPROFILE")
@@ -805,7 +817,7 @@ pub fn spawn_auto_update() {
 fn status_json(force_remote: bool, want_latest: bool) -> String {
     let located = crate::auth::locate();
     let installed = located.is_some();
-    let mut path = located.map(|exe| exe.to_string_lossy().to_string());
+    let path = located.map(|exe| exe.to_string_lossy().to_string());
 
     let mut version: Option<String> = None;
     let mut error: Option<String> = None;
@@ -853,10 +865,20 @@ fn status_json(force_remote: bool, want_latest: bool) -> String {
     if job.error.is_some() {
         error = job.error.clone();
     }
-    // 装完/换路径后 status 要反映新路径
-    if path.is_none() {
-        if let Some(exe) = crate::auth::locate() {
-            path = Some(exe.to_string_lossy().to_string());
+    // 装完/换路径后 status 要反映新路径；`installed` 与版本一起重算，
+    // 否则会出现「路径有了、状态还是未安装」这种自相矛盾的组合。
+    let (installed, path, version) = match crate::auth::locate().filter(|_| path.is_none()) {
+        Some(exe) => {
+            let fresh_path = exe.to_string_lossy().to_string();
+            let fresh_version = installed_version().ok().or(version);
+            (true, Some(fresh_path), fresh_version)
+        }
+        None => (installed, path, version),
+    };
+    // 版本被刷新后 `newer` 必须跟着重算：否则刚装完还高亮「更新到 vX」。
+    if let Some(current) = version.as_deref() {
+        if let Some(latest_version) = latest.as_deref() {
+            newer = needs_upgrade(current, latest_version);
         }
     }
 
@@ -1201,8 +1223,22 @@ mod tests {
         let target = dir.join("bin").join("opencode.exe");
         let fresh = dir.join("new.exe");
         fs::write(&fresh, b"FRESH").expect("写新文件");
-
         replace_exe(&fresh, &target, "2.2.7").expect("目录不存在也要能装上");
         assert_eq!(fs::read(&target).expect("读新文件"), b"FRESH");
+    }
+
+    /// 版本探测必须遵守「脚本 shim 要经 cmd」：这正是面板显示
+    /// 「已安装，版本读取失败」+ os error 193 的根因。
+    ///
+    /// 用 .cmd 测是因为真实场景里 npm 落的就是这套（opencode / opencode.cmd /
+    /// opencode.ps1 三份），而定位层已经把无扩展名那个换成了 .cmd。
+    #[test]
+    fn version_probe_goes_through_cmd_for_shim() {
+        let dir = temp_dir("cli-shim");
+        let script = dir.join("opencode.cmd");
+        fs::write(&script, b"@echo opencode v2.3.0\r\n").expect("写假 shim");
+        let found = exe_version(&script).expect("shim 也要能读到版本");
+        assert_eq!(found, "2.3.0");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

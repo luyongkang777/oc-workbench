@@ -6,3 +6,4 @@ shell/target-rel/
 .DS_Store
 .tmp/
 release/
+shell/target-verify/

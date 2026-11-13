@@ -36,12 +36,18 @@ import {
   type ThemePref,
 } from './components/theme'
 import { CHAT_W, SIDE_W, useUiLayout } from './hooks/useUiLayout'
-import { useProjectRunning } from './hooks/useProjectRunning'
+import { useSessionLights } from './hooks/useSessionLights'
+import ChatTabs from './components/ChatTabs'
+import SubagentPanel from './components/SubagentPanel'
+import { parseSubagentMode, type SubagentMode } from './components/subagent'
 import {
   hiddenRecheckDelay,
   nextReconnectDelay,
   shouldReconnectNow,
 } from './components/connectionPolicy'
+
+/** 记在本地：'auto' / 'open' / 'closed'；老值 '1' / '0' 兼容成 open / closed。 */
+const SUBAGENT_OPEN_KEY = 'oc-workbench:subagent-open'
 
 /**
  * 没有历史记录时的工作区。
@@ -69,6 +75,26 @@ export default function App() {
   const [view, setView] = useState<'code' | 'diff'>('code')
   // Git 抽屉是否打开：切项目时由 applyRoot 关掉，避免旧 root 的面板挂在新项目上
   const [gitOpen, setGitOpen] = useState(false)
+  /**
+   * 子智能体面板三态：
+   *   auto   = 有子智能体才展开（默认）。没子智能体时只留一条细条，
+   *            不为了一个空列表永久吃掉 320px 编辑器宽度。
+   *   open / closed = 用户手动指定的，之后一直按他的来。
+   */
+  const [subagentMode, setSubagentMode] = useState<SubagentMode>(() => {
+    try {
+      return parseSubagentMode(window.localStorage.getItem(SUBAGENT_OPEN_KEY))
+    } catch {
+      return 'auto'
+    }
+  })
+  /** 主聊天栏当前显示哪个会话：子智能体面板只列它的子孙 */
+  const [activeSessionID, setActiveSessionID] = useState<string | null>(null)
+  /** 会话列表里点 ⧉ 要把某条会话开到标签栏：seq 递增保证同一个 id 也能触发 */
+  const [tabRequest, setTabRequest] = useState<{ sessionID: string; seq: number } | null>(null)
+  const openInTab = useCallback((sessionID: string) => {
+    setTabRequest((prev) => ({ sessionID, seq: (prev?.seq ?? 0) + 1 }))
+  }, [])
   const [root, setRoot] = useState(() => {
     try {
       return window.localStorage.getItem(ROOT_KEY) || DEFAULT_ROOT
@@ -663,9 +689,18 @@ export default function App() {
     }
   }
 
-  // 顶栏标签上的呼吸灯：跨所有项目，AI 在跑的项目亮黄
-  const projectRunning = useProjectRunning(connected, projects.length)
+  // 会话状态：一次轮询同时喂顶栏项目灯和会话列表灯，别两套各打一遍
+  // 面板模式记到本地：下次打开还保持同样布局
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SUBAGENT_OPEN_KEY, subagentMode)
+    } catch {
+      /* 存不进去只影响下次启动的默认值 */
+    }
+  }, [subagentMode])
 
+  // 会话状态：一次轮询同时喂顶栏项目灯、会话列表灯和标签栏的灯
+  const lights = useSessionLights(connected, projects.length)
   const statusOk = auth.status === 'ready' && connected
   const statusText =
     auth.status === 'pending'
@@ -691,7 +726,7 @@ export default function App() {
         <ProjectTabs
           projects={projects}
           active={root}
-          running={projectRunning}
+          running={lights.dirs}
           connected={connected}
           onSwitch={applyRoot}
           onRemove={forgetProject}
@@ -827,8 +862,24 @@ export default function App() {
         />
 
         <aside className="chat-pane">
-          <Chat key={root} root={root} connected={connected} onOpenFile={openFile} />
+          <ChatTabs
+            key={root}
+            root={root}
+            connected={connected}
+            onOpenFile={openFile}
+            lights={lights.status}
+            request={tabRequest}
+            onActiveSession={setActiveSessionID}
+          />
         </aside>
+
+        <SubagentPanel
+          sessionID={activeSessionID ?? undefined}
+          connected={connected}
+          mode={subagentMode}
+          onToggle={(next) => setSubagentMode(next)}
+          onOpen={openInTab}
+        />
       </div>
       ) : (
         <WelcomePane

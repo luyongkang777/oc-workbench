@@ -18,6 +18,7 @@ import {
   cliFresh,
   cliProgress,
   cliStateLabel,
+  cliVersionHint,
   cliTag,
   formatBytes,
 } from './cliState'
@@ -510,6 +511,9 @@ function UpdateDialog({
                 ) : null}
                 <span className="update-cli-progress-text">{cliBar.text}</span>
               </div>
+            ) : null}
+            {cliVersionHint(cli) && !cliError ? (
+              <div className="update-cli-hint">{cliVersionHint(cli)}</div>
             ) : null}
 
             {cliError ?? cli?.error ? (

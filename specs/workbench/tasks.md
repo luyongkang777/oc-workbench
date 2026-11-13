@@ -152,11 +152,37 @@
 - 完成信号：`tsc --noEmit` + `npm test` 86 项全过（新增 completion 24 项）；`dist` 与 release exe 重建并重启
   实测 2026-11-11（WebView2 CDP 驱动真实界面，见 `.tmp/cdp-check.mjs` 的验证输出）
 
+## T19 ✅ 会话状态灯 + 会话标签栏
+
+- 范围：`src/components/sessionLight.ts`（新）、`ChatTabs.tsx`（新）、`src/hooks/useSessionLights.ts`（新）、
+  `ChatHeader.tsx`、`Chat.tsx`、`App.tsx`、`ProjectTabs.tsx`、`projectStatus.ts`、`src/styles/panels.css`、
+  `scripts/sessionLight.test.mjs`（新）、`.tmp/verify-panes.mjs`（新）
+- 内容：
+  1. 会话列表每条前面加状态灯：跑着 = 呼吸黄、空闲 = 常亮绿、上一轮报错 = 红、未连接 = 灰；
+     顶部会话标题按钮上也有一颗，切走以后仍然能看出这条会话在不在跑
+  2. 一次轮询喂两种灯：`useSessionLights` 每 1.5 秒拉一次全局会话列表（一个请求），
+     既给顶栏项目灯，也给会话列表和标签栏。删掉原来只喂项目灯的 `useProjectRunning`
+  3. 会话标签栏：聊天区顶部排标签，每条标签一个会话、带状态灯和 ×，+ 号加新标签（最多 6 个）；
+     列表右侧的 ⧉ 把某条会话开成标签，已开就跳过去。同一时刻只渲染一个 Chat，
+     宽度全给当前会话，不是把 500px 切成两半；标签配置落 localStorage、按项目分开存
+  4. Chat 的「会话历史重拉」与「会话列表变化」拆开：原来 `sessions` 在依赖里，
+     轮询一刷就每 1.5 秒重拉一遍历史
+- 验收：`.tmp/verify-panes.mjs` 全绿——三条会话三色灯正确、跑完 6 秒内黄灯自己变绿（真轮询不是快照）、
+  点 ⧉ 多出一个标签且自动激活、只渲染一个聊天区（确认不是并排）、标签上有灯、点标签能切会话、
+  × 能关标签、配置落盘；全量 `npm test` 393 项 + `tsc --noEmit` 通过
+- 完成信号：headless Edge + CDP 实测 2026-11-13（截图 `.tmp/verify-panes.png`）
+- 踩坑：
+  1. `editor.css` 在 `main.tsx` 里比 `panels.css` 后加载，同优先级写 `.chat-header` 会被覆盖、
+     看着「改了没效果」，必须用 `#root` 提优先级
+  2. `ChatTabs` 一开始漏传 `lights` 给 `Chat`，结果数据层已经是 idle、界面永远停在打开那一刻的旧灯色；
+     这类「props 少接一根线」端到端看灯色变化才抓得到，tsc 和单测都发现不了
+  3. CDP 里 `localStorage` 按源隔离：在 about:blank 写再导航过去读不到，必须先落到目标源再写
+
 ## 待评估
 
 - LSP 接入（Monaco + typescript-language-server）：目前是本地词法补全，LSP 只用来补「类型级成员/签名」
 - 内置浏览器 / 图片预览
-- 多窗口（每个会话一个窗口）
+- 独立的系统窗口（每个会话一个 OS 窗口）：T19 做的是同一窗口内的标签栏，跨窗口还没做
 - 交互式终端（需要 x-opencode-ticket + WebSocket 代理）
 - 401 自动重连
 - 会话列表深翻页（当前 12 页封顶，240 条以上目录可能漏）

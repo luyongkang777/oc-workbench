@@ -93,11 +93,16 @@ fn snippet(text: &str, limit: usize) -> String {
     out
 }
 
-/// 一次定位的结果：真正要启动的程序，以及它是不是批处理 shim。
+/// 一次定位的结果：真正要启动的程序，以及它是不是脚本 shim。
 #[derive(Clone, Debug)]
 struct Target {
     program: PathBuf,
-    /// `.cmd` / `.bat` 必须经 cmd.exe 启动；`.exe` 直接启动更快也不用操心引号。
+    /// 非 PE 文件一律要经 cmd.exe 启动。
+    ///
+    /// 新版 opencode 的安装器会落一个**没有扩展名**的启动包装
+    /// （实测 `%LOCALAPPDATA%\hermes\node\opencode`），它既不是 .exe、
+    /// 也不叫 .cmd，直接 CreateProcess 必然报 os error 193
+    /// （「%1 不是有效的 Win32 应用程序」）。所以不能只看扩展名。
     shim: bool,
 }
 
@@ -113,16 +118,79 @@ fn env_path(name: &str) -> Option<PathBuf> {
         .filter(|value| !value.as_os_str().is_empty())
 }
 
-/// 按扩展名判断要不要走 cmd。`.cmd` / `.bat` 是批处理，直接 CreateProcess 会失败。
+/// 文件头是不是 `MZ`（PE 可执行文件）。
+///
+/// 读不到、或者不是 MZ，都按「非 PE」处理——后续会走 cmd，
+/// 出错也是 cmd 的错，不会变成误导人的 os error 193。
+fn is_pe(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 2];
+    file.read_exact(&mut head).is_ok() && &head == b"MZ"
+}
+
+/// 判断要不要走 cmd：扩展名是 .cmd/.bat/.ps1 的，或者文件本身不是 PE，都算 shim。
+///
+/// 只看扩展名是不够的：新版 opencode 落的是无扩展名包装脚本，会漏判成 exe，
+/// 然后 `CreateProcess` 报 193。
 fn classify(path: PathBuf) -> Target {
-    let shim = path
+    let by_ext = path
         .extension()
         .map(|ext| {
             let ext = ext.to_string_lossy().to_ascii_lowercase();
-            ext == "cmd" || ext == "bat"
+            ext == "cmd" || ext == "bat" || ext == "ps1"
         })
         .unwrap_or(false);
+    // 扩展名说不是 shim 时再看文件头：无扩展名的包装脚本就靠这一步救回来。
+    let shim = by_ext || !is_pe(&path);
     Target { program: path, shim }
+}
+
+/// 在同一个目录里找出「真正能启动」的兄弟文件。
+///
+/// npm / bun 装的时候会一口气落三份：`opencode`（bash 脚本，无扩展名）、
+/// `opencode.cmd`、`opencode.ps1`。而 `where opencode` 把无扩展名那个
+/// 排在最前面，双击工作台就会拿它去 CreateProcess → os error 193。
+/// 所以拿到非 PE 的候选后，先换成同目录的 .exe / .cmd。
+fn pick_runnable(path: &Path) -> PathBuf {
+    if is_pe(path) {
+        return path.to_path_buf();
+    }
+    if let Some(ext) = path.extension() {
+        let lower = ext.to_string_lossy().to_ascii_lowercase();
+        // .cmd/.bat 本身就是正经的 Windows 启动方式，不用再换
+        if lower == "cmd" || lower == "bat" {
+            return path.to_path_buf();
+        }
+    }
+    // 兄弟文件名用「去掉原扩展名」的 stem 拼：
+    //   opencode      → opencode.exe / opencode.cmd
+    //   opencode.ps1  → opencode.exe / opencode.cmd（不是 opencode.ps1.exe）
+    let Some(stem) = path.file_stem().map(|value| value.to_string_lossy().to_string()) else {
+        return path.to_path_buf();
+    };
+    for want in ["exe", "cmd"] {
+        let candidate = path.with_file_name(format!("{stem}.{want}"));
+        if candidate.is_file() && is_pe_or_script(&candidate) {
+            return candidate;
+        }
+    }
+    path.to_path_buf()
+}
+
+/// 候选文件是否值得用：真 PE，或者 .cmd/.bat。
+fn is_pe_or_script(path: &Path) -> bool {
+    if is_pe(path) {
+        return true;
+    }
+    path.extension()
+        .map(|ext| {
+            let lower = ext.to_string_lossy().to_ascii_lowercase();
+            lower == "cmd" || lower == "bat"
+        })
+        .unwrap_or(false)
 }
 
 /// PATH 之外的常见安装位置，按「最可能命中」排序。
@@ -132,6 +200,7 @@ fn classify(path: PathBuf) -> Target {
 ///   * `%USERPROFILE%\.local\bin`（bun / npm 装的 shim 落点，实测本机就是这里）
 ///   * `%USERPROFILE%\.opencode\bin`（官方安装器）
 ///   * `%LOCALAPPDATA%\Programs\opencode`、`%APPDATA%\npm`（系统级安装）
+///   * `%LOCALAPPDATA%\hermes\node`（Hermes 自带 node 运行时后，npm 装出来的落点）
 fn candidates() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     if let Some(dir) = std::env::current_exe()
@@ -149,18 +218,40 @@ fn candidates() -> Vec<PathBuf> {
     if let Some(local) = env_path("LOCALAPPDATA") {
         out.push(local.join("Programs").join("opencode").join("opencode.exe"));
         out.push(local.join("opencode").join("bin").join("opencode.exe"));
+        // Hermes（Nous Research 的 Agent）自带 node 运行时，npm 装的 shim 会落在
+        // `%LOCALAPPDATA%\hermes\node`；这个目录不在 PATH 时只能靠这里兜住。
+        out.push(local.join("hermes").join("node").join("opencode.exe"));
+        out.push(local.join("hermes").join("node").join("opencode.cmd"));
     }
     if let Some(roaming) = env_path("APPDATA") {
         out.push(roaming.join("npm").join("opencode.cmd"));
         out.push(roaming.join("npm").join("opencode.exe"));
     }
-    if let Some(program_files) = env_path("ProgramFiles") {
-        out.push(program_files.join("opencode").join("opencode.exe"));
-    }
     out
 }
 
-/// 用 `where <name>` 在 PATH 上找，返回第一个真实存在的文件。
+/// 用 `where <name>` 在 PATH 上找，返回第一个能真正启动的文件。
+/// 从 `where` 的多行输出里挑一个能真正启动的。
+///
+/// npm / bun 会把无扩展名脚本和 `.cmd` / `.exe` 一起落到同一个目录，
+/// `where` 按 PATH 顺序列出来，无扩展名那个经常排第一，但它不是 PE，
+/// 直接 CreateProcess 就是 os error 193。所以这里的优先级是：
+/// 真 PE → .cmd/.bat → 其余（保留原有顺序）。
+fn pick_from_where_output(text: &str) -> Option<PathBuf> {
+    let hits: Vec<PathBuf> = text
+        .lines()
+        .map(|line| PathBuf::from(line.trim()))
+        .filter(|path| path.is_file())
+        .collect();
+    if let Some(best) = hits.iter().find(|path| is_pe(path)) {
+        return Some(best.clone());
+    }
+    if let Some(best) = hits.iter().find(|path| is_pe_or_script(path)) {
+        return Some(best.clone());
+    }
+    hits.into_iter().next()
+}
+
 ///
 /// 必须自带超时：PATH 里有不可达的网络共享时 `where` 会卡很久。
 fn where_lookup(name: &str) -> Option<PathBuf> {
@@ -184,10 +275,8 @@ fn where_lookup(name: &str) -> Option<PathBuf> {
                     }
                     let mut buf = Vec::new();
                     child.stdout.take()?.read_to_end(&mut buf).ok()?;
-                    return String::from_utf8_lossy(&buf)
-                        .lines()
-                        .map(|line| PathBuf::from(line.trim()))
-                        .find(|path| path.is_file());
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    return pick_from_where_output(&text);
                 }
                 Ok(None) => {}
                 Err(_) => {
@@ -250,10 +339,10 @@ fn resolve_opencode_uncached() -> Option<Target> {
     // 1. 显式指定优先。允许给「路径」或「命令名」，两种都认。
     if let Some(raw) = env_path(OPENCODE_ENV) {
         if raw.is_file() {
-            return Some(classify(raw));
+            return Some(classify(pick_runnable(&raw)));
         }
         if let Some(found) = where_lookup(&raw.to_string_lossy()) {
-            return Some(classify(found));
+            return Some(classify(pick_runnable(&found)));
         }
         // 形如 `opencode2.cmd` 但仍找不到：退回按名字启动，让 cmd 自己报错
         return Some(classify(raw));
@@ -261,14 +350,14 @@ fn resolve_opencode_uncached() -> Option<Target> {
 
     // 2. PATH
     if let Some(found) = where_lookup("opencode") {
-        return Some(classify(found));
+        return Some(classify(pick_runnable(&found)));
     }
 
     // 3. 已知安装位置
     candidates()
         .into_iter()
         .find(|path| path.is_file())
-        .map(classify)
+        .map(|path| classify(pick_runnable(&path)))
 }
 
 /// 找不到时的错误串：把查过的位置列出来，用户照着一看就知道该装哪、或该设哪个变量。
@@ -285,25 +374,46 @@ fn command_for(args: &[&str]) -> Result<Command, String> {
     use std::os::windows::process::CommandExt;
 
     let target = resolve_opencode().ok_or_else(missing_opencode)?;
-    let mut cmd = if target.shim {
-        // 批处理必须经 cmd。整条命令行是 `cmd /C "<shim>" <args>`：
-        // 余下部分里只有一对引号且引号内是可执行文件，cmd 会原样保留这对引号，
-        // 带空格的安装路径也不会被拆开（实测）。
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg(&target.program);
-        for arg in args {
-            cmd.arg(arg);
-        }
-        cmd
-    } else {
-        let mut cmd = Command::new(&target.program);
-        for arg in args {
-            cmd.arg(arg);
-        }
-        cmd
-    };
+    // 定位阶段已经判过 shim，直接复用，不再读一次文件头。
+    let mut cmd = build_command(&target, args);
     cmd.creation_flags(CREATE_NO_WINDOW);
     Ok(cmd)
+}
+
+/// 按 `Target` 造命令：脚本 shim 走 `cmd /C`，真 PE 直接启动。
+#[cfg(windows)]
+fn build_command(target: &Target, args: &[&str]) -> Command {
+    let mut cmd = if target.shim {
+        // `cmd /C "<文件>" <args>`：整条命令行里只有一对引号且引号内是文件路径，
+        // cmd 会原样保留这对引号，带空格的安装路径也不会被拆开（实测）。
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(&target.program);
+        cmd
+    } else {
+        Command::new(&target.program)
+    };
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd
+}
+
+/// 按**给定路径**造命令：非 PE（脚本 shim）自动走 `cmd /C`，真 PE 直接启动。
+///
+/// 单独暴露出来是因为版本探测（[crate::cli::exe_version]）拿到的是具体文件路径，
+/// 不走定位缓存；它同样必须遵守「脚本要经 cmd」这条，否则又是一次 os error 193。
+#[cfg(windows)]
+pub fn command_for_path(path: &Path, args: &[&str]) -> Command {
+    build_command(&classify(path.to_path_buf()), args)
+}
+
+#[cfg(not(windows))]
+pub fn command_for_path(path: &Path, args: &[&str]) -> Command {
+    let mut cmd = Command::new(path);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd
 }
 
 #[cfg(not(windows))]
@@ -702,11 +812,23 @@ fn discover_inner() -> Result<Backend, String> {
 mod tests {
     use super::*;
 
+    /// 一个临时目录里写文件，用完自己清。
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ocwb-auth-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        dir
+    }
+
     #[test]
-    fn exe_is_not_treated_as_shim() {
-        let target = classify(PathBuf::from(r"C:\tools\opencode.exe"));
+    fn real_pe_is_not_treated_as_shim() {
+        let dir = temp_dir("pe");
+        let exe = dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ\x90\x00").expect("写假 PE");
+        let target = classify(exe.clone());
         assert!(!target.shim);
-        assert_eq!(target.program, PathBuf::from(r"C:\tools\opencode.exe"));
+        assert_eq!(target.program, exe);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -716,9 +838,69 @@ mod tests {
         assert!(classify(PathBuf::from(r"C:\x\opencode.BAT")).shim);
     }
 
+    /// 这一条是本轮 bug 的核心回归：npm 在 Hermes 的 node 目录里落的
+    /// `opencode` 是无扩展名 bash 脚本，必须判成 shim（走 cmd），
+    /// 否则 CreateProcess 直接报 os error 193。
     #[test]
-    fn no_extension_is_not_shim() {
-        assert!(!classify(PathBuf::from(r"C:\x\opencode")).shim);
+    fn extension_less_script_is_shim() {
+        let dir = temp_dir("shim");
+        let script = dir.join("opencode");
+        std::fs::write(&script, b"#!/bin/sh\nexec \"$(dirname \"$0\")/opencode.exe\" \"$@\"\n")
+            .expect("写假 shim");
+        let target = classify(script.clone());
+        assert!(target.shim, "无扩展名的 shell 包装必须按 shim 处理");
+        assert_eq!(target.program, script);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 明明存在同名 .exe 时，不能拿着无扩展名脚本去启动。
+    #[test]
+    fn prefers_sibling_exe_over_extension_less_script() {
+        let dir = temp_dir("sibling");
+        let script = dir.join("opencode");
+        std::fs::write(&script, b"#!/bin/sh\n").expect("写假 shim");
+        let exe = dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ\x90\x00").expect("写假 PE");
+
+        assert_eq!(pick_runnable(&script), exe, "应换成同目录的真 PE");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同目录没有 .exe 时，退到 .cmd（那也是能启动的）。
+    #[test]
+    fn falls_back_to_sibling_cmd() {
+        let dir = temp_dir("sibling-cmd");
+        let script = dir.join("opencode");
+        std::fs::write(&script, b"#!/bin/sh\n").expect("写假 shim");
+        let cmd = dir.join("opencode.cmd");
+        std::fs::write(&cmd, b"@echo off\r\n").expect("写假 cmd");
+
+        assert_eq!(pick_runnable(&script), cmd);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 带扩展名的 shim 也要按 stem 找兄弟：`opencode.ps1` → `opencode.cmd`，
+    /// 不能拼成 `opencode.ps1.cmd`（那永远不存在）。
+    #[test]
+    fn ps1_shim_maps_to_sibling_by_stem() {
+        let dir = temp_dir("sibling-ps1");
+        let ps1 = dir.join("opencode.ps1");
+        std::fs::write(&ps1, b"# ps1\n").expect("写假 ps1");
+        let cmd = dir.join("opencode.cmd");
+        std::fs::write(&cmd, b"@echo off\r\n").expect("写假 cmd");
+
+        assert_eq!(pick_runnable(&ps1), cmd);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 孤零零的无扩展名脚本（没有兄弟文件）也要原样用，由 cmd 去跑。
+    #[test]
+    fn keeps_lone_script_when_no_sibling() {
+        let dir = temp_dir("lone");
+        let script = dir.join("opencode");
+        std::fs::write(&script, b"#!/bin/sh\n").expect("写假 shim");
+        assert_eq!(pick_runnable(&script), script);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 候选表必须覆盖「本机实际装法」，否则换台机器又会找不到。
@@ -734,6 +916,20 @@ mod tests {
         assert!(text.iter().any(|item| item.ends_with(r"\npm\opencode.cmd")));
         // exe 同目录优先（绿色版）
         assert!(text[0].ends_with("opencode.exe"));
+    }
+
+    /// Hermes 自带 node 运行时，opencode 的 npm shim 会落在它目录下；
+    /// 这个落点不在 PATH 时，候选表必须兜住（不然又是「找不到 opencode」）。
+    #[test]
+    fn candidates_cover_hermes_node_dir() {
+        let text: Vec<String> = candidates()
+            .iter()
+            .map(|path| path.to_string_lossy().to_lowercase())
+            .collect();
+        assert!(
+            text.iter().any(|item| item.ends_with(r"\hermes\node\opencode.cmd")),
+            "候选表要包含 hermes\\node\\opencode.cmd：{text:?}"
+        );
     }
 
     /// 缓存只存成功：解析到 shim 后第二次调用要命中同一份结果。
@@ -757,6 +953,81 @@ mod tests {
         if let Ok(mut guard) = RESOLVED.lock() {
             *guard = None;
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 端到端复现本轮 bug：Hermes 目录下同时存在 npm 的三份产物，
+    /// 环境变量指向无扩展名那个，最终必须落到 `.cmd`（能启动、能读版本）。
+    #[test]
+    fn resolves_hermes_layout_to_runnable_cmd() {
+        let dir = std::env::temp_dir().join(format!("ocwb-hermes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+
+        let bare = dir.join("opencode");
+        std::fs::write(&bare, b"#!/bin/sh\nexec node opencode.js \"$@\"\n").expect("写裸脚本");
+        let cmd = dir.join("opencode.cmd");
+        std::fs::write(&cmd, b"@echo off\r\nnode opencode.js %*\r\n").expect("写 cmd");
+        let ps1 = dir.join("opencode.ps1");
+        std::fs::write(&ps1, b"# ps1\n").expect("写 ps1");
+
+        std::env::set_var(OPENCODE_ENV, &bare);
+        if let Ok(mut guard) = RESOLVED.lock() {
+            *guard = None;
+        }
+
+        let target = resolve_opencode().expect("应该能定位");
+        assert_eq!(target.program, cmd, "必须换成同目录的 .cmd，而不是裸脚本");
+        assert!(target.shim, ".cmd 要走 cmd 启动");
+
+        std::env::remove_var(OPENCODE_ENV);
+        if let Ok(mut guard) = RESOLVED.lock() {
+            *guard = None;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    /// `where` 的第一行是无扩展名脚本时必须跳过它，选同目录的 .cmd。
+    /// 这条直接对应本轮 bug 的触发条件（Hermes 目录里的 npm shim）。
+    #[test]
+    fn pick_from_where_output_skips_extensionless_first() {
+        let dir = temp_dir("where-pick");
+        let bare = dir.join("opencode");
+        std::fs::write(&bare, b"#!/bin/sh\n").expect("写裸脚本");
+        let cmd = dir.join("opencode.cmd");
+        std::fs::write(&cmd, b"@echo off\r\n").expect("写 cmd");
+
+        // 模拟 where 的输出：裸脚本在前、.cmd 在后
+        let text = format!("{}\r\n{}\r\n", bare.display(), cmd.display());
+        assert_eq!(pick_from_where_output(&text), Some(cmd));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 有真 PE 时优先 PE，哪怕它排在 .cmd 后面。
+    #[test]
+    fn pick_from_where_output_prefers_pe() {
+        let dir = temp_dir("where-pe");
+        let cmd = dir.join("opencode.cmd");
+        std::fs::write(&cmd, b"@echo off\r\n").expect("写 cmd");
+        let exe = dir.join("opencode.exe");
+        std::fs::write(&exe, b"MZ\x90\x00").expect("写假 PE");
+
+        let text = format!("{}\r\n{}\r\n", cmd.display(), exe.display());
+        assert_eq!(pick_from_where_output(&text), Some(exe));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 全是不可执行的文本时也别丢：退回第一个命中，让 cmd 去报错。
+    #[test]
+    fn pick_from_where_output_falls_back_to_first_hit() {
+        let dir = temp_dir("where-text");
+        let bare = dir.join("opencode");
+        std::fs::write(&bare, b"#!/bin/sh\n").expect("写裸脚本");
+        let text = format!("{}\r\n", bare.display());
+        assert_eq!(pick_from_where_output(&text), Some(bare.clone()));
+        // 不存在的路径不算命中
+        assert_eq!(pick_from_where_output(r"C:\nope\opencode"), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

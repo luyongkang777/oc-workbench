@@ -1005,6 +1005,17 @@ body {
   text-overflow: ellipsis;
 }
 
+/* 「版本读取失败」的可操作提示：跟错误条区分开，不抢红色 */
+.update-cli-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-2);
+  background: var(--bg-2);
+  border-left: 2px solid var(--line-2);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
 .update-cli-progress {
   display: flex;
   flex-direction: column;
