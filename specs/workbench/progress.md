@@ -364,3 +364,13 @@
   - 竞态防护：generation 挡先发后到、userTouched 挡覆盖输入、skipRestore 挡新建会话时的草稿闪回
   - 测试：node 11 项 + Rust 5 项；`npm test` 426 项、`cargo test --release` 154 项、`tsc --noEmit` 全过
   - REVIEW: 高 | 🔴0 🟡1 🟢1 | 结论: Approve（修掉 1 个真 bug：新建会话发送时已发文字会被草稿恢复闪回输入框）
+
+- 2026-11-14 **流畅度与并发优化**（用户反馈：优化流畅度和多线程速度）：
+  - 轮询感知页面可见性：窗口最小化/切到后台时，探活（未连接态 1 秒一次）、会话运行状态（800ms）、
+    Git 面板（5s）、推理计时（500ms）、压缩计时（500ms）、标题轮询（5s）、统计心跳（500ms）全部跳过；
+    恢复可见时探活与 Git 立即补一次，其余等下一拍
+  - 在途 GET 合并：同一地址同一时刻只发一次（无 signal、非 POST 才合并），多个面板同时要
+    同一份文件 stat / 会话列表 / git status 时不再各开一个连接
+  - 草稿写盘 600ms 防抖 + 目录清理每 16 次写才扫一次（上一提交）
+  - 测试：新增 `scripts/visibility.test.mjs` 2 项；`npm test` 428 项全过、`tsc --noEmit` 干净
+  - REVIEW: 中 | 🔴0 🟡1 🟢2 | 结论: Approve（🟡：合并只覆盖无 signal 的调用，带 signal 的取消语义不受影响）

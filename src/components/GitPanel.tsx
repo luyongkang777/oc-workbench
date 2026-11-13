@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
+import { onPageVisible, pageVisible } from '../api/visibility'
 
 import {
   commitChanges,
@@ -196,11 +197,13 @@ export default function GitPanel({ root, open, onClose, onOpenFile }: GitPanelPr
 
     void load()
     const timer = window.setInterval(() => {
-      void load(true)
+      if (pageVisible()) void load(true)
     }, POLL_MS)
+    const stopVisible = onPageVisible(() => void load(true))
 
     return () => {
       window.clearInterval(timer)
+      stopVisible()
       genRef.current += 1
       abortRef.current?.abort()
       abortRef.current = null

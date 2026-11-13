@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { contextHint, formatTokens, usageTone, type ContextUsage } from './contextUsage'
+import { pageVisible } from '../api/visibility'
 
 type Props = {
   usage: ContextUsage
@@ -31,6 +32,7 @@ export default function ContextMeter({
     const startedAt = Date.now()
     setElapsed(0)
     const timer = window.setInterval(() => {
+      if (!pageVisible()) return
       setElapsed(Math.floor((Date.now() - startedAt) / 1000))
     }, 500)
     return () => window.clearInterval(timer)

@@ -86,8 +86,41 @@ async function request(
     init?.signal?.removeEventListener('abort', onCancel)
   }
 }
+/**
+ * 在途 GET 的去重表：同一个地址在同一时刻只发一次。
+ *
+ * 多个面板会同时问同一份数据（文件树与查看区都 stat 同一个文件、顶栏与会话灯
+ * 都拉会话列表），以前每次各开一个连接，把外壳的请求线程占满。只合并「没有
+ * signal、没指定 method」的请求——带 signal 的调用方要能单独取消，不能共享。
+ */
+const inflightGet = new Map<string, Promise<unknown>>()
+
+function dedupeKey(path: string, init?: RequestInit): string | null {
+  if (init?.method && init.method.toUpperCase() !== 'GET') return null
+  if (init?.signal) return null
+  return path
+}
+
+function sharedGet<T>(
+  path: string,
+  timeoutMs: number | undefined,
+  key: string,
+  init?: RequestInit,
+): Promise<T> {
+  const hit = inflightGet.get(key)
+  if (hit) return hit as Promise<T>
+  const pending = request(path, init, timeoutMs).then((res) => res.json() as Promise<T>)
+  inflightGet.set(key, pending)
+  const cleanup = () => {
+    if (inflightGet.get(key) === pending) inflightGet.delete(key)
+  }
+  void pending.then(cleanup, cleanup)
+  return pending
+}
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const key = dedupeKey(path, init)
+  if (key) return sharedGet<T>(key, undefined, key, init)
   const res = await request(path, init)
   return (await res.json()) as T
 }
@@ -111,6 +144,9 @@ export async function localRequest<T>(
   timeoutMs?: number,
   init?: RequestInit,
 ): Promise<T> {
+  // 本地接口（读盘、stat、git status）是最容易被多个面板同时点的，能合就合。
+  const key = signal ? null : dedupeKey(path, init)
+  if (key) return sharedGet<T>(key, timeoutMs, key, { ...init, cache: 'no-store' })
   const res = await request(path, { ...init, signal, cache: 'no-store' }, timeoutMs)
   return (await res.json()) as T
 }

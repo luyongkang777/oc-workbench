@@ -47,6 +47,7 @@ import {
   DRAFT_SAVE_DELAY_MS,
 } from './draftState'
 import { clearDraft, loadDraft, saveDraft, type StoredDraft } from '../api/draft'
+import { pageVisible } from '../api/visibility'
 import {
   cancelForm,
   compactSession,
@@ -555,7 +556,9 @@ export default function Chat({
             .catch(() => {})
         }
       }
-      timer = window.setInterval(() => void tick(), TITLE_POLL_INTERVAL)
+      timer = window.setInterval(() => {
+        if (pageVisible()) void tick()
+      }, TITLE_POLL_INTERVAL)
       titleTimers.current.set(sessionID, timer)
     },
     [applyTitle, deriveTitle],
@@ -1256,7 +1259,9 @@ export default function Chat({
   useEffect(() => {
     if (!runningApi.running && !streaming) return
     setStatsNow(Date.now())
-    const timer = window.setInterval(() => setStatsNow(Date.now()), 500)
+    const timer = window.setInterval(() => {
+      if (pageVisible()) setStatsNow(Date.now())
+    }, 500)
     return () => window.clearInterval(timer)
   }, [runningApi.running, streaming])
 

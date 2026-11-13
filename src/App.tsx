@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { onPageVisible, pageVisible } from './api/visibility'
 import Chat from './components/Chat'
 import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
@@ -293,9 +294,16 @@ export default function App() {
     probeOnce()
     // 冷启动时后台还在配对，首次探活经常吃 502。断开态用 1 秒快轮询，
     // 连上后回到 10 秒，保证「启动到可操作」不被 10 秒间隔拖住。
+    // 窗口不可见时跳过：最小化后没人看，恢复可见时立刻补一次。
     const delay = connected ? PROBE_INTERVAL_MS : FAST_PROBE_INTERVAL_MS
-    const timer = window.setInterval(probeOnce, delay)
-    return () => window.clearInterval(timer)
+    const timer = window.setInterval(() => {
+      if (pageVisible()) probeOnce()
+    }, delay)
+    const stopVisible = onPageVisible(probeOnce)
+    return () => {
+      window.clearInterval(timer)
+      stopVisible()
+    }
   }, [auth.status, connected, probeOnce])
 
   /**

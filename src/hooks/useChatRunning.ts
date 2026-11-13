@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getSession, isSessionBusy } from '../api/chat'
+import { pageVisible } from '../api/visibility'
 
 /** 连续查询失败多少次后放弃跟踪（网络断开/令牌过期时别一直打）。 */
 const MAX_FAILURES = 5
@@ -40,6 +41,8 @@ export function useChatRunning(connected: boolean, currentID: string | null) {
     let alive = true
     let failures = 0
     const timer = window.setInterval(async () => {
+      // 窗口不可见时不查：没人看按钮，省掉请求
+      if (!pageVisible()) return
       try {
         const session = await getSession(runningID)
         if (!alive) return

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import { pageVisible } from '../api/visibility'
 import MarkdownText, { type OpenFile } from './MarkdownText'
 import { useTurnWindow } from './useTurnWindow'
 import { copyText } from './clipboard'
@@ -94,7 +95,9 @@ function ReasoningBlock({ block }: { block: Extract<TurnBlock, { kind: 'reasonin
 
   useEffect(() => {
     if (!block.active) return
-    const timer = window.setInterval(() => setNow(Date.now()), 500)
+    const timer = window.setInterval(() => {
+      if (pageVisible()) setNow(Date.now())
+    }, 500)
     return () => window.clearInterval(timer)
   }, [block.active])
 

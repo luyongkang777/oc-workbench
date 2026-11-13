@@ -284,3 +284,17 @@
   新建会话发送时输入框不再闪回已发文字
 - 测试：`scripts/draftState.test.mjs` 11 项；Rust `draft.rs` 5 项；`npm test` 426 项全过；
   `tsc --noEmit`、`cargo test --release` 154 项全过
+
+
+## T25 ✅ 流畅度与并发优化
+
+- 范围：`src/api/visibility.ts`（新）、`src/api/client.ts`、`src/App.tsx`、`src/hooks/useChatRunning.ts`、
+  `src/components/GitPanel.tsx`、`src/components/MessageList.tsx`、`src/components/ContextMeter.tsx`、
+  `src/components/Chat.tsx`、`scripts/visibility.test.mjs`（新）
+- 内容：
+  1. 轮询都先看页面可见性：最小化/后台时探活（未连接 1s）、生成状态（800ms）、Git（5s）、
+     推理与压缩计时（500ms）、标题轮询（5s）、统计心跳（500ms）一律跳过；恢复可见时探活/Git 立即补一次
+  2. 在途 GET 合并：同地址同时刻只发一次（无 signal、非 POST 才合并），
+     多个面板同时要同一份 stat / 会话列表 / git status 时不再各开连接
+  3. 草稿写盘 600ms 防抖、目录清理每 16 次写扫一次
+- 完成信号：`npm test` 428 项全过、`tsc --noEmit` 干净；窗口最小化后后台无轮询请求
