@@ -36,7 +36,14 @@ OpenCode 工作台：Rust + WebView2 桌面外壳，内嵌前端，自带本地 
    文件树与文件查看走本地通道，后端断开也能照常浏览。
    `GET /api/state` 只读地回「是否连上 / 连到哪 / 最近一次失败原因」，
    断开态下页面每秒探活时顺带问一次，所以失败原因能直接显示出来（不触发配对）
-8. 日志与状态：`%LOCALAPPDATA%\oc-workbench\`（`projects.json` / `root.txt` / `gui-error.log`）。
+8. 断开后会**自己连回来**，不用点「重试」：
+   * 页面侧的 IPC 握手失败会退避重试（0.15s → 2s），等令牌期间还会每 0.7 秒补发一次
+     `oc:auth`——外壳的 IPC 桥比页面晚就绪、第一条消息丢了都能在一秒内接上；
+   * 探活失败后自动 `POST /api/reconnect`（1.2s → 4s → 8s → 12s → 15s 退避，连上即停），
+     所以后端晚起、服务重启换了端口都能自己恢复；
+   * 外壳侧同样自愈：`/api/*` 转发遇到 401 直接清掉旧连接重新配对；遇到上游连不上
+     先做一次 3 秒短探活确认，确认真的断了才重新 `discover`（单个请求超时不会打断活连接）
+9. 日志与状态：`%LOCALAPPDATA%\oc-workbench\`（`projects.json` / `root.txt` / `gui-error.log`）。
    日志不放 exe 同目录——装到 Program Files 或只读盘时写不进去，出问题就没线索
 
 ## 在线更新

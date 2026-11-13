@@ -84,14 +84,21 @@ pub fn proxy(request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
     match result {
         Ok(resp) => relay(request, resp),
         Err(ureq::Error::Status(401, _)) => {
-            // 认证过期（配对 token 通常 30 天）：页面可以 POST /api/reconnect 重新配对。
+            // 认证过期（配对 cookie 通常 30 天，或上游重启换了会话）：清掉旧连接，
+            // 让后台重新配对。以前这里只回一句「请点击重试」，用户不点就一直红着。
+            crate::server::heal(ctx, None);
             let _ = request.respond(
-                Response::from_string("401 认证失效，请点击「重试连接」或重启工作台")
+                Response::from_string("401 认证失效，正在自动重新连接")
                     .with_status_code(401),
             );
         }
         Err(ureq::Error::Status(_, resp)) => relay(request, resp),
         Err(err) => {
+            // 上游连不上：常见于 opencode 服务重启后换了端口。让后台短探活确认一次，
+            // 确认真的断了才清连接并重新 discover —— 单个请求超时不该打断一条活连接。
+            if let Some((base, _)) = ctx.current_backend() {
+                crate::server::heal(ctx, Some(base));
+            }
             let text = format!("未连接：上游服务不可用（{err}）");
             let _ = json_error(request, 502, &text);
         }

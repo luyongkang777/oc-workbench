@@ -37,6 +37,11 @@ import {
 } from './components/theme'
 import { CHAT_W, SIDE_W, useUiLayout } from './hooks/useUiLayout'
 import { useProjectRunning } from './hooks/useProjectRunning'
+import {
+  hiddenRecheckDelay,
+  nextReconnectDelay,
+  shouldReconnectNow,
+} from './components/connectionPolicy'
 
 /**
  * 没有历史记录时的工作区。
@@ -264,6 +269,66 @@ export default function App() {
     const timer = window.setInterval(probeOnce, delay)
     return () => window.clearInterval(timer)
   }, [auth.status, connected, probeOnce])
+
+  /**
+   * 断开态自愈：不再等用户点「重试」。
+   *
+   * 探活失败只说明「此刻连不上」，真正能把状态拨回来的是让外壳重新配一次对
+   * （`/api/reconnect` → `opencode service status` + `pair`）。以前这件事只挂在
+   * 「重试」按钮上，于是后端晚起、服务重开换了端口、配对 cookie 过期之后，
+   * 界面就一直停在「未连接」——「有时候打开一直是未连接」的根就在这。
+   *
+   * 节奏交给 connectionPolicy：第一次 1.2 秒后（先给外壳自己的 bootstrap 让路），
+   * 之后 4s → 8s → 12s → 15s 退避；连上、或者切到后台就立刻停。
+   */
+  useEffect(() => {
+    if (auth.status !== 'ready' || connected) return
+    // dev server 没有外壳：Vite 代理盯死一个固定上游，没有「重新配对」这回事，
+    // 自动打 /api/reconnect 只会拿 404 把错误条刷出来。dev 里保持手动「重试」原样。
+    if (import.meta.env.DEV) return
+    let cancelled = false
+    let timer = 0
+    let attempt = 0
+
+    const step = async () => {
+      if (cancelled) return
+      // 后台标签页不跑配对：一次性链接会白生成，回到前台再由可见性事件补一次。
+      if (!shouldReconnectNow(document.hidden)) {
+        timer = window.setTimeout(step, hiddenRecheckDelay())
+        return
+      }
+      attempt += 1
+      if (alive.current) setReconnecting(true)
+      try {
+        await reconnect()
+        if (!cancelled) await probeNow()
+      } catch (err) {
+        // 外壳会回 502 + 具体原因（找不到 opencode、pair 失败等），显示出来别让用户猜。
+        if (alive.current) setRetryError((err as Error).message)
+      } finally {
+        if (alive.current) setReconnecting(false)
+      }
+      if (cancelled) return
+      timer = window.setTimeout(step, nextReconnectDelay(attempt))
+    }
+
+    timer = window.setTimeout(step, nextReconnectDelay(0))
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [auth.status, connected, probeNow])
+
+  // 从后台回到前台：立刻补一次探活，别等下一个 1 秒/10 秒周期才亮灯。
+  useEffect(() => {
+    if (auth.status !== 'ready') return
+    const onVisibility = () => {
+      if (document.hidden) return
+      probeOnce()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [auth.status, probeOnce])
 
   useEffect(() => {
     if (!notice) return
@@ -609,7 +674,10 @@ export default function App() {
         ? auth.error
         : connected
           ? '已连接'
-          : '未连接'
+          : // 自动重连正在跑：别继续显示死气沉沉的「未连接」，让用户看到它在自愈
+            reconnecting
+            ? '重连中…'
+            : '未连接'
   const showRetry = !statusOk && auth.status !== 'pending'
 
   return (

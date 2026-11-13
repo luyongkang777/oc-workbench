@@ -15,8 +15,8 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock, TryLockError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -29,10 +29,17 @@ use crate::body::{read_body_with_timeout, BodyRead, RECONNECT_BODY_LIMIT};
 const MAX_CONCURRENT: usize = 64;
 /// 后台连不上后端时的重试间隔（后端起来后最多这么久就能自动恢复）。
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// 判定「上游是否真的死了」时的探活超时：这只是一次确认，不值得等太久。
+const ALIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// 串行化 `discover()`：后台重试和 `/api/reconnect` 可能同时触发，
 /// 并发跑 `opencode pair` 会一次生成多条一次性链接，没必要也不利于排查。
 static DISCOVER_LOCK: Mutex<()> = Mutex::new(());
+/// 后台发现线程是否还在跑：`spawn_bootstrap` 可能被多处调用（启动、自愈），
+/// 不设这个闸门就会叠出多条线程，每 5 秒各跑一次 `pair`。
+static BOOTSTRAP_ACTIVE: AtomicBool = AtomicBool::new(false);
+/// 自愈线程是否在跑：proxy 每个失败请求都会触发一次，不能每个都起线程。
+static HEALING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone)]
 pub struct Ctx {
@@ -81,6 +88,45 @@ fn has_backend(state: &Arc<RwLock<Option<Backend>>>) -> bool {
     }
 }
 
+/// 当前上游地址（用于「只清掉我判定过的那条连接」）。
+fn backend_base(state: &Arc<RwLock<Option<Backend>>>) -> Option<String> {
+    match state.read() {
+        Ok(guard) => guard.as_ref().map(|backend| backend.base.clone()),
+        Err(poisoned) => poisoned
+            .into_inner()
+            .as_ref()
+            .map(|backend| backend.base.clone()),
+    }
+}
+
+/// 读「最近一次连接失败的原因」。
+fn last_error_text(slot: &Arc<Mutex<Option<String>>>) -> Option<String> {
+    match slot.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+/// 清掉当前连接（上游确定不可用 / cookie 已失效）。只清 `expected` 那一条，避免误伤。
+///
+/// 传 `None` 表示「不管现在是哪条都清」。
+fn clear_backend(state: &Arc<RwLock<Option<Backend>>>, expected: Option<&str>) {
+    let write = |slot: &mut Option<Backend>| {
+        let same = match (expected, slot.as_ref()) {
+            (None, _) => true,
+            (Some(base), Some(backend)) => backend.base == base,
+            (Some(_), None) => false,
+        };
+        if same {
+            *slot = None;
+        }
+    };
+    match state.write() {
+        Ok(mut slot) => write(&mut slot),
+        Err(poisoned) => write(&mut poisoned.into_inner()),
+    }
+}
+
 /// 记录「最近一次连接失败的原因」；成功时传 None 清空。
 fn set_last_error(slot: &Arc<Mutex<Option<String>>>, error: Option<String>) {
     match slot.lock() {
@@ -98,10 +144,26 @@ fn connect_once(
     state: &Arc<RwLock<Option<Backend>>>,
     last_error: &Arc<Mutex<Option<String>>>,
 ) -> Result<String, String> {
-    let _guard = match DISCOVER_LOCK.lock() {
+    // 已经有一次 discover 在跑（后台 bootstrap、自愈、或另一个重连请求）：
+    // 等它结束后直接按它的结果回答。**绝不再跑一遍 `opencode pair`**——
+    // 并发配对会一次生成多条一次性链接，互相顶掉，正是「点重试反而连不上」的来源。
+    let guard = match DISCOVER_LOCK.try_lock() {
         Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            let waited = match DISCOVER_LOCK.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            drop(waited);
+            return match backend_base(state) {
+                Some(base) => Ok(base),
+                None => Err(last_error_text(last_error)
+                    .unwrap_or_else(|| "正在连接本地服务，请稍后重试".to_string())),
+            };
+        }
     };
+    let _guard = guard;
     match crate::auth::discover() {
         Ok(backend) => {
             let base = backend.base.clone();
@@ -123,24 +185,31 @@ fn connect_once(
 /// 后端晚起来也能自己恢复。
 ///
 /// 同一个失败原因只记一次日志：每 5 秒重试一次，原样刷屏会把日志撑爆。
+///
+/// 幂等：已经有发现线程在跑时直接返回（[`BOOTSTRAP_ACTIVE`]）。自愈时可能反复调用它。
 pub fn spawn_bootstrap(
     state: Arc<RwLock<Option<Backend>>>,
     last_error: Arc<Mutex<Option<String>>>,
 ) {
+    if BOOTSTRAP_ACTIVE.swap(true, Ordering::SeqCst) {
+        return;
+    }
     thread::spawn(move || {
+        // 线程退出时（包括 panic）自动把闸门放开，别让后续重连永远进不来。
+        let _active = FlagGuard(&BOOTSTRAP_ACTIVE);
         let mut attempt = 0u32;
         let mut last_message = String::new();
         loop {
             // 手动 /api/reconnect 已经连上了就别再跑一遍 pair（会浪费一次性链接）。
             if has_backend(&state) {
-                return;
+                break;
             }
 
             attempt += 1;
             match connect_once(&state, &last_error) {
                 Ok(base) => {
                     crate::append_log(&format!("[auth] 已连接 {base}（第 {attempt} 次尝试）\n"));
-                    return;
+                    break;
                 }
                 Err(err) => {
                     if err != last_message {
@@ -153,6 +222,64 @@ pub fn spawn_bootstrap(
                 }
             }
             thread::sleep(RETRY_INTERVAL);
+        }
+    });
+}
+
+/// 上游是否还在服务：一次短探活，**有状态码就算活着**（端口在应答，只是不认这个请求）。
+///
+/// 只在「刚才那个请求真的失败了」之后调用，用来区分「后端死了」和「这一个请求出问题」。
+fn upstream_alive(base: &str, state: &Arc<RwLock<Option<Backend>>>) -> bool {
+    let cookie = match state.read() {
+        Ok(guard) => guard.as_ref().map(|backend| backend.cookie.clone()),
+        Err(poisoned) => poisoned
+            .into_inner()
+            .as_ref()
+            .map(|backend| backend.cookie.clone()),
+    };
+    let Some(cookie) = cookie else {
+        return false;
+    };
+    let agent = ureq::AgentBuilder::new()
+        .timeout(ALIVE_TIMEOUT)
+        .build();
+    match agent
+        .get(&format!("{base}/api/info"))
+        .set("cookie", &cookie)
+        .call()
+    {
+        Ok(_) => true,
+        Err(ureq::Error::Status(_, _)) => true,
+        Err(_) => false,
+    }
+}
+
+/// 上游不可用时的自愈入口：清掉死掉的连接，再把后台发现线程拉起来。
+///
+/// `suspect` 传 `Some(base)` 表示「这一个请求失败，怀疑这条连接死了」——先在后台
+/// 短探活确认，确认不了就只清这一条并重连；
+/// 传 `None` 表示已经确定失效（例如上游回了 401，配对 cookie 过期），直接清掉重连。
+///
+/// 为什么要先确认：单个请求超时、请求体读失败、SSE 被客户端断开，都不代表后端死了。
+/// 一有错误就重新配对会让正在用的连接反复抖动，还会白白消耗一次性链接。
+pub(crate) fn heal(ctx: &Ctx, suspect: Option<String>) {
+    if HEALING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let state = ctx.backend.clone();
+    let last_error = ctx.last_error.clone();
+    thread::spawn(move || {
+        // 同样的道理：探活/重连里出任何意外，闸门也要自己放开。
+        let _healing = FlagGuard(&HEALING);
+        let dead = match suspect.as_deref() {
+            None => true,
+            Some(base) => !upstream_alive(base, &state),
+        };
+        if dead {
+            clear_backend(&state, suspect.as_deref());
+            set_last_error(&last_error, Some("后端连接已失效，正在自动重连".to_string()));
+            crate::append_log("[auth] 连接失效，自动重新发现后端\n");
+            spawn_bootstrap(state, last_error);
         }
     });
 }
@@ -192,6 +319,18 @@ struct ActiveGuard(Arc<AtomicUsize>);
 impl Drop for ActiveGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// 「这个后台任务还在跑」的标志，线程退出（含 panic）时自动复位。
+///
+/// 用 RAII 而不是在末尾手写 store：发现线程里跑的是外部命令，panic 一次就会留下
+/// 一个永远为 true 的标志，把后续所有重连都堵死。
+struct FlagGuard(&'static AtomicBool);
+
+impl Drop for FlagGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 

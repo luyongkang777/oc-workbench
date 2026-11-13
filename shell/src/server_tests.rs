@@ -394,3 +394,67 @@ fn state_endpoint_reports_error_without_auth_attempt() {
     let wrong = raw_request(port, "POST", &host, "/api/state", &headers);
     assert!(wrong.starts_with("HTTP/1.1 405"), "GET 接口不收 POST");
 }
+
+// ── 断开态自愈：清连接与探活判定 ───────────────────────────────────────────────
+//
+// 这两条都是「后端中途失效」路径上的判据，坏了的后果很隐蔽：
+// 清了不该清的连接 → 正在用的请求全变 502；把活着的上游判死 → 反复 pair。
+
+fn backend(base: &str) -> Backend {
+    Backend {
+        base: base.to_string(),
+        cookie: "cookie".to_string(),
+    }
+}
+
+/// 清连接只清「被判死的那一条」：期间已经换上的新连接不能被误伤。
+#[test]
+fn clear_backend_only_drops_the_matching_base() {
+    let state = Arc::new(RwLock::new(Some(backend("http://127.0.0.1:1111"))));
+
+    // 判死的是另一条：不能动现在的连接
+    super::clear_backend(&state, Some("http://127.0.0.1:2222"));
+    assert!(state.read().unwrap().is_some(), "不该清掉别的连接");
+
+    // 判死的正是当前这条：清掉
+    super::clear_backend(&state, Some("http://127.0.0.1:1111"));
+    assert!(state.read().unwrap().is_none(), "同一条连接应被清掉");
+
+    // None = 无条件清（401 那种确定失效）
+    *state.write().unwrap() = Some(backend("http://127.0.0.1:3333"));
+    super::clear_backend(&state, None);
+    assert!(state.read().unwrap().is_none(), "None 应该无条件清");
+}
+
+/// 探活：没人监听 → 判死；端口在应答（哪怕只是一个 403）→ 还活着。
+///
+/// 这条判据错了会连环出事：把活上游判死 → 每来一个失败请求就重新配对。
+#[test]
+fn upstream_alive_distinguishes_dead_port_from_live_one() {
+    // 拿一个刚释放的端口：大概率没人监听，连接被拒
+    let dead_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("占端口");
+        listener.local_addr().expect("取端口").port()
+    };
+    let dead_state = Arc::new(RwLock::new(Some(backend(&format!(
+        "http://127.0.0.1:{dead_port}"
+    )))));
+    assert!(
+        !super::upstream_alive(&format!("http://127.0.0.1:{dead_port}"), &dead_state),
+        "没人监听的端口必须判死"
+    );
+
+    // 起本地服务（/api/info 没有 token → 403）：有状态码说明端口活着
+    let token = "t-alive";
+    let port = start_test_server(None, token);
+    let base = format!("http://127.0.0.1:{port}");
+    let live_state = Arc::new(RwLock::new(Some(backend(&base))));
+    assert!(
+        super::upstream_alive(&base, &live_state),
+        "端口在应答就必须认为上游还活着"
+    );
+
+    // 没有连接时谈不到探活：直接判死（调用方会去重新 discover）
+    let empty: Arc<RwLock<Option<Backend>>> = Arc::new(RwLock::new(None));
+    assert!(!super::upstream_alive(&base, &empty), "没有 cookie 时判死");
+}
