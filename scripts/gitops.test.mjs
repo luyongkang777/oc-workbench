@@ -464,6 +464,10 @@ test('rollback soft：历史回到目标提交，工作区改动保留', async (
 test('端到端：init → 提交 → 排除已跟踪目录 → 撤销改动 → 设置远程', async (t) => {
   const dir = await tempDir(t)
   await gitApi({ method: 'POST', action: 'init', root: dir })
+  // 临时仓库不依赖机器上的全局身份：CI 上没有 user.name/user.email，
+  // 直接 commit 会报 Author identity unknown（本地因为配过所以看不出来）
+  await git(dir, ['config', 'user.name', '测试用户'])
+  await git(dir, ['config', 'user.email', 'test@example.com'])
   // 与 initRepoAt 一致：关掉 autocrlf，撤销后才能逐字节比对
   await git(dir, ['config', 'core.autocrlf', 'false'])
 
@@ -519,7 +523,9 @@ test('端到端：init → 提交 → 排除已跟踪目录 → 撤销改动 →
 
   // 用本地裸库当远端：离线、确定，还能顺带验证 push 成功路径与上游跟踪
   const bareParent = await tempDir(t)
-  await git(bareParent, ['init', '--bare', '裸 库.git'])
+  // 显式指定初始分支：机器上的 init.defaultBranch 不一定是 main，
+  // 否则裸库 HEAD 指向 master，push 完 main 之后 `git log` 会说没有提交
+  await git(bareParent, ['-c', 'init.defaultBranch=main', 'init', '--bare', '裸 库.git'])
   const bare = path.join(bareParent, '裸 库.git')
 
   const remote = await gitApi({ method: 'POST', action: 'remote', root: dir, body: { url: bare } })
@@ -664,7 +670,7 @@ test('log：远程已推送 false / 本地领先 true，origin/HEAD 不进 branc
   const { dir } = await makeMergeRepo(t)
 
   const bareParent = await tempDir(t)
-  await git(bareParent, ['init', '--bare', 'remote.git'])
+  await git(bareParent, ['-c', 'init.defaultBranch=main', 'init', '--bare', 'remote.git'])
   const bare = path.join(bareParent, 'remote.git')
   await git(dir, ['remote', 'add', 'origin', bare])
   await git(dir, ['push', '-q', '-u', 'origin', 'main'])
