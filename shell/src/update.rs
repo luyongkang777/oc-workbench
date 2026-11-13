@@ -600,65 +600,69 @@ pub fn download(manifest: &Manifest, dir: &Path) -> Result<PathBuf, String> {
     Ok(final_path)
 }
 
-/// batch 里 `%` 是变量前缀，路径里出现就得写两次才能当字面量。
-fn batch_path(path: &Path) -> Result<String, String> {
-    let text = path.to_string_lossy().to_string();
-    if text.contains('"') {
-        return Err(format!("路径里有引号，无法写进更新脚本：{text}"));
-    }
-    Ok(text.replace('%', "%%"))
-}
+/// 更新脚本引用的三个变量名。脚本里只出现变量名，真实路径在拉起时从环境块传进去。
+const ENV_TARGET: &str = "OCWB_TARGET";
+const ENV_SOURCE: &str = "OCWB_SOURCE";
+const ENV_LOG: &str = "OCWB_LOG";
 
-/// 生成替换脚本。
+/// 生成替换脚本。**整段必须是纯 ASCII——任何路径都不能写进脚本。**
+///
+/// 为什么路径不能落在 .cmd 里：cmd.exe 按控制台代码页解码批处理文件的字节。
+/// 简体中文机器上那是 936（GBK），而我们写脚本用的是 UTF-8，
+/// `D:\软件工具\oc\oc-workbench.exe` 会被读成 `D:\杞浠跺伐鍏穃oc\...`，
+/// 最后 `start` 那一步就弹「Windows 找不到文件」。
+/// 改成用 GBK 写脚本也不稳：系统语言不是中文时控制台代码页是 437/65001，同样错。
+///
+/// 环境变量走 CreateProcess 的 Unicode 环境块，cmd 展开 `%VAR%` 时拿到的
+/// 已经是正确的 UTF-16 字符串，跟代码页无关；顺带免掉路径里 `%` 要写成 `%%` 的坑。
 ///
 /// 为什么不用「等 PID 退出」：Windows 上两条现成路子都有坑——PowerShell 的
 /// `WaitForExit` 实测会在目标进程已经退出后继续挂着（更新就这么卡住），
 /// `tasklist` 的输出又被本地化文案干扰，没法可靠判断。换成最直接的办法：
 /// **反复重试覆盖**。能写进去就说明旧进程已释放文件；写不进去就等一秒再来。
-///
-/// 内容刻意只用 ASCII：中文在 GBK/UTF-8 混用的 cmd 里会乱码，甚至把行拆坏。
-pub fn build_script(
-    target_exe: &Path,
-    source_exe: &Path,
-    pid: u32,
-    log_path: &Path,
-) -> Result<String, String> {
-    let target = batch_path(target_exe)?;
-    let source = batch_path(source_exe)?;
-    let log = batch_path(log_path)?;
+pub fn build_script(pid: u32) -> String {
     let retries = COPY_RETRIES;
 
     let lines = vec![
         "@echo off".to_string(),
         "setlocal".to_string(),
-        format!("set \"TARGET={target}\""),
-        format!("set \"SOURCE={source}\""),
-        format!("set \"LOG={log}\""),
-        format!("echo [%DATE% %TIME%] update start (old pid {pid}) >>\"%LOG%\""),
-        "if exist \"%TARGET%.bak\" del /f /q \"%TARGET%.bak\" >nul 2>&1".to_string(),
-        "copy /Y \"%TARGET%\" \"%TARGET%.bak\" >nul 2>&1".to_string(),
+        format!("if not defined {ENV_TARGET} exit /b 2"),
+        format!("if not defined {ENV_SOURCE} exit /b 2"),
+        format!("if not defined {ENV_LOG} exit /b 2"),
+        format!("echo [%DATE% %TIME%] update start (old pid {pid}) >>\"%{ENV_LOG}%\""),
+        format!("if exist \"%{ENV_TARGET}%.bak\" del /f /q \"%{ENV_TARGET}%.bak\" >nul 2>&1"),
+        format!("copy /Y \"%{ENV_TARGET}%\" \"%{ENV_TARGET}%.bak\" >nul 2>&1"),
         "set /a TRIES=0".to_string(),
         ":wait".to_string(),
-        "copy /Y \"%SOURCE%\" \"%TARGET%\" >nul 2>&1".to_string(),
+        format!("copy /Y \"%{ENV_SOURCE}%\" \"%{ENV_TARGET}%\" >nul 2>&1"),
         "if not errorlevel 1 goto done".to_string(),
         "set /a TRIES+=1".to_string(),
         format!("if %TRIES% GEQ {retries} goto giveup"),
         "ping -n 2 127.0.0.1 >nul 2>&1".to_string(),
         "goto wait".to_string(),
         ":done".to_string(),
-        "echo [%DATE% %TIME%] replaced after %TRIES% retries, restarting >>\"%LOG%\"".to_string(),
-        "start \"\" \"%TARGET%\"".to_string(),
+        format!("echo [%DATE% %TIME%] replaced after %TRIES% retries, restarting >>\"%{ENV_LOG}%\""),
+        format!("start \"\" \"%{ENV_TARGET}%\""),
         "(goto) 2>nul & del \"%~f0\" & exit /b 0".to_string(),
         ":giveup".to_string(),
-        "echo [%DATE% %TIME%] copy failed after %TRIES% retries >>\"%LOG%\"".to_string(),
-        "start \"\" \"%TARGET%\"".to_string(),
+        format!("echo [%DATE% %TIME%] copy failed after %TRIES% retries >>\"%{ENV_LOG}%\""),
+        format!("start \"\" \"%{ENV_TARGET}%\""),
         "(goto) 2>nul & del \"%~f0\" & exit /b 1".to_string(),
     ];
-    Ok(format!("{}\r\n", lines.join("\r\n")))
+    format!("{}\r\n", lines.join("\r\n"))
 }
 
-/// 准备更新：下载 + 校验 + 写脚本。返回脚本路径。
-pub fn prepare(manifest: &Manifest, target_exe: &Path, pid: u32) -> Result<PathBuf, String> {
+/// 一次已经准备好的更新：脚本、下载好的新 exe、日志落点。
+///
+/// 三个路径都不写进脚本，拉起脚本时通过环境变量传（原因见 [`build_script`]）。
+pub struct Prepared {
+    pub script: PathBuf,
+    pub source: PathBuf,
+    pub log: PathBuf,
+}
+
+/// 准备更新：下载 + 校验 + 写脚本。
+pub fn prepare(manifest: &Manifest, target_exe: &Path, pid: u32) -> Result<Prepared, String> {
     let dir = update_dir()?;
     // 目标目录必须可写：只读目录（Program Files、只读盘）里装了也换不掉，
     // 与其下完再失败，不如现在就告诉用户。
@@ -679,19 +683,36 @@ pub fn prepare(manifest: &Manifest, target_exe: &Path, pid: u32) -> Result<PathB
 
     let downloaded = download(manifest, &dir)?;
     let script = dir.join(format!("apply-{pid}.cmd"));
-    let body = build_script(target_exe, &downloaded, pid, &dir.join("update.log"))?;
-    fs::write(&script, body.as_bytes()).map_err(|err| format!("写更新脚本失败：{err}"))?;
-    Ok(script)
+    let log = dir.join("update.log");
+    fs::write(&script, build_script(pid).as_bytes())
+        .map_err(|err| format!("写更新脚本失败：{err}"))?;
+    Ok(Prepared {
+        script,
+        source: downloaded,
+        log,
+    })
 }
 
-/// 拉起替换脚本。脚本独立于本进程运行，所以本进程可以立刻退出。
-pub fn spawn_script(script: &Path) -> Result<(), String> {
+/// 组装拉起脚本的命令：命令行里只有脚本路径，三个真实路径走环境变量。
+fn script_command(prepared: &Prepared, target_exe: &Path) -> Command {
     let mut cmd = Command::new("cmd");
+    // 不加 `/S`：带空格时 Rust 会把脚本路径包成一对引号，cmd 的默认规则
+    // （引号内是一个存在的文件）会原样保留这对引号并正确启动它；
+    // 加了 `/S` 反而先把引号剥掉，路径被空格拆成两段，报「不是内部或外部命令」。
     cmd.arg("/C")
-        .arg(script)
+        .arg(&prepared.script)
+        .env(ENV_TARGET, target_exe)
+        .env(ENV_SOURCE, &prepared.source)
+        .env(ENV_LOG, &prepared.log)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    cmd
+}
+
+/// 拉起替换脚本。脚本独立于本进程运行，所以本进程可以立刻退出。
+pub fn spawn_script(prepared: &Prepared, target_exe: &Path) -> Result<(), String> {
+    let mut cmd = script_command(prepared, target_exe);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -715,8 +736,8 @@ pub fn apply_now(target_exe: &Path) -> Result<String, String> {
                 "当前已是最新版本（{CURRENT_VERSION}），没有可更新的内容"
             ));
         }
-        let script = prepare(&manifest, target_exe, std::process::id())?;
-        spawn_script(&script)?;
+        let prepared = prepare(&manifest, target_exe, std::process::id())?;
+        spawn_script(&prepared, target_exe)?;
         Ok(manifest.version)
     })();
     if result.is_err() {
@@ -1209,19 +1230,16 @@ mod tests {
 
     #[test]
     fn script_retries_until_copy_succeeds() {
-        let script = build_script(
-            Path::new(r"C:\Tools\oc-workbench.exe"),
-            Path::new(r"C:\Users\me\AppData\Local\oc-workbench\update\oc-workbench-1.0.1.exe"),
-            4321,
-            Path::new(r"C:\Users\me\AppData\Local\oc-workbench\update\update.log"),
-        )
-        .expect("应能生成脚本");
+        let script = build_script(4321);
 
-        assert!(script.contains("copy /Y \"%SOURCE%\" \"%TARGET%\""), "{script}");
+        assert!(
+            script.contains("copy /Y \"%OCWB_SOURCE%\" \"%OCWB_TARGET%\""),
+            "{script}"
+        );
         assert!(script.contains("goto wait"), "失败要重试：{script}");
         assert!(script.contains("if %TRIES% GEQ 120 goto giveup"), "{script}");
         assert!(script.contains(".bak"), "覆盖前要留备份");
-        assert!(script.contains("start \"\" \"%TARGET%\""), "更新完要重启");
+        assert!(script.contains("start \"\" \"%OCWB_TARGET%\""), "更新完要重启");
         assert!(script.contains("4321"), "日志里要有旧 pid 便于排查");
         assert!(script.contains(">nul 2>&1"), "批处理重定向要写 nul");
         assert!(!script.contains("/dev/null"), "这是 Windows 批处理");
@@ -1230,26 +1248,78 @@ mod tests {
     }
 
     #[test]
-    fn script_escapes_percent_in_paths() {
-        let script = build_script(
-            Path::new(r"C:\100%\oc-workbench.exe"),
-            Path::new(r"C:\tmp\new.exe"),
-            7,
-            Path::new(r"C:\tmp\update.log"),
-        )
-        .expect("应能生成脚本");
-        assert!(script.contains(r"C:\100%%\oc-workbench.exe"), "{script}");
+    fn script_never_embeds_paths() {
+        // 中文路径写进 .cmd 会被 cmd 按控制台代码页（GBK）读成乱码，
+        // `start` 那一步就成了「Windows 找不到文件」——路径只能走环境变量。
+        let script = build_script(7);
+        assert!(script.is_ascii(), "脚本必须纯 ASCII：{script}");
+        assert!(
+            !script.contains("OCWB_TARGET="),
+            "不能把路径 set 进脚本：{script}"
+        );
+        assert!(
+            script.contains("%OCWB_TARGET%")
+                && script.contains("%OCWB_SOURCE%")
+                && script.contains("%OCWB_LOG%"),
+            "路径只能通过环境变量引用：{script}"
+        );
+        assert!(
+            script.contains("if not defined OCWB_TARGET exit /b 2"),
+            "变量没传进来时要立刻退出，别在空路径上 copy"
+        );
     }
 
     #[test]
-    fn script_rejects_quote_in_path() {
-        let err = build_script(
-            Path::new("C:\\bad\"path\\x.exe"),
-            Path::new("C:\\tmp\\new.exe"),
-            1,
-            Path::new("C:\\tmp\\update.log"),
+    fn script_command_passes_chinese_paths_as_env() {
+        // 装在中文目录下（截图里那台就是 D:\软件工具\oc\）必须原样传到子进程。
+        let prepared = Prepared {
+            script: PathBuf::from(r"C:\Users\me\AppData\Local\oc-workbench\update\apply-7.cmd"),
+            source: PathBuf::from(r"D:\软件工具\update\oc-workbench-1.3.3.exe"),
+            log: PathBuf::from(r"D:\软件工具\update\update.log"),
+        };
+        let target = Path::new(r"D:\软件工具\oc\oc-workbench.exe");
+        let cmd = script_command(&prepared, target);
+
+        let envs: Vec<(String, Option<String>)> = cmd
+            .get_envs()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        let find = |name: &str| {
+            envs.iter()
+                .find(|(key, _)| key == name)
+                .and_then(|(_, value)| value.clone())
+        };
+        assert_eq!(
+            find("OCWB_TARGET").as_deref(),
+            Some(r"D:\软件工具\oc\oc-workbench.exe")
         );
-        assert!(err.is_err());
+        assert_eq!(
+            find("OCWB_SOURCE").as_deref(),
+            Some(r"D:\软件工具\update\oc-workbench-1.3.3.exe")
+        );
+        assert_eq!(
+            find("OCWB_LOG").as_deref(),
+            Some(r"D:\软件工具\update\update.log")
+        );
+
+        // 命令行里不许出现中文路径：只保留 /C 和脚本位置。
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "/C",
+                r"C:\Users\me\AppData\Local\oc-workbench\update\apply-7.cmd"
+            ]
+        );
+        assert!(args.iter().all(|arg| arg.is_ascii()), "命令行必须纯 ASCII：{args:?}");
     }
 
     #[test]
