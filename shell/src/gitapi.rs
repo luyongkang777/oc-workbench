@@ -293,6 +293,23 @@ fn git_candidates() -> Vec<PathBuf> {
     out
 }
 
+/// 直接扫 PATH（不依赖 `where` 命令）。
+///
+/// `where` 在极端情况下会失败：PATH 里没有 System32、进程句柄紧张、安全软件拦
+/// 子进程。而解析 git 是核心功能，不能因为一个辅助命令挂了就判定「没有 git」。
+fn path_scan(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        for ext in ["exe", "cmd", "bat"] {
+            let candidate = dir.join(format!("{name}.{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// 已缓存的 git 路径（只缓存成功；没装时每次都会重新找，装完立刻可用）。
 pub fn resolve_git() -> Option<PathBuf> {
     if let Ok(guard) = GIT_FOUND.lock() {
@@ -309,6 +326,13 @@ pub fn resolve_git() -> Option<PathBuf> {
     found
 }
 
+/// 清掉定位缓存（装上便携版 git 之后调用）。
+pub fn reset_resolution() {
+    if let Ok(mut guard) = GIT_FOUND.lock() {
+        *guard = None;
+    }
+}
+
 fn resolve_git_uncached() -> Option<PathBuf> {
     // 显式指定优先；指到不存在的路径时继续往下找，不能因为一条错配置就判定「没有 git」
     if let Some(raw) = env_path(GIT_ENV) {
@@ -322,11 +346,18 @@ fn resolve_git_uncached() -> Option<PathBuf> {
     if let Some(found) = where_lookup("git") {
         return Some(found);
     }
-    git_candidates().into_iter().find(|path| path.is_file())
+    if let Some(found) = path_scan("git") {
+        return Some(found);
+    }
+    if let Some(found) = git_candidates().into_iter().find(|path| path.is_file()) {
+        return Some(found);
+    }
+    // 最后看工作台自己下载的便携版
+    crate::gitbundle::managed_exe()
 }
 
 /// 找不到 git 时的错误：把查过的位置和下一步都说清楚，别只甩一句 program not found。
-pub fn missing_git() -> GitError {
+fn missing_git() -> GitError {
     GitError::new(
         400,
         format!(
@@ -349,7 +380,16 @@ fn run_git_with_input(
     timeout: Duration,
     input: Option<Vec<u8>>,
 ) -> Result<GitOutput, GitError> {
-    let program = resolve_git().ok_or_else(missing_git)?;
+    let program = match resolve_git() {
+        Some(path) => path,
+        None => {
+            // 没有 git：顺手把便携版下下来（后台线程），这次请求先带一句话回去。
+            // 面板本身会轮询，装完下一次请求就能用上。
+            let hint = crate::gitbundle::request_install();
+            let base = missing_git();
+            return Err(GitError::new(base.code, format!("{}\n{hint}", base.message)));
+        }
+    };
     if !GIT_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         crate::append_log(&format!("[git] 使用 {}\n", program.display()));
     }

@@ -144,9 +144,21 @@ function buildTurns(ordered: ChatMessage[]): TurnGroup {
 
     if (message.type !== 'assistant') continue
 
+    /*
+     * 一条 assistant 消息该并进上一轮，还是自己另起一轮。
+     *
+     * 只有两种情况需要另起：还没有任何轮次（开头就没有用户消息，例如历史被截断），
+     * 或者上一轮是压缩节点（它自己占一轮，后面的回复属于压缩之后的新段落）。
+     *
+     * 判据不能写成 `turn.user === undefined`：压缩轮没有 user，上一条已经建出来的
+     * 续接轮同样没有。用那个判据，压缩节点之后的每条 assistant 都会各占一轮——
+     * 压缩一次就把「十几轮」炸成「几十上百轮」，轮次窗口被误开到虚拟列表，
+     * 几百个 spacer 一撑，切会话回来时文字全落在视口外，看着像聊天记录被清空。
+     */
     let turn = turns[turns.length - 1]
-    if (!turn || turn.user === undefined) {
-      // 开头没有用户消息（例如历史被截断）时补一个空轮次，别把内容丢掉
+    const lastIsCompaction =
+      turn !== undefined && (turn.summary !== undefined || turn.summaryError !== undefined)
+    if (!turn || lastIsCompaction) {
       turn = emptyTurn(message.id)
       turns.push(turn)
       ids.push([message.id])

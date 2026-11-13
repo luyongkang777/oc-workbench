@@ -14,6 +14,7 @@
 mod auth;
 mod body;
 mod cli;
+mod fetch;
 mod fsapi;
 mod fsdecode;
 mod fsindex;
@@ -21,7 +22,9 @@ mod fsread;
 mod fssearch;
 mod fsutil;
 mod gitapi;
+mod gitbundle;
 mod projects;
+mod purge;
 mod remoteapi;
 mod update;
 mod winenc;

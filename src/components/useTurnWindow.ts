@@ -51,6 +51,16 @@ export function useTurnWindow(
   const frameRef = useRef<number | null>(null)
   const [version, setVersion] = useState(0)
   const [viewport, setViewport] = useState({ top: 0, height: 0 })
+  /**
+   * 用户是不是还在贴着底部看。
+   *
+   * 不能用布局阶段现算的 total 判断：高度还在测量，total 会从估算的 260px
+   * 一路长到实测值；拿新 total 和旧 scrollTop 一比就判成「不在底部」，
+   * 于是内容长高一屏，视口就再也不跟了。这里只在真实滚动事件里按位置差更新。
+   */
+  const stickRef = useRef(true)
+  /** 上一次同步看到的 scrollTop：判断这次「位置真的动了」，还是只是内容长高。 */
+  const lastTopRef = useRef<number | null>(null)
 
   const ids = useMemo(() => turns.map((turn) => turn.id), [turns])
   // version 参与依赖：实测高度写进 ref 后靠它把前缀和重算一遍
@@ -71,6 +81,26 @@ export function useTurnWindow(
     if (!el) return
     const top = el.scrollTop
     const height = el.clientHeight
+    const gap = el.scrollHeight - top - height
+    const prevTop = lastTopRef.current
+    lastTopRef.current = top
+
+    /*
+     * 贴底状态怎么更新。
+     *
+     * 三条规则，缺一条都会让「切回会话停在半路」复发：
+     *   - 已经在底部（留 12px 亚像素余量）→ 贴底，不管是谁滚的；
+     *   - 第一次同步不判（prevTop 为 null）：这时 scrollTop 还是浏览器给的初始值，
+     *     而列表可能已经按估算高度铺开了几万像素，一判就是「不在底部」，
+     *     之后上层的「回到底部」永远被压住；
+     *   - 位置真的移动过才改：内容长高会让 gap 变大但 scrollTop 不动，
+     *     那不是用户滚动，不能因此清掉贴底。
+     */
+    if (gap <= STICK_SLACK) {
+      stickRef.current = true
+    } else if (prevTop !== null && Math.abs(top - prevTop) > 0.5) {
+      stickRef.current = false
+    }
     setViewport((prev) => (prev.top === top && prev.height === height ? prev : { top, height }))
   }, [scrollRef])
 
@@ -79,7 +109,11 @@ export function useTurnWindow(
     frameRef.current = window.requestAnimationFrame(sync)
   }, [sync])
 
-  // 滚动 + 容器尺寸变化
+  // 滚动 + 容器尺寸变化。
+  //
+  // enabled 必须进依赖：短会话时窗口化是关的，effect 第一遍就 return 了；等会话
+  // 长过阈值、enabled 变 true，如果依赖不变这个 effect 永远不会重跑，scroll 监听
+  // 和 sync 全都没挂上，viewport 永远停在 {0,0}，窗口就永远钉在列表最顶上。
   useEffect(() => {
     if (!enabled) return
     const el = scrollRef.current
@@ -96,7 +130,7 @@ export function useTurnWindow(
       if (measureFrame.current !== null) window.cancelAnimationFrame(measureFrame.current)
       measureFrame.current = null
     }
-  }, [scrollRef, schedule, sync])
+  }, [enabled, scrollRef, schedule, sync])
 
   // 测量已挂载轮次的高度。窗口变化时重新纳入新节点；同一窗口内长高由
   // 已有 observer 继续上报，不重建。
@@ -138,49 +172,56 @@ export function useTurnWindow(
   const prevLayout = useRef<{
     offsets: number[]
     scrollTop: number
-    stick: boolean
     length: number
   } | null>(null)
   useLayoutEffect(() => {
     if (!enabled) return
     const el = scrollRef.current
     if (!el) return
-    const stick = isNearBottom(el.scrollTop, el.clientHeight, total, STICK_SLACK)
+    const stick = stickRef.current
     const prev = prevLayout.current
-    prevLayout.current = { offsets, scrollTop: el.scrollTop, stick, length: ids.length }
-    if (!prev) return
-
-    /*
-     * 贴底跟随：只在「用户确实在底部」且「总高真的变了」时执行。
-     *
-     * 两个条件缺一不可：
-     *   - 不看 stick 就滚，用户翻历史会被一路拽回底部；
-     *   - 不看高度变化就滚，每次渲染都会写一次 scrollTop，「测量 → 滚底 →
-     *     窗口变化 → 再测量」会自发循环，整页一直闪。
-     */
-    const prevTotal = prev.offsets[prev.offsets.length - 1] ?? 0
-    if (stick && Math.abs(total - prevTotal) > 0.5) {
-      el.scrollTop = el.scrollHeight
-      // 自己写的滚动不算「用户滚过」，否则下一次校正会被误判跳过
-      prevLayout.current.scrollTop = el.scrollTop
+    const write = (value: number) => {
+      el.scrollTop = value
+      if (prevLayout.current) prevLayout.current.scrollTop = el.scrollTop
+      lastTopRef.current = el.scrollTop
+    }
+    prevLayout.current = { offsets, scrollTop: el.scrollTop, length: ids.length }
+    if (!prev) {
+      sync()
       return
     }
 
-    // 用户在两帧之间自己滚过：以用户的位置为准，谁也不许拽回去
-    if (Math.abs(prev.scrollTop - el.scrollTop) > 0.5) return
-
-    // 轮次数量变了（翻页 / 新消息）交给 Chat 自己的补偿逻辑，这里别插手
-    if (prev.length !== ids.length) return
-
-    // 只是高度变了：保住视口顶部正在看的那一轮，别让人感觉画面被拽走
-    const index = indexAt(prev.offsets, prev.scrollTop)
-    const relative = prev.scrollTop - prev.offsets[index]
-    const next = offsets[index]
-    if (next !== undefined && Math.abs(next + relative - el.scrollTop) > 0.5) {
-      el.scrollTop = next + relative
-      prevLayout.current.scrollTop = el.scrollTop
+    /*
+     * 贴底：用户还在底部，内容怎么变都保持贴在最新一条。
+     *
+     * 判断条件是「现在不在底部」而不是「总高变了」：高度还在测量时，窗口会先按
+     * 260px 的估算值挂载，真实高度落定后总高动辄翻几倍；只看总高变化的话，中间
+     * 任何一次补偿都会把人留在半路。写之前先比对位置，已经在底部就不写，因此不会
+     * 「测量 → 滚底 → 窗口变化 → 再测量」地自激闪屏。
+     */
+    if (stick) {
+      const max = Math.max(0, el.scrollHeight - el.clientHeight)
+      if (Math.abs(el.scrollTop - max) > 1) write(max)
+      // 窗口锚点立刻跟上：spacer 动辄几万像素，锚点留在旧位置就会把整段内容
+      // 渲染到视口之外，屏幕上只剩 spacer —— 这正是「切回旧会话一片空白」。
+      sync()
+      return
     }
-  }, [enabled, offsets, total, ids.length, scrollRef])
+
+    /*
+     * 用户在翻历史：保住视口顶部正在看的那一轮，别让人感觉画面被拽走。
+     * 轮次数量变了（切会话 / 翻页 / 新消息）就交给上层自己的补偿逻辑，这里只对锚点。
+     */
+    if (prev.length === ids.length && Math.abs(prev.scrollTop - el.scrollTop) <= 0.5) {
+      const index = indexAt(prev.offsets, prev.scrollTop)
+      const relative = prev.scrollTop - prev.offsets[index]
+      const next = offsets[index]
+      if (next !== undefined && Math.abs(next + relative - el.scrollTop) > 0.5) {
+        write(next + relative)
+      }
+    }
+    sync()
+  }, [enabled, offsets, ids.length, scrollRef, sync])
 
   if (!enabled) {
     return { start: 0, end: turns.length, topPad: 0, bottomPad: 0, total: 0, containerRef }

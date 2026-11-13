@@ -292,6 +292,31 @@ test('没有正文的压缩消息（content 空、summary 也空）直接跳过�
   assert.equal(turns[0].user, '你好')
 })
 
+test('压缩节点之后的连续回复只共用一个续接轮，不是一条消息一轮', () => {
+  // 服务端倒序：最新在前。时间正序是 u1 → 压缩 → a1 → a2 → a3
+  const step = (id) => ({
+    id,
+    type: 'assistant',
+    content: [{ type: 'text', text: `${id} 的正文` }],
+    time: { created: Number(id.slice(1)) * 10, completed: Number(id.slice(1)) * 10 + 5 },
+  })
+  const turns = groupTurns([
+    step('a3'),
+    step('a2'),
+    step('a1'),
+    { id: 'msg_c', type: 'compaction', summary: '之前的任务', content: [] },
+    user('u1', '第一个问题'),
+  ])
+
+  // 提问一轮 + 压缩摘要一轮 + 压缩后的续接一轮
+  assert.equal(turns.length, 3)
+  assert.equal(turns[0].user, '第一个问题')
+  assert.equal(turns[1].summary, '之前的任务')
+  assert.equal(turns[2].user, undefined)
+  // 三段连续正文会并成一块渲染，但三条消息确实都归属这一轮（顺序按时间正序）
+  assert.deepEqual(turns[2].texts, ['a1 的正文', 'a2 的正文', 'a3 的正文'])
+})
+
 test('sameTurn：摘要内容变化必须重渲染', () => {
   const build = (summary) =>
     groupTurns([{ id: 'msg_c', type: 'compaction', summary, time: { completed: 1 } }])[0]

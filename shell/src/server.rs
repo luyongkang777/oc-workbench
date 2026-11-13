@@ -264,6 +264,11 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             crate::cli::handle(request, &path, &url);
             return;
         }
+        // 破甲注入开关：只读写插件 config.json 的 enabled，必须排在 fsapi 前面。
+        if path.starts_with("/local/purge/") {
+            crate::purge::handle(request, &path, &url);
+            return;
+        }
         crate::fsapi::handle(request, &path, &url);
         return;
     }

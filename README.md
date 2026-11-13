@@ -138,11 +138,17 @@ git push origin main --tags
 ## Git 面板：没把 git 放进 PATH 的机器
 
 `/local/git/*` 不直接 `Command::new("git")`，而是先定位：
-`OC_WORKBENCH_GIT` → PATH（`where`，带 3 秒超时）→ 工作台 exe 同目录 → `Program Files\Git\cmd`
+`OC_WORKBENCH_GIT` → PATH（`where`，带 3 秒超时）→ **PATH 直扫兜底**（遍历 `PATH` 找 `git.exe`，
+不依赖 `where` 子进程被安全软件拦）→ 工作台 exe 同目录 → `Program Files\Git\cmd`
 → `Program Files (x86)\Git\cmd` → `%LOCALAPPDATA%\Programs\Git\cmd` → GitHub Desktop 自带的 git
-→ scoop / chocolatey。只缓存成功，所以装完 git 点一次「刷新」就能用。
+→ scoop / chocolatey → **工作台自己下载的便携版**。只缓存成功，所以装完 git 点一次「刷新」就能用。
 
-真正找不到时不再甩 `program not found`，而是把查过的位置和下一步写清楚：
+一处都找不到时**不让你自己装**：后台直接下 `MinGit`（git-for-windows 官方给嵌入式场景的
+精简包，约 50 MB，压缩包是普通 zip），解压到 `%LOCALAPPDATA%\oc-workbench\git`——
+纯用户目录、不需要管理员。当前这次请求先回一句「已在后台下载，完成后点重试」，
+面板本来就在轮询，装好自动恢复，不用管它。来源可用 `OC_GIT_RELEASES_API` 指到镜像。
+
+真正下载也失败时才给出可操作提示（而不是 `program not found`）：
 
 > 这台电脑上找不到 git。已查过：PATH、程序所在目录、Program Files\Git、… 装一个
 > Git for Windows（https://git-scm.com/download/win）后点「刷新」即可；已经装了但不在这些

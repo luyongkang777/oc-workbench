@@ -46,7 +46,6 @@ const DEFAULT_RELEASES_API: &str =
 /// 只要 v2 线：v1 的 CLI 协议跟工作台对不上。
 const MAJOR: u64 = 2;
 const API_TIMEOUT: Duration = Duration::from_secs(20);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// 安装包一百多 MB，慢网下读超时要留足。
 const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(180);
 /// 兜底上限：清单没给 size 时也不能让一次下载把磁盘写满。
@@ -203,16 +202,7 @@ fn releases_api() -> String {
 }
 
 fn build_agent(overall: Duration, read: Option<Duration>) -> Result<ureq::Agent, String> {
-    let connector =
-        native_tls::TlsConnector::new().map_err(|err| format!("初始化 TLS 连接器失败：{err}"))?;
-    let mut builder = ureq::AgentBuilder::new()
-        .tls_connector(std::sync::Arc::new(connector))
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout(overall);
-    if let Some(read) = read {
-        builder = builder.timeout_read(read);
-    }
-    Ok(builder.build())
+    crate::fetch::agent(overall, read)
 }
 
 /// 按当前架构挑安装包名（顺序即优先级）。
@@ -349,21 +339,6 @@ pub fn latest_release(force: bool) -> Result<Latest, String> {
 // ---------------------------------------------------------------------------
 // 本机版本
 // ---------------------------------------------------------------------------
-
-fn run_quiet(command: &mut Command) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
 
 /// 跑 `<exe> --version`，返回解析出的版本号。
 ///
@@ -565,78 +540,14 @@ fn download(latest: &Latest) -> Result<PathBuf, String> {
     Ok(final_path)
 }
 
-fn ps_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
-}
-
 fn find_exe(dir: &Path, depth: usize) -> Option<PathBuf> {
-    let entries = fs::read_dir(dir).ok()?;
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
-            if name == "opencode.exe" {
-                return Some(path);
-            }
-        } else if path.is_dir() && depth > 0 {
-            dirs.push(path);
-        }
-    }
-    for sub in dirs {
-        if let Some(found) = find_exe(&sub, depth - 1) {
-            return Some(found);
-        }
-    }
-    None
+    crate::fetch::find_named(dir, "opencode.exe", depth)
 }
 
-/// 解压 zip：先用系统自带的 `C:\Windows\System32\tar.exe`（Win10 1803+ 的 bsdtar，
-/// 认 zip），再退回 PATH 上的 `tar`，最后用 PowerShell 的 `Expand-Archive`。
-///
-/// 不能只写 `tar`：装了 Git for Windows 的机器上，PATH 里排在前面的是 GNU tar，
-/// 它不认 zip（实测报 "This does not look like a tar archive"），必须优先用系统那个。
+/// 解压 zip 并找到里面的 `opencode.exe`。解压细节（系统 bsdtar → PowerShell 兜底）
+/// 在 [`crate::fetch::extract_zip`]，和便携版 git 共用同一套，避免两份实现走偏。
 fn extract(zip: &Path, out: &Path) -> Result<PathBuf, String> {
-    if out.exists() {
-        let _ = fs::remove_dir_all(out);
-    }
-    fs::create_dir_all(out).map_err(|err| format!("建解压目录失败：{err}"))?;
-
-    let mut tars: Vec<PathBuf> = Vec::new();
-    if let Some(root) = std::env::var_os("SystemRoot") {
-        tars.push(PathBuf::from(root).join("System32").join("tar.exe"));
-    }
-    tars.push(PathBuf::from("tar"));
-
-    for tar in tars {
-        if !run_quiet(Command::new(&tar).arg("-xf").arg(zip).arg("-C").arg(out)) {
-            continue;
-        }
-        if let Some(found) = find_exe(out, 3) {
-            return Ok(found);
-        }
-    }
-
-    let script = format!(
-        "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath {} -DestinationPath {} -Force",
-        ps_quote(zip),
-        ps_quote(out)
-    );
-    let ok = run_quiet(
-        Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-            ])
-            .arg(script),
-    );
-    if !ok {
-        return Err("解压失败：系统 tar 与 PowerShell 都没成功".to_string());
-    }
-
+    crate::fetch::extract_zip(zip, out)?;
     find_exe(out, 3).ok_or_else(|| "解压后没找到 opencode.exe（包结构可能变了）".to_string())
 }
 
