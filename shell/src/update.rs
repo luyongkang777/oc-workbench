@@ -271,6 +271,31 @@ pub fn set_number_setting(key: &str, value: Option<i64>) -> Result<(), String> {
     save_settings(map)
 }
 
+/// 读一个字符串设置（窗口尺寸这类「两个数拼成一行」的值），没有就当 None。
+pub fn text_setting(key: &str) -> Option<String> {
+    match load_settings().get(key) {
+        Some(serde_json::Value::String(text)) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+/// 写字符串设置；传 None 删键。
+pub fn set_text_setting(key: &str, value: Option<&str>) -> Result<(), String> {
+    let mut map = load_settings();
+    match value {
+        Some(text) => {
+            map.insert(
+                key.to_string(),
+                serde_json::Value::String(text.trim().to_string()),
+            );
+        }
+        None => {
+            map.remove(key);
+        }
+    }
+    save_settings(map)
+}
+
 /// settings.json 的键：启动时是否自动检查更新（默认开）。
 const AUTO_KEY: &str = "autoCheckUpdate";
 /// settings.json 的键：用户主动跳过的版本号。

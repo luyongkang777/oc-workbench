@@ -41,7 +41,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tao::dpi::LogicalSize;
+use tao::dpi::{LogicalSize, PhysicalPosition as TaoPosition, PhysicalSize as TaoSize};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::WindowBuilder;
@@ -146,11 +146,21 @@ fn resolve_url(token: &str) -> Result<String, String> {
 
 fn run() -> Result<(), String> {
     let event_loop = EventLoop::new();
+    // 尺寸按主显示器的物理分辨率 + 缩放率算，不再写死逻辑尺寸：
+    // 1080p@150% 只有 1280×720 逻辑像素，固定 1400×900 会超出屏幕，
+    // 看起来就像「一开就占满（还被截断）」。
+    let initial = initial_window_geometry(&event_loop);
+    let initial_logical = initial.logical;
+    let auto_logical = initial.auto;
 
-    let window = WindowBuilder::new()
+    let mut window_builder = WindowBuilder::new()
         .with_title(APP_TITLE)
-        .with_inner_size(LogicalSize::new(1400.0, 900.0))
-        .with_min_inner_size(LogicalSize::new(800.0, 560.0))
+        .with_inner_size(TaoSize::new(initial.physical.0, initial.physical.1))
+        .with_min_inner_size(LogicalSize::new(WINDOW_MIN_PX.0, WINDOW_MIN_PX.1));
+    if let Some((x, y)) = initial.position {
+        window_builder = window_builder.with_position(TaoPosition::new(x, y));
+    }
+    let window = window_builder
         .build(&event_loop)
         .map_err(|e| format!("创建窗口失败：{e}"))?;
 
@@ -313,6 +323,8 @@ fn run() -> Result<(), String> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
+                // 关窗前把用户拖出来的尺寸写回设置，下次启动沿用。
+                remember_window_size(&window, initial_logical, auto_logical);
                 *control_flow = ControlFlow::Exit;
                 return;
             }
@@ -385,6 +397,218 @@ fn drain_ipc(webview: &wry::WebView, pending: &Rc<RefCell<Vec<String>>>) {
         let script = format!("window.__ocIpc && window.__ocIpc({json});");
         if let Err(err) = webview.evaluate_script(&script) {
             append_log(&format!("[ipc] evaluate_script 失败：{err}\n"));
+        }
+    }
+}
+
+/// 窗口占显示器宽高的目标比例：四周留白，不顶满屏幕。
+const WINDOW_WIDTH_RATIO: f64 = 0.72;
+const WINDOW_HEIGHT_RATIO: f64 = 0.74;
+/// 逻辑尺寸的舒适区间（按 100% 缩放算）：再小挤成一条，再大看着就像全屏。
+/// 1280 宽是这种「侧栏 + 会话 + 编辑区」三栏界面的舒服值，再宽只是空跑。
+const WINDOW_MIN_LOGICAL: (f64, f64) = (960.0, 620.0);
+const WINDOW_MAX_LOGICAL: (f64, f64) = (1280.0, 840.0);
+/// 小屏兜底：算出来多少都不超过显示器逻辑尺寸的这个比例，给任务栏留位置。
+const WINDOW_CAP_RATIO: (f64, f64) = (0.90, 0.86);
+/// 窗口能缩到的最小逻辑尺寸，和 `with_min_inner_size` 共用一份。
+const WINDOW_MIN_PX: (f64, f64) = (800.0, 560.0);
+/// settings.json 里记窗口尺寸的键，值形如 `1280x840`（逻辑像素）。
+const WINDOW_SIZE_KEY: &str = "windowSize";
+
+/// 首次启动用哪套几何。
+struct InitialWindow {
+    /// 客户区物理尺寸 / 位置，直接喂给 WindowBuilder。
+    physical: (u32, u32),
+    position: Option<(i32, i32)>,
+    /// 实际采用的逻辑尺寸：关窗时拿它判断用户这次有没有手动拖过。
+    logical: (f64, f64),
+    /// 当前屏幕下「按分辨率自动」会得到多大：用户拖回这个大小就恢复自动。
+    auto: (f64, f64),
+}
+
+/// 首次启动的窗口几何：尺寸跟「分辨率 × 缩放率」走，并优先沿用上次拖过的尺寸。
+///
+/// 尺寸必须跟着显示器变，不能写死逻辑像素：同一块 1080p 屏，100% 时有
+/// 1920×1080 逻辑像素，150% 时只剩 1280×720。写死 1400×900 在后者上会超出
+/// 屏幕，表现就是一开就占满、底部还被任务栏截掉。
+fn initial_window_geometry(event_loop: &EventLoop<()>) -> InitialWindow {
+    let Some(monitor) = event_loop.primary_monitor() else {
+        // 读不到显示器（远程会话 / 无人值守）：给一档中等尺寸，别沿用大屏尺寸。
+        append_log("[boot] 读不到主显示器，窗口用 1200×800\n");
+        return InitialWindow {
+            physical: (1200, 800),
+            position: None,
+            logical: (1200.0, 800.0),
+            auto: (1200.0, 800.0),
+        };
+    };
+    let monitor_size = monitor.size();
+    let scale = normalize_scale(monitor.scale_factor());
+    let avail_w = monitor_size.width as f64 / scale;
+    let avail_h = monitor_size.height as f64 / scale;
+
+    let auto = comfort_window_logical(avail_w, avail_h);
+    let saved = update::text_setting(WINDOW_SIZE_KEY).and_then(|text| parse_window_size(&text));
+    let (logical_w, logical_h, source) = match saved {
+        // 上次拖过的尺寸优先，但先按当前屏幕夹一次：换小屏 / 调高缩放后不会溢出。
+        Some(saved) => {
+            let (w, h) = clamp_saved_window(saved, avail_w, avail_h);
+            (w, h, "沿用上次拖过的尺寸")
+        }
+        None => (auto.0, auto.1, "按分辨率自动"),
+    };
+
+    let size = (
+        (logical_w * scale).round().max(1.0) as u32,
+        (logical_h * scale).round().max(1.0) as u32,
+    );
+    let origin = monitor.position();
+    let position = centered_window_position(
+        (origin.x, origin.y),
+        (monitor_size.width, monitor_size.height),
+        size,
+    );
+    append_log(&format!(
+        "[boot] 主显示器 {}×{} @{scale:.2}x（可用 {avail_w:.0}×{avail_h:.0} 逻辑像素）\
+         → 窗口 {}×{} 物理像素，位置 {},{}\n",
+        monitor_size.width, monitor_size.height, size.0, size.1, position.0, position.1
+    ));
+    append_log(&format!(
+        "[boot] 窗口尺寸来源：{source}（{logical_w:.0}×{logical_h:.0} 逻辑像素）\n"
+    ));
+    InitialWindow {
+        physical: size,
+        position: Some(position),
+        logical: (logical_w, logical_h),
+        auto,
+    }
+}
+
+/// 缩放率异常（0、NaN、离谱值）时按 1.0 处理，避免除出天文数字。
+fn normalize_scale(scale: f64) -> f64 {
+    if scale.is_finite() && (0.5..=8.0).contains(&scale) {
+        scale
+    } else {
+        1.0
+    }
+}
+
+/// 可用逻辑宽高 → 首次启动的窗口逻辑宽高。
+///
+/// 两步：先按比例取，再夹到舒适区间；最后用小屏上限兜一次，
+/// 保证 1366×768、1024×600 这类屏幕不会算出比屏幕还大的窗口。
+fn comfort_window_logical(avail_w: f64, avail_h: f64) -> (f64, f64) {
+    let avail_w = avail_w.max(1.0);
+    let avail_h = avail_h.max(1.0);
+    let width = (avail_w * WINDOW_WIDTH_RATIO)
+        .clamp(WINDOW_MIN_LOGICAL.0, WINDOW_MAX_LOGICAL.0)
+        .min(avail_w * WINDOW_CAP_RATIO.0);
+    let height = (avail_h * WINDOW_HEIGHT_RATIO)
+        .clamp(WINDOW_MIN_LOGICAL.1, WINDOW_MAX_LOGICAL.1)
+        .min(avail_h * WINDOW_CAP_RATIO.1);
+    (width, height)
+}
+
+/// 在显示器范围内居中；窗口比屏幕还大时贴左上角，不出现负坐标。
+fn centered_window_position(
+    monitor: (i32, i32),
+    monitor_size: (u32, u32),
+    window: (u32, u32),
+) -> (i32, i32) {
+    let dx = (monitor_size.0 as i32 - window.0 as i32) / 2;
+    let dy = (monitor_size.1 as i32 - window.1 as i32) / 2;
+    (monitor.0 + dx.max(0), monitor.1 + dy.max(0))
+}
+
+/// 上次记住的尺寸按当前屏幕夹一次。
+///
+/// 只做「保命」夹取，不动舒适区间：用户明明拖了一个 1500 宽的窗口，只要屏幕
+/// 放得下就继续用；换到小屏或调高缩放后，才收到可用区的 90% / 86%。
+fn clamp_saved_window(saved: (f64, f64), avail_w: f64, avail_h: f64) -> (f64, f64) {
+    let cap_w = (avail_w.max(1.0) * WINDOW_CAP_RATIO.0).max(1.0);
+    let cap_h = (avail_h.max(1.0) * WINDOW_CAP_RATIO.1).max(1.0);
+    (
+        saved.0.clamp(WINDOW_MIN_PX.0.min(cap_w), cap_w),
+        saved.1.clamp(WINDOW_MIN_PX.1.min(cap_h), cap_h),
+    )
+}
+
+/// 解析 `1280x840`（逻辑像素）。坏值、离谱值一律当没存：
+/// 手改坏设置不该让窗口飞到屏幕外面去。
+fn parse_window_size(text: &str) -> Option<(f64, f64)> {
+    let (w, h) = text.trim().split_once(['x', 'X'])?;
+    let w: f64 = w.trim().parse().ok()?;
+    let h: f64 = h.trim().parse().ok()?;
+    if !(w.is_finite() && h.is_finite()) || w <= 0.0 || h <= 0.0 || w > 10000.0 || h > 10000.0 {
+        return None;
+    }
+    Some((w, h))
+}
+
+fn format_window_size(logical: (f64, f64)) -> String {
+    format!("{}x{}", logical.0.round() as i64, logical.1.round() as i64)
+}
+
+/// 用户这次到底有没有手动拖过窗口？
+///
+/// 和启动时采用的尺寸差 4px 以内就算没动（贴边吸附、DPI 取整都会抖几像素）。
+fn should_remember_window(current: (f64, f64), initial: (f64, f64)) -> bool {
+    (current.0 - initial.0).abs() > 4.0 || (current.1 - initial.1).abs() > 4.0
+}
+
+/// 关窗时对窗口尺寸记忆做什么。
+#[derive(Debug, PartialEq)]
+enum WindowMemory {
+    /// 不写盘：用户没拖过。
+    Skip,
+    /// 用户把窗口拖回了「自动尺寸」：删掉记忆，下次继续按屏幕算。
+    Clear,
+    /// 记住这次的尺寸。
+    Save,
+}
+
+fn window_memory_decision(
+    current: (f64, f64),
+    initial: (f64, f64),
+    auto: (f64, f64),
+) -> WindowMemory {
+    if !should_remember_window(current, initial) {
+        return WindowMemory::Skip;
+    }
+    if !should_remember_window(current, auto) {
+        return WindowMemory::Clear;
+    }
+    WindowMemory::Save
+}
+
+/// 关窗时记住用户拖出来的尺寸，下次启动沿用（再按当时屏幕夹一次）。
+///
+/// 三个分支：
+///   * 和启动尺寸一样 → 没拖过，不写：否则自动算出来的值会被固化成选择，
+///     换了分辨率也永远不会再自动适配；
+///   * 拖回了当前屏幕的自动尺寸 → 视作「恢复自动」，删掉记忆；
+///   * 其它 → 记住。
+///
+/// 最大化 / 全屏直接跳过：记下来等于屏幕尺寸，下次启动又会「一开就占满」。
+fn remember_window_size(window: &tao::window::Window, initial: (f64, f64), auto: (f64, f64)) {
+    if window.is_maximized() || window.fullscreen().is_some() {
+        return;
+    }
+    let scale = normalize_scale(window.scale_factor());
+    let size = window.inner_size();
+    let logical = (size.width as f64 / scale, size.height as f64 / scale);
+    match window_memory_decision(logical, initial, auto) {
+        WindowMemory::Skip => {}
+        WindowMemory::Clear => match update::set_text_setting(WINDOW_SIZE_KEY, None) {
+            Ok(()) => append_log("[boot] 窗口拖回自动尺寸，清掉记忆\n"),
+            Err(err) => append_log(&format!("[boot] 清除窗口尺寸记忆失败：{err}\n")),
+        },
+        WindowMemory::Save => {
+            let text = format_window_size(logical);
+            match update::set_text_setting(WINDOW_SIZE_KEY, Some(&text)) {
+                Ok(()) => append_log(&format!("[boot] 记住窗口尺寸 {text}（逻辑像素）\n")),
+                Err(err) => append_log(&format!("[boot] 记住窗口尺寸失败：{err}\n")),
+            }
         }
     }
 }
@@ -541,3 +765,7 @@ use std::os::windows::ffi::OsStrExt;
 fn show_fatal_dialog(message: &str) {
     eprintln!("{message}");
 }
+
+#[cfg(test)]
+#[path = "window_tests.rs"]
+mod window_tests;
