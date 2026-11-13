@@ -321,6 +321,16 @@ fn count_lines_matches_index_semantics() {
 fn write_text_file_roundtrip_and_conflict() {
     let dir = temp_dir();
     let path = write_file(&dir, "edit.txt", b"one\ntwo\n");
+    // 把 mtime 推回一小时前再记下来：文件系统时间精度可能只有 ~16ms，
+    // 连续两次写很容易拿到同一个时间戳，那样「用旧 mtime 保存」就不会冲突，
+    // 这条断言会在快机器（CI）上随机失败。
+    let old = SystemTime::now() - std::time::Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("打开测试文件")
+        .set_modified(old)
+        .expect("改 mtime");
     let before = fs::metadata(&path).expect("元信息");
     let before_mtime = super::mtime_ms(&before);
 

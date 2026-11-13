@@ -323,9 +323,24 @@ fn repo_root(root: &str) -> Option<String> {
 
 fn repo_initialized(root: &str) -> bool {
     match repo_root(root) {
-        Some(toplevel) => same_dir(&toplevel, root),
+        // 先比字面量；不一致时再 canonicalize 一次。
+        //
+        // `git rev-parse --show-toplevel` 返回「长名」路径，而调用方手里的 root
+        // 可能是 8.3 短名（例如 CI 上的 C:\Users\RUNNER~1\...）或带 \?\ 前缀的
+        // canonical 形式——只比字面量会误判成「未初始化」。
+        // canonicalize 落在失败分支上，正常路径不会多一次 IO。
+        Some(toplevel) => {
+            same_dir(&toplevel, root) || same_dir(&canonical_dir(&toplevel), &canonical_dir(root))
+        }
         None => false,
     }
+}
+
+/// 取目录的规范路径；拿不到就原样返回（比较函数自己会兜底）。
+fn canonical_dir(path: &str) -> String {
+    std::fs::canonicalize(path)
+        .map(|resolved| resolved.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string())
 }
 
 /// 目录比较：抹掉 `\\?\` 前缀、统一分隔符与大小写、去掉结尾分隔符。
