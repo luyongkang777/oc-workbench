@@ -5,3 +5,4 @@ shell/target-rel/
 *.log
 .DS_Store
 .tmp/
+release/

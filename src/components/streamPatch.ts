@@ -10,7 +10,7 @@
  *
  * 全是纯函数，输入输出都是新数组，不改原对象。
  */
-import type { ChatMessage, MessagePart } from '../api/chat'
+import type { ChatMessage, MessagePart, StreamEvent } from '../api/chat'
 
 /** 在 content 里找第 ordinal 个 text 段；不够长就补齐。 */
 function withTextAt(parts: MessagePart[], ordinal: number, text: string): MessagePart[] {
@@ -103,4 +103,35 @@ export function finishMessage(
   return messages.map((m) =>
     m.id === id ? { ...m, time: { ...(m.time ?? {}), completed } } : m,
   )
+}
+
+/**
+ * 单个增量事件 → 新消息数组（纯函数）。
+ *
+ * 调用方把一帧内收到的多个事件攒成一批再调用，避免每个 delta 都触发一次
+ * React 渲染 —— 这是流式时主线程被占满、滚动掉帧的主要原因。
+ */
+export function applyStreamEvent(messages: ChatMessage[], event: StreamEvent): ChatMessage[] {
+  const id = event.data?.assistantMessageID
+  if (!id) return messages
+  const ordinal = typeof event.data?.ordinal === 'number' ? event.data.ordinal : 0
+
+  if (event.type === 'session.step.started') {
+    // 新的一轮开始：本地先插一条骨架，后面的 delta 才有地方落
+    return ensureMessage(messages, id, {
+      time: { created: event.data?.started },
+      model: event.data?.model,
+    })
+  }
+
+  if (event.type === 'session.text.delta' && typeof event.data?.delta === 'string') {
+    return appendText(messages, id, ordinal, event.data.delta)
+  }
+
+  if (event.type === 'session.text.ended' && typeof event.data?.text === 'string') {
+    // 定稿：用全文覆盖一遍，防增量丢字
+    return setText(messages, id, ordinal, event.data.text)
+  }
+
+  return messages
 }

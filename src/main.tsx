@@ -8,6 +8,7 @@ import './styles/terminal.css'
 import './styles/diff.css'
 import './styles/tools.css'
 import './styles/markdown.css'
+import './styles/git.css'
 
 const el = document.getElementById('root')
 if (!el) throw new Error('找不到 #root')

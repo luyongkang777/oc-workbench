@@ -1,0 +1,1859 @@
+/* Git 面板：右侧滑出抽屉 / 状态条 / 页签 / 改动列表 / 提交区 / 历史 / 回滚确认 */
+/* 类名与 src/components/GitPanel.tsx 一一对应。
+   层级：三栏与分隔条 5，编辑补全 60，本抽屉 70，气泡右键菜单 200，灯箱/模态 300。 */
+
+.git-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 70;
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-1);
+  border-left: 1px solid var(--line-2);
+  box-shadow: var(--shadow-3);
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+/* 窄屏不挡死整个界面 */
+@media (max-width: 900px) {
+  .git-panel {
+    width: 100%;
+  }
+}
+
+/* 只动位置和透明度，避免进场瞬间闪一下默认样式 */
+@media (prefers-reduced-motion: no-preference) {
+  .git-panel {
+    animation: git-slide-in 160ms ease-out;
+  }
+}
+
+@keyframes git-slide-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* ---------- 头部 ---------- */
+.git-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px 0 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-1);
+  user-select: none;
+}
+
+.git-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.git-title .icon,
+.git-title svg {
+  color: var(--accent);
+}
+
+/* 关掉面板：与顶栏图标按钮同规格 */
+.git-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease);
+}
+
+.git-close:hover {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+/* ---------- 错误条 ---------- */
+/* 文案直接用后端返回的中文，长报错要能换行，不能把抽屉撑宽 */
+.git-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 12px 0;
+  padding: 6px 8px 6px 10px;
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--danger-soft);
+  background: var(--danger-weak);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-2);
+}
+
+.git-error > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--danger);
+}
+
+.git-error-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.git-error-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--danger);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.git-error-close:hover {
+  opacity: 1;
+  background: var(--danger-weak-hover);
+}
+
+/* ---------- 空态 ---------- */
+.git-empty {
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* ---------- 未初始化 ---------- */
+/* 占据内容区中央：这是唯一能继续往下走的入口，不该挤在角落 */
+.git-init {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 28px 24px;
+  text-align: center;
+}
+
+.git-init-text {
+  max-width: 280px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.75;
+}
+
+.git-init-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 16px;
+  font-size: 12px;
+  color: var(--text-inverse);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-init-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.git-init-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* ---------- 顶部状态条 ---------- */
+.git-statusbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  flex: 0 0 auto;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--line-1);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.git-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 500;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-branch svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+/* 领先 / 落后：文案由 syncLabel 给，颜色只做正向提示 */
+.git-sync {
+  flex: 0 0 auto;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.git-last {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+/* ---------- 远程地址 ---------- */
+.git-remote-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-1);
+  font-size: 11.5px;
+}
+
+.git-remote {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.git-remote.empty {
+  color: var(--text-3);
+  font-style: normal;
+}
+
+.git-remote-edit {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    border-color var(--ease);
+}
+
+.git-remote-edit:hover {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+}
+
+/* 内联编辑：输入框吃掉剩余宽度，两个按钮贴右 */
+.git-remote-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.git-remote-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text-1);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  outline: none;
+  transition: border-color var(--ease);
+}
+
+.git-remote-input::placeholder {
+  color: var(--text-3);
+}
+
+.git-remote-input:focus {
+  border-color: var(--accent-line);
+}
+
+.git-remote-save,
+.git-remote-cancel {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  line-height: 22px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    background var(--ease),
+    border-color var(--ease),
+    color var(--ease);
+}
+
+.git-remote-save {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.git-remote-save:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.git-remote-cancel {
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+}
+
+.git-remote-cancel:hover {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+.git-remote-save:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* ---------- 页签 ---------- */
+.git-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 8px 0;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.git-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  line-height: 22px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease);
+}
+
+.git-tab:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+/* 选中态抬到 bg-2，和下方内容区连成一片 */
+.git-tab.active {
+  color: var(--text-1);
+  background: var(--bg-2);
+  border-color: var(--line-1);
+}
+
+/* 改动数量：一枚极小的计数徽标，别抢页签文字 */
+.git-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 14px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border-radius: 7px;
+}
+
+.git-tab.active .git-tab-count {
+  color: var(--text-1);
+  background: var(--accent-weak);
+}
+
+/* ---------- 内容区 ---------- */
+/* 只有这一层滚动：头部 / 状态条 / 远程行 / 页签 / 底部动作都固定 */
+.git-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  /*
+   * 分区滚动：改动列表自己滚，提交框固定在下面。
+   * 整块一起滚会把「提交」按钮推到几十条改动之后，用户根本找不到。
+   */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+/* ---------- 改动区块 ---------- */
+.git-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.git-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px 4px;
+}
+
+.git-section-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  user-select: none;
+}
+
+.git-section-count {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.git-change-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 4px;
+}
+
+.git-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 3px 12px;
+  transition: background var(--ease);
+}
+
+.git-change:hover {
+  background: var(--bg-hover);
+}
+
+/* ---------- 状态徽标 ---------- */
+/* 四色全部取自语义 token，跟随 :root / [data-theme='light'] 自动切换：
+   add=绿、mod=黄、del=红、new=灰，conflict 用实心红强调。 */
+.git-change-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 34px;
+  height: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.git-tone-add {
+  color: var(--success);
+  background: var(--success-weak);
+  border-color: var(--success-line);
+}
+
+.git-tone-mod {
+  color: var(--warn);
+  background: var(--warn-weak);
+  border-color: var(--warn-line);
+}
+
+.git-tone-del {
+  color: var(--danger);
+  background: var(--danger-weak);
+  border-color: var(--danger-line);
+}
+
+/* 未跟踪：灰（用叠加层而不是 text-4，那个 token 只给行号） */
+.git-tone-new {
+  color: var(--text-3);
+  background: var(--bg-control);
+  border-color: var(--line-2);
+}
+
+.git-tone-conflict {
+  color: var(--text-inverse);
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* 文件路径：按钮语义但长得像文本，从右往左省略（文件名比目录前缀重要） */
+.git-change-path {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  color: var(--text-1);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.git-change-path:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+}
+
+.git-change-flag {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* 撤销单个文件的改动：平时低调，hover 才转成危险色 */
+.git-discard {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-change:hover .git-discard {
+  border-color: var(--line-2);
+}
+
+.git-discard:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-weak);
+  border-color: var(--danger-line);
+}
+
+.git-discard:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ---------- 提交区 ---------- */
+.git-commit {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--line-1);
+}
+
+.git-commit-input {
+  width: 100%;
+  min-height: 62px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  outline: none;
+  resize: vertical;
+  transition: border-color var(--ease);
+}
+
+.git-commit-input::placeholder {
+  color: var(--text-3);
+}
+
+.git-commit-input:focus {
+  border-color: var(--accent-line);
+}
+
+.git-commit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.git-commit-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 提交是这一步的主操作，用品牌色实心 */
+.git-primary {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 14px;
+  font-size: 11.5px;
+  line-height: 24px;
+  color: var(--text-inverse);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.git-primary:disabled {
+  color: var(--text-3);
+  background: var(--bg-control);
+  border-color: var(--line-2);
+  cursor: default;
+}
+
+/* ---------- 底部动作 ---------- */
+.git-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  flex: 0 0 auto;
+  background: var(--bg-0);
+  border-top: 1px solid var(--line-1);
+}
+
+.git-push,
+.git-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 24px;
+  font-size: 11.5px;
+  line-height: 22px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    background var(--ease),
+    border-color var(--ease),
+    color var(--ease);
+}
+
+.git-push {
+  flex: 1;
+  padding: 0 12px;
+  color: var(--accent);
+  background: var(--accent-weak);
+  border: 1px solid var(--accent-line);
+}
+
+.git-push:hover:not(:disabled) {
+  background: var(--accent-weak-hover);
+}
+
+.git-refresh {
+  flex: 0 0 auto;
+  padding: 0 10px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+}
+
+.git-refresh:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+.git-push:disabled,
+.git-refresh:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ---------- 排除页签：整块 drop zone ---------- */
+.git-dropzone {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+  border: 1px dashed transparent;
+  border-radius: 0;
+  transition:
+    background var(--ease),
+    border-color var(--ease);
+}
+
+/* 拖进来时整块泛出品牌色 */
+.git-dropzone.dragging {
+  background: var(--accent-weak);
+  border-color: var(--accent-line);
+}
+
+.git-drop-hint {
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+  user-select: none;
+}
+
+.git-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-tree-branch {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding-right: 10px;
+  transition: background var(--ease);
+}
+
+.git-tree-row:hover {
+  background: var(--bg-hover);
+}
+
+/* 文件夹折叠箭头 / 文件图标：同一个按钮位，所以文件态只当装饰 */
+.git-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+
+.git-tree-toggle:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+.git-tree-toggle:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.git-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-1);
+}
+
+.git-tree-ignored {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--text-3);
+  background: var(--bg-control);
+  border-radius: var(--r-1);
+  white-space: nowrap;
+}
+
+.git-tree-exclude {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    border-color var(--ease),
+    background var(--ease);
+}
+
+.git-tree-exclude:hover:not(:disabled) {
+  color: var(--warn);
+  border-color: var(--warn-line);
+  background: var(--warn-weak);
+}
+
+.git-tree-exclude:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.git-tree-loading {
+  padding: 6px 12px 6px 26px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ---------- 历史 ---------- */
+.git-history {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.git-commit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-1);
+  transition: background var(--ease);
+}
+
+.git-commit-row:hover {
+  background: var(--bg-hover);
+}
+
+.git-commit-hash {
+  flex: 0 0 auto;
+  padding-top: 1px;
+  font-family: ui-monospace, Consolas, 'Cascadia Mono', monospace;
+  font-size: 11px;
+  color: var(--text-3);
+  user-select: text;
+}
+
+.git-commit-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.git-commit-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--text-1);
+}
+
+.git-commit-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+/* 回滚入口：危险动作，但平时不红，hover 才提示 */
+.git-rollback {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--ease),
+    border-color var(--ease),
+    background var(--ease);
+}
+
+.git-rollback:hover {
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background: var(--danger-weak);
+}
+
+/* ---------- 回滚确认 ---------- */
+/* 盖在面板自身之上（面板是 fixed，所以 absolute 就够了），不占视口全屏 */
+.git-confirm-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.git-confirm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 340px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-3);
+}
+
+.git-confirm-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.git-confirm-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  word-break: break-word;
+}
+
+/* 两条后果说明：保留改动 / 丢弃改动，各自一行，不合并成一段 */
+.git-confirm-note {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+  background: var(--bg-0);
+  border-radius: var(--r-2);
+}
+
+.git-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.git-confirm-soft,
+.git-confirm-hard,
+.git-confirm-cancel {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  line-height: 22px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    background var(--ease),
+    border-color var(--ease),
+    color var(--ease);
+}
+
+/* 安全选项：普通按钮 */
+.git-confirm-soft {
+  color: var(--text-1);
+  background: var(--bg-control);
+  border: 1px solid var(--line-2);
+}
+
+.git-confirm-soft:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  border-color: var(--accent-line);
+}
+
+/* 丢改动：红色弱底，和「取消」拉开距离 */
+.git-confirm-hard {
+  color: var(--danger);
+  background: var(--danger-weak);
+  border: 1px solid var(--danger-line);
+}
+
+.git-confirm-hard:hover:not(:disabled) {
+  color: var(--danger-soft);
+  background: var(--danger-weak-hover);
+}
+
+.git-confirm-cancel {
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.git-confirm-cancel:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+.git-confirm-soft:disabled,
+.git-confirm-hard:disabled,
+.git-confirm-cancel:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* 窄屏确认卡：别贴边 */
+@media (max-width: 900px) {
+  .git-confirm-card {
+    max-width: 420px;
+  }
+}
+
+/* ---------- 远程仓库选择 ---------- */
+/* 盖在面板自身之上（面板是 fixed，absolute 就够），与回滚确认层同一套视觉。
+   层内 padding 12px，卡片自然就是「宽度 100% 减 24px」。 */
+.git-picker-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.git-picker-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-3);
+}
+
+.git-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px 0 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-1);
+  user-select: none;
+}
+
+.git-picker-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 账号栏（三个页签共用，固定在顶部） ---------- */
+.git-account-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.git-account-select {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text-1);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  outline: none;
+  transition: border-color var(--ease);
+}
+
+.git-account-select:focus {
+  border-color: var(--accent-line);
+}
+
+.git-account-add,
+.git-account-del {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 20px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-account-add {
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+}
+
+.git-account-add:hover {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+}
+
+.git-account-del {
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid var(--danger-line);
+}
+
+.git-account-del:hover {
+  color: var(--danger-soft);
+  background: var(--danger-weak);
+}
+
+/* 账号读取失败：贴在账号栏下面，不挤压 body */
+.git-picker-bar-error {
+  margin: 8px 12px 0;
+  flex: 0 0 auto;
+}
+
+/* ---------- 页签 ---------- */
+.git-picker-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 12px 0;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.git-picker-tab {
+  height: 26px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    border-color var(--ease);
+}
+
+.git-picker-tab:hover {
+  color: var(--text-1);
+}
+
+.git-picker-tab.active {
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- 页签内容 ---------- */
+.git-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+}
+
+.git-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 二级表单（添加账号）：卡片里再抬一层，视觉上不跑出弹层 */
+.git-add-account {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+}
+
+/* ---------- 表单 ---------- */
+.git-form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.git-form-label {
+  flex: 0 0 auto;
+  min-width: 40px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.git-form-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text-1);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  outline: none;
+  transition: border-color var(--ease);
+}
+
+.git-form-input::placeholder {
+  color: var(--text-3);
+}
+
+.git-form-input:focus {
+  border-color: var(--accent-line);
+}
+
+/* token 输入 + 显示切换 */
+.git-token-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.git-token-toggle {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    border-color var(--ease);
+}
+
+.git-token-toggle:hover {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+}
+
+/* 获取途径 / 说明：小字，长句要能换行 */
+.git-form-hint {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+  word-break: break-word;
+}
+
+/* 错误只在卡片内显示，不用 alert */
+.git-form-error {
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--danger-soft);
+  background: var(--danger-weak);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-2);
+  word-break: break-word;
+}
+
+/* 表单底部按钮行 */
+.git-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* 私有仓库勾选：整行可点 */
+.git-picker-check {
+  cursor: pointer;
+}
+
+.git-picker-check input[type='checkbox'] {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* ---------- 仓库列表 ---------- */
+.git-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.git-repo-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+}
+
+.git-repo-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--text-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 私有 / 通用标签 */
+.git-repo-tag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border-radius: var(--r-1);
+  white-space: nowrap;
+}
+
+/* 空仓库标签：首推不会冲突，给点强调色 */
+.git-repo-empty {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--accent);
+  background: var(--accent-weak);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-1);
+  white-space: nowrap;
+}
+
+.git-repo-use {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-repo-use:hover {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ---------- 历史：提交图形树 ---------- */
+/* 契约 docs/git-graph-contract.md §5。这一整块只追加，
+   上面 git-commit-row / git-commit-hash / git-rollback 那套平面列表样式保持原样不动。 */
+
+.git-graph {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 摘要条固定在图之上：滚动时也要看得见当前分支和未推送数量 */
+.git-graph-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 12px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--line-1);
+  user-select: none;
+}
+
+.git-graph-summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 还没设置远程：属于该补的缺口，用暖色但不做成按钮 */
+.git-graph-note {
+  color: var(--warn);
+}
+
+/* 唯一的滚动容器：图形和文字一起滚 */
+.git-graph-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 0 8px;
+}
+
+.git-graph-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding-right: 8px;
+  border-bottom: 1px solid var(--line-1);
+  transition: background var(--ease);
+}
+
+.git-graph-row:hover {
+  background: var(--bg-hover);
+}
+
+.git-graph-row.clickable {
+  cursor: pointer;
+}
+
+.git-graph-row.clickable:focus-visible {
+  outline: none;
+  background: var(--bg-control);
+}
+
+/* 图形列不参与压缩：lane 多了宁可挤文字 */
+.git-graph-svg {
+  flex: 0 0 auto;
+  /* 连线从上一行的点画过来，会越出本行视框半格 */
+  overflow: visible;
+}
+
+.git-graph-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.git-graph-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-1);
+}
+
+.git-graph-hash {
+  flex: 0 0 auto;
+  font-family: ui-monospace, Consolas, 'Cascadia Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-3);
+  user-select: text;
+}
+
+.git-graph-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* refs 标签：默认=本地分支（中性），head / remote / tag 三档各有色调 */
+.git-graph-ref {
+  flex: 0 0 auto;
+  max-width: 132px;
+  overflow: hidden;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.git-graph-ref.head {
+  color: var(--accent);
+  background: var(--accent-weak);
+  border-color: var(--accent-line);
+}
+
+.git-graph-ref.remote {
+  color: var(--info);
+  background: var(--info-weak);
+  border-color: var(--line-2);
+}
+
+.git-graph-ref.tag {
+  color: var(--warn);
+  background: var(--warn-weak);
+  border-color: var(--warn-line);
+}
+
+.git-graph-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.git-graph-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 未推送标记：暖色，和空心提交点（本地未推送）呼应 */
+.git-graph-local {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--warn);
+  background: var(--warn-weak);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-1);
+  white-space: nowrap;
+}
+
+/* 回滚入口：平时不占视觉，hover / 键盘聚焦才浮出来 */
+.git-graph-action {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    color var(--ease),
+    border-color var(--ease),
+    background var(--ease),
+    opacity var(--ease);
+}
+
+.git-graph-row:hover .git-graph-action,
+.git-graph-row:focus-within .git-graph-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.git-graph-action:hover {
+  color: var(--danger);
+  border-color: var(--danger-line);
+  background: var(--danger-weak);
+}
+
+/* 加载更多：钉在树下面，不跟着列表一起滚 */
+.git-graph-more {
+  display: flex;
+  justify-content: center;
+  padding: 8px 12px;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line-1);
+  background: var(--bg-0);
+}
+
+.git-graph-more button {
+  height: 24px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  line-height: 22px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-graph-more button:hover:not(:disabled) {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+  background: var(--bg-control);
+}
+
+.git-graph-more button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.git-graph-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 20px 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* ---------- 添加账号：一键登录 / 粘贴令牌 ---------- */
+/* 分段控件：两个小按钮贴在一个凹槽里，比 select 少一次点击 */
+.git-login-mode {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+}
+
+.git-login-mode-btn {
+  height: 22px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-login-mode-btn:hover:not(:disabled):not(.active) {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+/* 选中态靠底色 + 边框，不只靠字色（深色主题下字色差不够） */
+.git-login-mode-btn.active {
+  color: var(--text-1);
+  background: var(--bg-control);
+  border-color: var(--accent-line);
+}
+
+.git-login-mode-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* 「密码只用来换一次令牌」这类补充说明：比 git-form-hint 再轻一档 */
+.git-pw-hint {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* GitHub 不走账号密码：一句提醒，别做成错误红条 */
+.git-login-note {
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--warn-ink);
+  background: var(--warn-weak);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-2);
+  word-break: break-word;
+}
+
+/* GitHub 令牌创建页：次级按钮，和 token 的「显示」同档 */
+.git-token-page-btn {
+  align-self: flex-start;
+  height: 24px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.git-token-page-btn:hover {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+  background: var(--bg-control);
+}
+
+/* ---------- 成功提示（推送完成等） ---------- */
+
+.git-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 12px 0;
+  padding: 6px 8px 6px 10px;
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--success-weak);
+  border: 1px solid var(--success-line);
+  border-radius: var(--r-2);
+}
+
+.git-notice > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--success);
+}
+
+.git-notice-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.git-notice-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--success);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+
+.git-notice-close:hover {
+  background: var(--success-line);
+}

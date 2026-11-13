@@ -39,6 +39,8 @@ export type IconName =
   | 'stop'
   | 'plus'
   | 'check'
+  | 'gauge'
+  | 'layers'
 
 // 每个图标的几何（只有 path 数据，公共属性在 sprite 的 <g> 上）
 const PATHS: Record<IconName, string> = {
@@ -72,6 +74,9 @@ const PATHS: Record<IconName, string> = {
   stop: 'M8.5 6.5h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2Z',
   plus: 'M12 5v14 M5 12h14',
   check: 'M5 12.5l4.5 4.5L19 7',
+  // 输入框统计栏：速度表盘 + 用量层叠
+  gauge: 'M4 18a8 8 0 1 1 16 0 M12 12l4.3-4.3 M12 12h.01',
+  layers: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
 }
 
 /**

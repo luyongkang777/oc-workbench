@@ -1,0 +1,280 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Icon } from './Icon'
+import { applyUpdate, checkUpdate, saveUpdateSource } from '../api/update'
+import type { UpdateCheck } from '../api/update'
+
+type Phase = 'checking' | 'ready' | 'applying' | 'restarting'
+
+function formatSize(bytes: number): string {
+  if (!bytes) return ''
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
+ * 顶栏入口：版本号 + 有新版时的一颗提示点。
+ *
+ * 检查逻辑放在这一层而不是弹窗里：弹窗关掉会卸载，检查结果（有没有新版）
+ * 需要留在按钮上，否则每次都要重新检查才知道。
+ */
+export default function UpdateEntry({ version }: { version: string }) {
+  const [open, setOpen] = useState(false)
+  const [latest, setLatest] = useState<string | null>(null)
+  const alive = useRef(true)
+
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+
+  /** 静默检查：不改变界面状态，只更新按钮上的提示点。 */
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      checkUpdate()
+        .then((result) => {
+          if (!alive.current) return
+          setLatest(result.newer && result.latest ? result.latest : null)
+        })
+        .catch(() => {
+          // 没配更新源、或者暂时连不上：不打扰，用户点开面板才知道细节
+        })
+    }, 4000)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  return (
+    <div className="update-entry">
+      <button
+        type="button"
+        className={`update-chip${latest ? ' fresh' : ''}`}
+        title={latest ? `有新版本 v${latest}` : '检查更新'}
+        onClick={() => setOpen((value) => !value)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <Icon name="download" size={12} />
+        <span>v{version}</span>
+        {latest ? <span className="update-dot" /> : null}
+      </button>
+      {open ? (
+        <UpdateDialog
+          version={version}
+          onClose={() => setOpen(false)}
+          onResult={(result) => setLatest(result.newer && result.latest ? result.latest : null)}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function UpdateDialog({
+  version,
+  onClose,
+  onResult,
+}: {
+  version: string
+  onClose: () => void
+  onResult: (result: UpdateCheck) => void
+}) {
+  const [phase, setPhase] = useState<Phase>('checking')
+  const [info, setInfo] = useState<UpdateCheck | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [source, setSource] = useState('')
+  const [savingSource, setSavingSource] = useState(false)
+  // 有内置默认源，面板默认只读显示；想换成镜像/私服时点「更改」再展开输入框
+  const [editingSource, setEditingSource] = useState(false)
+  const alive = useRef(true)
+
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+
+  const runCheck = useCallback(async () => {
+    setPhase('checking')
+    setError(null)
+    try {
+      const result = await checkUpdate()
+      if (!alive.current) return
+      setInfo(result)
+      setSource(result.source ?? '')
+      setError(result.error)
+      setPhase('ready')
+      onResult(result)
+    } catch (err) {
+      if (!alive.current) return
+      setError((err as Error).message)
+      setPhase('ready')
+    }
+  }, [onResult])
+
+  useEffect(() => {
+    void runCheck()
+  }, [runCheck])
+
+  // Esc 关闭；更新进行中不关（关了也拦不住进程退出，只会让人误以为失败）
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (phase === 'applying' || phase === 'restarting') return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, phase])
+
+  async function saveSource() {
+    if (savingSource) return
+    setSavingSource(true)
+    setError(null)
+    try {
+      await saveUpdateSource(source.trim())
+      setEditingSource(false)
+      await runCheck()
+    } catch (err) {
+      if (alive.current) setError((err as Error).message)
+    } finally {
+      if (alive.current) setSavingSource(false)
+    }
+  }
+
+  async function startUpdate() {
+    if (phase === 'applying' || phase === 'restarting') return
+    setPhase('applying')
+    setError(null)
+    try {
+      await applyUpdate()
+      if (!alive.current) return
+      setPhase('restarting')
+    } catch (err) {
+      if (!alive.current) return
+      setError((err as Error).message)
+      setPhase('ready')
+    }
+  }
+
+  const current = info?.current ?? version
+  const latest = info?.latest ?? null
+  const configured = info?.configured ?? true
+  const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting'
+
+  return (
+    <div className="update-mask" role="presentation" onClick={() => (busy ? undefined : onClose())}>
+      <div
+        className="update-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="版本与更新"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="update-head">
+          <span className="update-title">版本与更新</span>
+          <button
+            type="button"
+            className="update-close"
+            onClick={onClose}
+            disabled={phase === 'applying' || phase === 'restarting'}
+            title="关闭"
+            aria-label="关闭"
+          >
+            <Icon name="close" size={13} />
+          </button>
+        </header>
+
+        <div className="update-body">
+          <div className="update-row">
+            <span className="update-label">当前版本</span>
+            <span className="update-value">v{current}</span>
+          </div>
+
+          {latest ? (
+            <div className="update-row">
+              <span className="update-label">最新版本</span>
+              <span className={`update-value${info?.newer ? ' fresh' : ''}`}>
+                v{latest}
+                {info?.newer ? '（可更新）' : '（已是最新）'}
+                {formatSize(info?.size ?? 0) ? ` · ${formatSize(info?.size ?? 0)}` : ''}
+              </span>
+            </div>
+          ) : null}
+
+          {info?.notes ? <div className="update-notes">{info.notes}</div> : null}
+          {error ? <div className="update-error">{error}</div> : null}
+
+          {phase === 'checking' ? <div className="update-hint">正在检查…</div> : null}
+          {phase === 'applying' ? (
+            <div className="update-hint">正在下载并校验，完成后窗口会自动重启…</div>
+          ) : null}
+          {phase === 'restarting' ? (
+            <div className="update-hint ready">更新包已就绪，正在重启到新版本…</div>
+          ) : null}
+
+          {(!configured || editingSource) && phase !== 'applying' ? (
+            <div className="update-source">
+              <div className="update-source-title">
+                {configured ? '更换更新源' : '还没有配置更新源'}
+              </div>
+              <div className="update-source-hint">
+                填一份 latest.json 的地址（http/https）。默认走 GitHub Release，
+                只有点检查或更新时才会访问它；留空表示不检查更新。
+              </div>
+              <div className="update-source-row">
+                <input
+                  className="update-input"
+                  value={source}
+                  placeholder="https://github.com/<user>/<repo>/releases/latest/download/latest.json"
+                  onChange={(event) => setSource(event.target.value)}
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="update-btn"
+                  onClick={() => void saveSource()}
+                  disabled={savingSource || !source.trim()}
+                >
+                  {savingSource ? '保存中…' : '保存'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {configured && info?.source && phase === 'ready' && !editingSource ? (
+            <div className="update-source-now" title={info.source}>
+              <span className="update-source-url">更新源：{info.source}</span>
+              <button
+                type="button"
+                className="update-link"
+                onClick={() => {
+                  setSource(info.source ?? '')
+                  setEditingSource(true)
+                }}
+              >
+                更改
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <footer className="update-actions">
+          <button type="button" className="update-btn" onClick={() => void runCheck()} disabled={busy}>
+            {phase === 'checking' ? '检查中…' : '检查更新'}
+          </button>
+          <span className="update-spacer" />
+          <button
+            type="button"
+            className="update-btn primary"
+            onClick={() => void startUpdate()}
+            disabled={busy || !info?.newer}
+            title={info?.newer ? `更新到 v${latest}` : '没有可用更新'}
+          >
+            {phase === 'applying' ? '下载中…' : phase === 'restarting' ? '重启中…' : '立即更新'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}

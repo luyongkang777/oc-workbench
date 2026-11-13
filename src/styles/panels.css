@@ -82,6 +82,17 @@ body.resizing .col-resizer::after {
   word-break: break-all;
 }
 
+/* 连接失败的原因（例如「找不到 opencode」）：用警示色，别和「正在连接」混在一起 */
+.pane-notice.error {
+  color: var(--warn-ink);
+  border-bottom: 1px solid var(--warn-line);
+  background: var(--warn-weak);
+  border-radius: var(--r-2);
+  margin: 8px;
+  padding: 8px 10px;
+  word-break: break-word;
+}
+
 /* 顶栏「未连接」时的手动重试按钮 */
 .retry-button {
   flex: 0 0 auto;
@@ -327,7 +338,9 @@ body.resizing .col-resizer::after {
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
-  word-break: break-word;
+  /* 用户气泡是纯文本（长路径 / 长串也常出现），必须能断；
+     非标准的 word-break: break-word 等价于 anywhere，成本更高，改用标准属性 */
+  overflow-wrap: break-word;
 }
 
 .chat-copy {
@@ -344,16 +357,21 @@ body.resizing .col-resizer::after {
   line-height: 16px;
   white-space: nowrap;
   cursor: pointer;
-  /* 默认不可见也不可点，避免浮层常驻压住气泡文字、吞掉拖选 */
+  /* 默认不可见也不可点，避免浮层常驻压住气泡文字、吞掉拖选。
+     用 visibility 而不是只靠 opacity：每条消息一个 opacity<1 元素就是
+     一个层叠上下文，几百条气泡叠起来，滚动时合成成本白付 */
+  visibility: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s;
+  transition: opacity 0.12s, visibility 0s 0.12s;
 }
 
 .chat-bubble-wrap:hover .chat-copy,
 .chat-copy:focus-visible {
+  visibility: visible;
   opacity: 1;
   pointer-events: auto;
+  transition: opacity 0.12s, visibility 0s;
 }
 
 .chat-copy.done {
@@ -487,7 +505,9 @@ body.resizing .col-resizer::after {
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  /* 独立滚动器：思考正文很长，隔离排版与绘制，别让它每帧参与整页布局 */
+  contain: layout style paint;
 }
 
 .chat-reasoning-wait {
@@ -1574,4 +1594,11 @@ body.resizing .col-resizer::after {
 .chat-session-time {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* ---------- 文件树拖拽 ---------- */
+/* 拖起某一行时整行压暗，给用户一个「已经抓住了」的反馈。
+   注意拖拽期间浏览器用的是 setDragImage 的快照，半透明是给源列表看的。 */
+.tree-row.dragging {
+  opacity: 0.5;
 }

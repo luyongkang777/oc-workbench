@@ -98,3 +98,36 @@ test('压缩消息没有 tokens 时给占位，不回退到更早的 assistant �
   assert.equal(usage.known, false)
   assert.equal(usage.used, 0)
 })
+
+test('最新一步还在生成（没有 tokens）时用上一条已落地的读数，不退成占位', () => {
+  // 实测结构：生成中的骨架只有 time.created/streamed，没有 tokens
+  const messages = [
+    { id: 'a3', type: 'assistant', time: { created: 30, streamed: 31 } },
+    assistant({ input: 900, output: 1000, cache: { read: 560_000, write: 0 } }, 20),
+    assistant({ input: 10, output: 0 }, 10),
+  ]
+  const usage = computeContextUsage(messages, 1_000_000)
+  assert.equal(usage.known, true)
+  assert.equal(usage.used, 900 + 1000 + 560_000)
+  assert.equal(Math.round(usage.percent), 56)
+})
+
+test('全 0 的 tokens 也算没有读数，继续往前找', () => {
+  const messages = [
+    assistant({ input: 0, output: 0, cache: { read: 0, write: 0 } }, 20),
+    assistant({ input: 4200, output: 300 }, 10),
+  ]
+  const usage = computeContextUsage(messages, 10_000)
+  assert.equal(usage.known, true)
+  assert.equal(usage.used, 4500)
+})
+
+test('所有 assistant 都没读数时仍然是占位', () => {
+  const messages = [
+    { id: 'a2', type: 'assistant', time: { created: 20 } },
+    assistant({ input: 0 }, 10),
+  ]
+  const usage = computeContextUsage(messages, 1_000_000)
+  assert.equal(usage.known, false)
+  assert.equal(usage.limit, 1_000_000)
+})

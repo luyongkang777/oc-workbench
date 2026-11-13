@@ -137,6 +137,8 @@ export default function FileTree({
   const [viewportHeight, setViewportHeight] = useState(480)
   // 是否显示 node_modules / target / dist 这类重目录：默认精简，需要时一键展开
   const [showHidden, setShowHidden] = useState(false)
+  // 正在被拖动的行（相对 root 的路径）；拖拽结束就清空，只用来加半透明样式
+  const [dragPath, setDragPath] = useState('')
 
   // 右键菜单：记录点击位置和落点（dir / file / blank 表示空白处 = 根目录）
   const [menu, setMenu] = useState<{
@@ -536,9 +538,20 @@ export default function FileTree({
           {rows.slice(first, last).map((row, index) => (
             <div
               key={row.key}
-              className={`tree-row${selected === row.path ? ' active' : ''}`}
+              className={`tree-row${selected === row.path ? ' active' : ''}${dragPath === row.path ? ' dragging' : ''}`}
               style={{ top: (first + index) * ROW_HEIGHT, paddingLeft: 8 + row.depth * 14 }}
               title={row.path}
+              draggable={row.kind !== 'status'}
+              onDragStart={(event) => {
+                if (row.kind === 'status') return
+                // 契约：目录的路径带结尾反斜杠，文件不带；只放一种自定义类型，
+                // 不写 text/plain，免得拖到别的输入框里变成一段文本。
+                const relPath = row.kind === 'dir' ? `${row.path.replace(/[\\/]+$/, '')}\\` : row.path
+                event.dataTransfer.setData('application/x-oc-path', relPath)
+                event.dataTransfer.effectAllowed = 'copyMove'
+                setDragPath(row.path)
+              }}
+              onDragEnd={() => setDragPath('')}
               onClick={() => {
                 if (row.kind !== 'status') activate(row.path, row.kind === 'dir')
               }}

@@ -339,7 +339,27 @@
   height: 100%;
   border-radius: 999px;
   background: var(--accent);
-  transition: width var(--ease);
+  transition:
+    width var(--ease),
+    background var(--ease);
+}
+
+/* 接近上限时的告警档：70% 起黄、90% 起红。
+   只改这一颗胶囊，不动全局 token，浅白/暗色两套主题各自取自己的值。 */
+.chat-context-chip.tone-warn .chat-context-fill {
+  background: var(--warn);
+}
+
+.chat-context-chip.tone-warn .chat-context-text {
+  color: var(--warn);
+}
+
+.chat-context-chip.tone-danger .chat-context-fill {
+  background: var(--danger);
+}
+
+.chat-context-chip.tone-danger .chat-context-text {
+  color: var(--danger);
 }
 
 .chat-context-pop {
@@ -685,8 +705,24 @@
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* 窗口化后不允许容器自己加间距：轮次间距由 .chat-turn 的内边距负责，
+     spacer 的高度才能和前缀和严格对上 */
+  gap: 0;
   padding: 10px 12px;
+  /*
+   * 滚动权威交回应用自己：Chat.tsx 已经手动做「贴底跟随」和「翻页补偏移」，
+   * 再让浏览器原生滚动锚定插一手，每次流式布局都会重选一次锚点。
+   */
+  overflow-anchor: none;
+  /* 打到顶/底不再把滚轮链给父容器，横向滚动的图表也能就近吃掉手势 */
+  overscroll-behavior: contain;
+  /* 滚动条出现/消失不再让整段内容横向重排 */
+  scrollbar-gutter: stable;
+}
+
+/* 列表之外的块（压缩记录、等待提示）自己补间距：容器的 gap 已经交给虚拟列表了 */
+.chat-body > * + * {
+  margin-top: 8px;
 }
 
 /* 会话滚动区 + 悬浮的「回到最新」按钮：按钮不能跟着内容滚走，所以要一层定位容器 */
@@ -746,6 +782,177 @@
   display: flex;
   gap: 8px;
   align-items: flex-end;
+}
+
+/* ---------- 输入框下方的会话统计条 ---------- */
+/* 两个读数：轮/步/速度、token/缓存命中。低调到不影响输入，悬停才展开明细 */
+.chat-stats {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: -2px 0 0;
+}
+
+.chat-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.chat-stat-chip:hover,
+.chat-stat-chip.open {
+  color: var(--text-2);
+  background: var(--bg-control);
+  border-color: var(--line-1);
+}
+
+/* 生成中给速度那个读数一点呼吸感，否则数字一直在变但看不出是「在跑」 */
+.chat-stat-chip.running svg {
+  color: var(--accent);
+  animation: chat-stat-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes chat-stat-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.chat-stat-text {
+  white-space: nowrap;
+}
+
+/* 明细浮层：向上弹，贴在输入区上方；两列排布，别把输入框整块盖住 */
+.chat-stat-pop {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  width: min(368px, 86vw);
+  padding: 10px 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-2);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.chat-stat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chat-stat-head-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.chat-stat-head-counts {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 本轮进度：整段唯一会随生成实时走的部分，给它一块底色单独拎出来 */
+.chat-stat-turn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 7px;
+  padding: 5px 7px;
+  border-radius: var(--r-2);
+  background: var(--bg-control);
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-stat-turn b {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* 用量和耗时并排：两列各四行，高度比整块竖排少一半 */
+.chat-stat-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+  margin-top: 6px;
+}
+
+.chat-stat-col {
+  min-width: 0;
+}
+
+.chat-stat-section {
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--line-1);
+  font-size: 10.5px;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
+
+.chat-stat-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chat-stat-rows b {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.chat-stat-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-1);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.chat-stat-note {
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--text-3);
 }
 
 /* ---------- 待发送附件 ---------- */

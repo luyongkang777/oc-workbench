@@ -33,9 +33,20 @@ export type MessagePart = {
   text?: string
   tool?: string
   name?: string
-  state?: { status?: string }
-  /** reasoning 段用它判断是否还在思考：有 created 没 completed = 进行中 */
-  time?: { created?: number; completed?: number }
+  state?: {
+    status?: string
+    /** 工具入参：toolDetail 从里面挑 command / path 之类的摘要 */
+    input?: Record<string, unknown>
+    /** 旧版本把执行区间放在这里；新版本在 part.time 上，两处都认 */
+    time?: { start?: number; end?: number }
+  }
+  /**
+   * part 自己的时间（实测结构）：
+   * - reasoning: created / completed
+   * - tool:      created（发起）/ ran（开始执行）/ completed（执行结束）
+   * - text:      没有时间
+   */
+  time?: { created?: number; completed?: number; ran?: number }
 }
 
 /**
@@ -81,7 +92,15 @@ export type ChatMessage = {
   text?: string
   content?: MessagePart[]
   files?: MessageFile[]
-  time?: { created?: number; completed?: number }
+  /**
+   * - created:   请求发起
+   * - streamed:  模型输出结束（此时工具可能还没开始执行）
+   * - completed: 这一步彻底结束（含工具执行）
+   *
+   * 算「模型在写多久」必须用 streamed：拿 completed 会把工具执行时间算进
+   * 生成时间，速度直接掉到个位数。
+   */
+  time?: { created?: number; streamed?: number; completed?: number }
   model?: { id?: string; providerID?: string }
   tokens?: MessageTokens
   /**
@@ -355,9 +374,34 @@ export async function listMessages(
  * 顺序按 `time.created` 倒序（服务端约定最新在前）；没有 created 的
  * （流式事件刚插进来的骨架）当最新处理，免得被挤到列表底部。
  */
+/** 消息里 text 段的总字数：判断流式内容有没有被服务端旧快照吃掉。 */
+function textLength(message: ChatMessage): number {
+  const parts = Array.isArray(message.content) ? message.content : []
+  let total = 0
+  for (const part of parts) {
+    if (part.type === 'text' && typeof part.text === 'string') total += part.text.length
+  }
+  return total
+}
+
+/**
+ * 事件刷新只拉最新一页，服务端快照可能还没包含本地刚流式写出的那段文字。
+ * 这一步还没结束（没有 completed）而本地文本更长时保留本地 —— 否则界面会
+ * 在两次 delta 之间闪回上一个版本。step 结束后以服务端为准。
+ */
+function keepLocalStream(local: ChatMessage | undefined, incoming: ChatMessage): ChatMessage {
+  if (!local) return incoming
+  if (typeof incoming.time?.completed === 'number') return incoming
+  if (typeof local.time?.completed === 'number') return incoming
+  return textLength(local) > textLength(incoming) ? { ...incoming, content: local.content } : incoming
+}
+
 export function mergeMessages(prev: ChatMessage[], fresh: ChatMessage[]): ChatMessage[] {
+  const local = new Map<string, ChatMessage>()
+  for (const message of prev) local.set(message.id, message)
+
   const byId = new Map<string, ChatMessage>()
-  for (const message of fresh) byId.set(message.id, message)
+  for (const message of fresh) byId.set(message.id, keepLocalStream(local.get(message.id), message))
   for (const message of prev) if (!byId.has(message.id)) byId.set(message.id, message)
   const list = [...byId.values()]
   list.sort(

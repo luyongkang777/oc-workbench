@@ -126,6 +126,18 @@ export async function getInfo(): Promise<unknown> {
   return getJson<unknown>('/api/info')
 }
 
+/**
+ * 外壳自己的连接状态（`GET /api/state`）：是否连上、连到哪、最近一次失败原因。
+ *
+ * 断开态用它直接告诉用户「为什么没连上」，而不是等用户点一次「重试」才知道。
+ * 只读、不触发配对，所以断开时每次探活都问一次也没有额外代价。
+ */
+export type ShellState = { connected: boolean; base: string | null; error: string | null }
+
+export async function getShellState(): Promise<ShellState> {
+  return getJson<ShellState>('/api/state')
+}
+
 /** 让外壳重新执行一次认证（重新 pair），用于「未连接」时的手动重试。 */
 export async function reconnect(): Promise<void> {
   await request('/api/reconnect', { method: 'POST' }, RECONNECT_TIMEOUT_MS)

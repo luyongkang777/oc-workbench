@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AgentInfo } from '../api/chat'
 import { formatBytes } from './codeWindow'
 import { isImageMime, type ChatAttachment } from './attachments'
@@ -20,6 +20,8 @@ type Props = {
   onPickAgent: (id: string) => void
   onAddFiles: (files: File[]) => void
   onRemoveAttachment: (id: string) => void
+  /** 输入框下方的附加区（会话统计条）。放在 wrap 内，好共用内边距和分隔 */
+  footer?: ReactNode
 }
 
 /**
@@ -43,6 +45,7 @@ export default function ChatInput({
   onPickAgent,
   onAddFiles,
   onRemoveAttachment,
+  footer,
 }: Props) {
   const [menu, setMenu] = useState<'commands' | 'agents' | null>(null)
   const [active, setActive] = useState(0)
@@ -383,6 +386,7 @@ export default function ChatInput({
           </button>
         )}
       </div>
+      {footer}
     </div>
   )
 }

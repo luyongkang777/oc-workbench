@@ -1,17 +1,19 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import MarkdownText, { type OpenFile } from './MarkdownText'
+import { useTurnWindow } from './useTurnWindow'
 import { copyText } from './clipboard'
 import { isImageFile, messageFilePreview } from './attachments'
 import { parseFilePath } from './fileLinks'
 import {
   formatDateTime,
-  groupTurns,
+  groupTurnsIncremental,
   reasoningLabel,
   sameTurn,
   turnTimeLabel,
   type ToolInfo,
   type Turn,
+  type TurnsCache,
   type TurnBlock,
 } from './turns'
 import type { ChatMessage, MessageFile } from '../api/chat'
@@ -195,7 +197,7 @@ const TurnView = memo(
     const startTitle = turn.startedAt === undefined ? '' : `提问时间 ${formatDateTime(turn.startedAt)}`
     const endTitle = turn.endedAt === undefined ? '' : `结束时间 ${formatDateTime(turn.endedAt)}`
     return (
-      <div className="chat-turn">
+      <div className="chat-turn" data-turn-id={turn.id}>
         {turn.user !== undefined || turn.files.length > 0 ? (
           <div className="chat-msg user">
             <div className="chat-bubble-wrap" onContextMenu={(e) => onOpenMenu(e, turn.user ?? '')}>
@@ -369,11 +371,14 @@ function Lightbox({ image, onClose }: { image: { url: string; name: string } | n
   )
 }
 
-export default function MessageList({
+const VIRTUAL_THRESHOLD = 40
+
+export default memo(function MessageList({
   messages,
   running = false,
   root,
   onOpenFile,
+  scrollRef,
 }: {
   messages: ChatMessage[]
   running?: boolean
@@ -381,8 +386,26 @@ export default function MessageList({
   root?: string
   /** 点消息里的文件路径 → 中间栏打开（可选，不传就当普通文本） */
   onOpenFile?: OpenFile
+  /** 外层滚动容器：窗口化要靠它读视口位置 */
+  scrollRef?: RefObject<HTMLDivElement | null>
 }) {
-  const turns = useMemo(() => groupTurns(messages), [messages])
+  // 增量重算：流式时只有最后那一轮会重建，历史几百轮的 Turn 对象直接复用。
+  // 心跳等「messages 引用没变」的重渲染连这一步都跳过。
+  const cacheRef = useRef<TurnsCache | null>(null)
+  const turns = useMemo(() => {
+    const next = groupTurnsIncremental(cacheRef.current, messages)
+    cacheRef.current = next
+    return next.turns
+  }, [messages])
+
+  // 只挂载视口附近的轮次。
+  //
+  // 阈值：短会话全量渲染（没有任何窗口化带来的边界问题），超过之后才开窗口。
+  // 40 轮以内一次性挂载的成本可以忽略，没必要为它承担虚拟列表的复杂度。
+  const fallbackRef = useRef<HTMLDivElement | null>(null)
+  const virtual = Boolean(scrollRef) && turns.length > VIRTUAL_THRESHOLD
+  const win = useTurnWindow(turns, scrollRef ?? fallbackRef, virtual)
+  const visible = virtual ? turns.slice(win.start, win.end) : turns
   const [menu, setMenu] = useState<CopyMenuState | null>(null)
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null)
   const menuTimer = useRef<number | null>(null)
@@ -443,16 +466,24 @@ export default function MessageList({
 
   return (
     <>
-      {turns.map((turn) => (
-        <TurnView
-          key={turn.id}
-          turn={turn}
-          root={root}
-          onOpenFile={onOpenFile}
-          onOpenMenu={openMenu}
-          onOpenImage={setLightbox}
-        />
-      ))}
+      <div className="chat-turns" ref={win.containerRef}>
+        {win.topPad > 0 ? (
+          <div className="chat-pad" style={{ height: win.topPad }} aria-hidden />
+        ) : null}
+        {visible.map((turn) => (
+          <TurnView
+            key={turn.id}
+            turn={turn}
+            root={root}
+            onOpenFile={onOpenFile}
+            onOpenMenu={openMenu}
+            onOpenImage={setLightbox}
+          />
+        ))}
+        {win.bottomPad > 0 ? (
+          <div className="chat-pad" style={{ height: win.bottomPad }} aria-hidden />
+        ) : null}
+      </div>
 
       <Lightbox image={lightbox} onClose={closeLightbox} />
 
@@ -477,4 +508,4 @@ export default function MessageList({
       ) : null}
     </>
   )
-}
+})

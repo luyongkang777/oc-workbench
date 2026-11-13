@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { contextHint, formatTokens, type ContextUsage } from './contextUsage'
+import { contextHint, formatTokens, usageTone, type ContextUsage } from './contextUsage'
 
 type Props = {
   usage: ContextUsage
@@ -53,8 +53,17 @@ export default function ContextMeter({
   }, [open])
 
   const shown = open !== null
-  const percentText = usage.known && usage.limit > 0 ? `${Math.round(usage.percent)}%` : '—'
+  // 有读数但不知道窗口上限时，显示已用量（如 18k）比再给一个「—」有用；
+  // 真正的占位只留给「这个会话还没跑过模型」。
+  const label = !usage.known
+    ? '—'
+    : usage.limit > 0
+      ? `${Math.round(usage.percent)}%`
+      : formatTokens(usage.used)
   const fill = usage.known && usage.limit > 0 ? Math.min(100, usage.percent) : 0
+  // 越接近上限越显眼：70% 起转黄、90% 起转红。靠 class 交给主题里的
+  // --warn / --danger，暗色和浅白各自有对应的深淡值，不在这里硬编码颜色。
+  const tone = usageTone(usage)
 
   return (
     <div
@@ -68,7 +77,7 @@ export default function ContextMeter({
     >
       <button
         type="button"
-        className={`chat-context-chip${shown ? ' open' : ''}`}
+        className={`chat-context-chip tone-${tone}${shown ? ' open' : ''}`}
         title={contextHint(usage)}
         aria-label={contextHint(usage)}
         aria-expanded={shown}
@@ -77,7 +86,7 @@ export default function ContextMeter({
         <span className="chat-context-bar">
           <span className="chat-context-fill" style={{ width: `${fill}%` }} />
         </span>
-        <span className="chat-context-text">{percentText}</span>
+        <span className="chat-context-text">{label}</span>
       </button>
 
       {shown ? (

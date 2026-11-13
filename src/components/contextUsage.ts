@@ -43,17 +43,45 @@ export function emptyUsage(limit = 0): ContextUsage {
 }
 
 /**
+ * 这条消息的 tokens 里有没有真实读数。
+ *
+ * `tokens` 缺失很常见：正在流式输出的这一步、被打断的这一步、以及刚插进来的骨架
+ * 都没有。只有「字段在且至少有一个正数」才算用过模型，全 0 的同样当没有。
+ */
+function hasUsage(tokens: ChatMessage['tokens']): boolean {
+  if (!tokens) return false
+  return (
+    num(tokens.input) + num(tokens.output) + num(tokens.cache?.read) + num(tokens.cache?.write) > 0
+  )
+}
+
+/**
  * 从消息列表算当前上下文占用。
  *
- * 消息是「最新在前」的，所以第一条带 tokens 的 assistant 就是最近一次调用；
+ * 消息是「最新在前」的，所以第一条**带 tokens** 的 assistant 就是最近一次调用；
  * 还没跑过模型时返回 known=false，界面显示占位而不是 0%。
+ *
+ * 不能直接取第一条 assistant：生成中的这一步（骨架消息）和被打断的这一步都没有
+ * tokens，拿它们当「最近一次调用」会让整个读数退回占位——表现就是聊了半天，
+ * 顶栏的上下文胶囊一直停在「—」。正确做法是跳过这些没有读数的步骤，用上一条
+ * 已落地的调用。
+ *
+ * 压缩消息是例外：它是界线而不是普通步骤。最新的压缩消息即使没有 tokens 也不
+ * 往更早翻——压缩前的 400k 和压缩后剩下的摘要不是一回事，回退只会给出假数字。
  */
 export function computeContextUsage(messages: ChatMessage[], limit = 0): ContextUsage {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 0
-  // 压缩消息也算「最新一次调用」：压完那一瞬间，最新的一条就是它。
-  const latest = messages.find(
-    (message) => message.type === 'assistant' || message.type === 'compaction',
-  )
+  let latest: ChatMessage | undefined
+  for (const message of messages) {
+    if (message.type === 'compaction') {
+      latest = message
+      break
+    }
+    if (message.type !== 'assistant') continue
+    if (!hasUsage(message.tokens)) continue
+    latest = message
+    break
+  }
   if (!latest?.tokens) return emptyUsage(safeLimit)
 
   // compaction 的 tokens 记的是「生成摘要这次调用」的用量：input/cache 是压缩前

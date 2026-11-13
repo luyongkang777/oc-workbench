@@ -404,3 +404,501 @@ body {
   opacity: 1;
   transform: translateY(0);
 }
+
+/* ==========================================================================
+   首页：没有打开任何项目时的欢迎/选择页
+   ========================================================================== */
+
+.welcome {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  overflow: auto;
+  background: var(--bg-0);
+}
+
+.welcome-card {
+  width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.welcome-logo {
+  color: var(--accent);
+  opacity: 0.9;
+  margin-bottom: 2px;
+}
+
+.welcome-card h1 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-1);
+}
+
+.welcome-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+  max-width: 420px;
+}
+
+.welcome-primary {
+  margin-top: 8px;
+  padding: 8px 22px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-inverse);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition: background var(--ease), border-color var(--ease);
+}
+
+.welcome-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.welcome-primary:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.welcome-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-3);
+  max-width: 400px;
+}
+
+.welcome-recent {
+  margin-top: 14px;
+  width: 100%;
+  text-align: left;
+  border-top: 1px solid var(--line-1);
+  padding-top: 12px;
+}
+
+.welcome-recent-title {
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+
+.welcome-recent ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.welcome-recent li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.welcome-recent-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  color: var(--text-1);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.welcome-recent-open:hover {
+  background: var(--bg-hover);
+  border-color: var(--line-1);
+}
+
+.welcome-recent-name {
+  font-size: 12.5px;
+}
+
+.welcome-recent-path {
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome-recent-remove {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.welcome-recent-remove:hover {
+  color: var(--danger);
+  background: var(--danger-weak);
+  border-color: var(--danger-line);
+}
+
+.welcome-warn {
+  margin: 14px 0 0;
+  width: 100%;
+  max-width: 460px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--warn-ink);
+  background: var(--warn-weak);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-2);
+  padding: 8px 12px;
+}
+
+.welcome-warn-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.welcome-warn-reason {
+  color: var(--text-1);
+  word-break: break-word;
+}
+
+.welcome-warn-hint {
+  margin-top: 4px;
+  color: var(--text-3);
+}
+
+/* ==========================================================================
+   在线更新：顶栏版本号 + 更新面板
+   ========================================================================== */
+
+.update-entry {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 版本号做成一个小胶囊：它既是信息也是入口 */
+.update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  background: transparent;
+  border: 1px solid var(--line-1);
+  border-radius: 11px;
+  cursor: pointer;
+  transition:
+    color var(--ease),
+    border-color var(--ease),
+    background var(--ease);
+}
+
+.update-chip:hover {
+  color: var(--text-1);
+  background: var(--bg-control);
+  border-color: var(--line-2);
+}
+
+/* 有新版本：胶囊和圆点一起变品牌色，扫一眼就能看到 */
+.update-chip.fresh {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
+.update-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+
+.update-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 8, 12, 0.45);
+}
+
+:root[data-theme='light'] .update-mask {
+  background: rgba(20, 24, 33, 0.28);
+}
+
+.update-dialog {
+  width: min(460px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-4);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.update-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.update-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.update-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.update-close:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+.update-close:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.update-body {
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.update-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.update-label {
+  color: var(--text-3);
+}
+
+.update-value {
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-value.fresh {
+  color: var(--accent);
+}
+
+.update-notes {
+  padding: 8px 10px;
+  color: var(--text-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.update-error {
+  padding: 8px 10px;
+  color: var(--danger-soft);
+  background: var(--danger-weak);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-2);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.update-hint {
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.update-hint.ready {
+  color: var(--accent);
+}
+
+.update-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+}
+
+.update-source-title {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.update-source-hint {
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.update-source-row {
+  display: flex;
+  gap: 6px;
+}
+
+.update-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-1);
+  background: var(--bg-0);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+}
+
+.update-input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: var(--ring);
+}
+
+.update-source-now {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.update-source-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-link {
+  flex: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.update-link:hover {
+  color: var(--accent);
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-1);
+  background: var(--bg-0);
+}
+
+.update-spacer {
+  flex: 1;
+}
+
+.update-btn {
+  height: 26px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-1);
+  background: var(--bg-control);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  transition:
+    background var(--ease),
+    border-color var(--ease),
+    color var(--ease);
+}
+
+.update-btn:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  border-color: var(--line-2);
+}
+
+.update-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.update-btn.primary {
+  color: var(--text-inverse);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.update-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}

@@ -1,0 +1,5 @@
+- 新增在线更新：顶栏版本号 → 检查更新 → 下载 + 校验 SHA256 → 覆盖并自动重启（旧版留 .bak）
+- opencode 定位改为多路径（环境变量 → PATH → .local\bin / .opencode\bin / npm 全局 / exe 同目录），换台电脑不再「找不到 opencode」
+- 首次启动改为「选择项目」页：不再依赖写死的开发目录，并会自动打开上次的项目
+- 连不上后端时直接显示具体原因（不用先点「重试」）
+- 日志改到 %LOCALAPPDATA%\oc-workbench\gui-error.log（装到只读目录也不丢日志）

@@ -45,6 +45,11 @@ pub struct Ctx {
     pub token: String,
     /// 本地监听端口，start() 拿到真实端口后回填。
     pub port: u16,
+    /// 最近一次连接失败的原因；连上后清空。
+    ///
+    /// 只读地暴露给页面（`GET /api/state`）：换台机器最常见的问题是
+    /// 「opencode 没装 / 不在 PATH」，用户不该非点一次「重试」才知道原因。
+    pub last_error: Arc<Mutex<Option<String>>>,
 }
 
 impl Ctx {
@@ -76,20 +81,40 @@ fn has_backend(state: &Arc<RwLock<Option<Backend>>>) -> bool {
     }
 }
 
+/// 记录「最近一次连接失败的原因」；成功时传 None 清空。
+fn set_last_error(slot: &Arc<Mutex<Option<String>>>, error: Option<String>) {
+    match slot.lock() {
+        Ok(mut guard) => *guard = error,
+        Err(poisoned) => *poisoned.into_inner() = error,
+    }
+}
+
 /// 串行地跑一次 `auth::discover()`，并把结果原子地写进共享状态
 /// （后台重试和手动重连共用这个入口）。
 ///
 /// 写状态必须发生在锁内：否则两个并发 discover 的结果可能以相反顺序落盘，
 /// 留下一个已经被后一次 pair 顶掉的旧 cookie。
-fn connect_once(state: &Arc<RwLock<Option<Backend>>>) -> Result<String, String> {
+fn connect_once(
+    state: &Arc<RwLock<Option<Backend>>>,
+    last_error: &Arc<Mutex<Option<String>>>,
+) -> Result<String, String> {
     let _guard = match DISCOVER_LOCK.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let backend = crate::auth::discover()?;
-    let base = backend.base.clone();
-    store_backend(state, backend);
-    Ok(base)
+    match crate::auth::discover() {
+        Ok(backend) => {
+            let base = backend.base.clone();
+            store_backend(state, backend);
+            set_last_error(last_error, None);
+            Ok(base)
+        }
+        Err(err) => {
+            // 给页面看的版本：不截断（本地接口，几十字），配对链接已在 auth 里打码。
+            set_last_error(last_error, Some(err.clone()));
+            Err(err)
+        }
+    }
 }
 
 /// 后台连接后端：立即尝试一次，失败每 [`RETRY_INTERVAL`] 重试，成功后线程退出。
@@ -98,10 +123,13 @@ fn connect_once(state: &Arc<RwLock<Option<Backend>>>) -> Result<String, String> 
 /// 后端晚起来也能自己恢复。
 ///
 /// 同一个失败原因只记一次日志：每 5 秒重试一次，原样刷屏会把日志撑爆。
-pub fn spawn_bootstrap(state: Arc<RwLock<Option<Backend>>>) {
+pub fn spawn_bootstrap(
+    state: Arc<RwLock<Option<Backend>>>,
+    last_error: Arc<Mutex<Option<String>>>,
+) {
     thread::spawn(move || {
         let mut attempt = 0u32;
-        let mut last_error = String::new();
+        let mut last_message = String::new();
         loop {
             // 手动 /api/reconnect 已经连上了就别再跑一遍 pair（会浪费一次性链接）。
             if has_backend(&state) {
@@ -109,18 +137,18 @@ pub fn spawn_bootstrap(state: Arc<RwLock<Option<Backend>>>) {
             }
 
             attempt += 1;
-            match connect_once(&state) {
+            match connect_once(&state, &last_error) {
                 Ok(base) => {
                     crate::append_log(&format!("[auth] 已连接 {base}（第 {attempt} 次尝试）\n"));
                     return;
                 }
                 Err(err) => {
-                    if err != last_error {
+                    if err != last_message {
                         crate::append_log(&format!(
                             "[auth] 第 {attempt} 次连接失败：{err}；之后每 {} 秒重试一次（同一原因不再重复记）\n",
                             RETRY_INTERVAL.as_secs()
                         ));
-                        last_error = err;
+                        last_message = err;
                     }
                 }
             }
@@ -215,6 +243,22 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             );
             return;
         }
+        // Git 面板：同样走本地通道，token 上面已经校验过。
+        if path.starts_with("/local/git/") {
+            crate::gitapi::handle(request, &path, &url);
+            return;
+        }
+        // 远程账号与仓库托管：同样走本地通道。
+        if path.starts_with("/local/remote/") {
+            crate::remoteapi::handle(request, &path, &url);
+            return;
+        }
+        // 在线更新：检查 / 下载并重启 / 设置更新源。必须排在 fsapi 前面，
+        // 否则会被「未知的本地文件接口」吃掉。
+        if path.starts_with("/local/update/") {
+            crate::update::handle(request, &path, &url);
+            return;
+        }
         crate::fsapi::handle(request, &path, &url);
         return;
     }
@@ -225,6 +269,11 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             let _ = request.respond(
                 Response::from_string("403 缺少或错误的 x-oc-token").with_status_code(403),
             );
+            return;
+        }
+        // 只读状态：页面据此直接显示「为什么没连上」，不用用户先点一次「重试」。
+        if path == "/api/state" {
+            shell_state(request, ctx);
             return;
         }
         // 重连是外壳自己的端点，不转发到上游。
@@ -297,6 +346,29 @@ pub(crate) fn json_error(
     respond_json(request, status, body)
 }
 
+/// `GET /api/state`：外壳自己的只读状态。
+///
+/// 和 `/api/reconnect` 的区别：这里**不做任何认证**，只把后台线程已经算出来的结果
+/// 回给页面，所以断开态下每秒轮询也不会额外生成配对链接。
+fn shell_state(request: tiny_http::Request, ctx: &Ctx) {
+    if !request.method().as_str().eq_ignore_ascii_case("GET") {
+        let _ = json_error(request, 405, "只支持 GET /api/state");
+        return;
+    }
+    let base = ctx.current_backend().map(|(base, _)| base);
+    let error = match ctx.last_error.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    let body = serde_json::json!({
+        "connected": base.is_some(),
+        "base": base,
+        "error": error,
+    })
+    .to_string();
+    let _ = respond_json(request, 200, body);
+}
+
 /// `POST /api/reconnect`：立刻跑一次 `discover()`，把结果直接回给页面。
 ///
 /// 成功 200 `{"ok":true,"base":"..."}`；失败 502 `{"ok":false,"error":"..."}`。
@@ -323,7 +395,7 @@ fn reconnect(request: tiny_http::Request, ctx: &Ctx) {
         }
     }
 
-    match connect_once(&ctx.backend) {
+    match connect_once(&ctx.backend, &ctx.last_error) {
         Ok(base) => {
             crate::append_log(&format!("[auth] 手动重连成功：{base}\n"));
             let body = serde_json::json!({ "ok": true, "base": base }).to_string();

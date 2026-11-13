@@ -17,8 +17,10 @@ import {
   mergeCommands,
   parseSlash,
 } from './chatCommands'
-import { appendText, ensureMessage, setText } from './streamPatch'
+import { applyStreamEvent } from './streamPatch'
 import { computeContextUsage, formatTokens } from './contextUsage'
+import { computeSessionStats } from './sessionStats'
+import SessionStatsBar from './SessionStatsBar'
 import type { StreamEvent } from '../api/chat'
 import { useChatEvents } from '../hooks/useChatEvents'
 import { useChatForms } from '../hooks/useChatForms'
@@ -175,6 +177,30 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
   )
 
   /**
+   * 流式事件队列：一帧合并一次 setMessages。
+   *
+   * 模型的 delta 频率远高于屏幕刷新率，逐条 setState 等于把同样的渲染
+   * 重复做几十遍 —— 这是流式时主线程被占满、滚动掉帧的主要来源。
+   *
+   * 必须定义在 reloadMessages 之前：全量对账前先把队列落地，否则服务端
+   * 快照会先覆盖、随后积压的 delta 又追加一遍，文字就重复了。
+   */
+  const streamQueue = useRef<StreamEvent[]>([])
+  const streamFrame = useRef<number | null>(null)
+
+  const flushStream = useCallback(() => {
+    streamFrame.current = null
+    const batch = streamQueue.current
+    if (batch.length === 0) return
+    streamQueue.current = []
+    setMessages((prev) => {
+      let next = prev
+      for (const event of batch) next = applyStreamEvent(next, event)
+      return next
+    })
+  }, [])
+
+  /**
    * 增量刷新：只拉最新一页，和本地已有历史合并。
    *
    * 事件流里每个非增量事件都会触发一次刷新。这里如果整包覆盖，
@@ -222,9 +248,11 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
   // 必须返回 Promise，useChatEvents 的串行闸要等它真的拉完才放行下一次。
   const refreshSession = useCallback(
     async (sessionID: string) => {
+      // 先把攒在帧里的 delta 落地，全量对账再基于最新本地内容合并
+      flushStream()
       await Promise.all([reloadMessages(sessionID), reloadForms(sessionID)])
     },
-    [reloadMessages, reloadForms],
+    [flushStream, reloadMessages, reloadForms],
   )
 
   /** 把新标题写回列表：顶部标题和下拉都从这份 state 读。 */
@@ -331,34 +359,24 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
    * 流式增量：文本事件直接改本地那条消息，不重新拉整包。
    * 大会话一次全量 6MB+，原来每个 delta 都拉一遍，越聊越卡。
    */
-  const applyStream = useCallback((event: StreamEvent) => {
-    const id = event.data?.assistantMessageID
-    if (!id) return
-    const ordinal = typeof event.data?.ordinal === 'number' ? event.data.ordinal : 0
+  const applyStream = useCallback(
+    (event: StreamEvent) => {
+      streamQueue.current.push(event)
+      if (streamFrame.current !== null) return
+      streamFrame.current = window.requestAnimationFrame(flushStream)
+    },
+    [flushStream],
+  )
 
-    if (event.type === 'session.step.started') {
-      // 新的一轮开始：本地先插一条骨架，后面的 delta 才有地方落
-      setMessages((prev) =>
-        ensureMessage(prev, id, {
-          time: { created: event.data?.started },
-          model: event.data?.model,
-        }),
-      )
-      return
-    }
-
-    if (event.type === 'session.text.delta' && typeof event.data?.delta === 'string') {
-      const delta = event.data.delta
-      setMessages((prev) => appendText(prev, id, ordinal, delta))
-      return
-    }
-
-    if (event.type === 'session.text.ended' && typeof event.data?.text === 'string') {
-      // 定稿：用全文覆盖一遍，防增量丢字
-      const text = event.data.text
-      setMessages((prev) => setText(prev, id, ordinal, text))
-    }
-  }, [])
+  // 卸载时丢掉还没落地的积压，别在页面已经切走后还写一次 state
+  useEffect(
+    () => () => {
+      if (streamFrame.current !== null) window.cancelAnimationFrame(streamFrame.current)
+      streamFrame.current = null
+      streamQueue.current = []
+    },
+    [],
+  )
 
   // 连上（或 root 变化触发重挂载）时拉本目录的会话列表。
   // 不用 booted 守卫：StrictMode 会把 effect 跑两遍，守卫会让第二遍直接跳过、
@@ -405,8 +423,13 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
 
   useChatEvents(connected, currentID, refreshSession, applyStream)
 
-  /** 距底部多少像素以内算「贴底」：留一点余量，免得亚像素误差让跟随失效。 */
-  const BOTTOM_SLACK = 80
+  /**
+   * 距底部多少像素以内算「贴底」。
+   *
+   * 只留几像素余量吸收亚像素误差。以前是 80px：往上滚了大半屏仍然算贴底，
+   * 流式输出每来一段就被拽回底部 —— 这就是「翻不上去、一直被刷新」的根源。
+   */
+  const BOTTOM_SLACK = 12
 
   /**
    * 往更早翻一页：把旧记录补进列表，并保持视口不跳。
@@ -443,15 +466,45 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     }
   }, [loadingOlder])
 
+  /**
+   * 滚动处理：读完布局信息立刻更新「是否贴底」。
+   *
+   * 原实现每次 scroll 都同步读 scrollHeight/clientHeight 再 setState。滚动事件
+   * 一帧内可能来好几次，每次强制 layout 就是滚动卡顿的直接原因；这里压到每帧
+   * 最多一次，而且只有贴底状态真的变了才写 state。
+   */
+  const scrollFrame = useRef<number | null>(null)
   const onBodyScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
-    const stick = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK
-    stickRef.current = stick
-    setAtBottom(stick)
-    // 滚到接近顶部就自动续拉更早的记录（不用再点浮层里的按钮）
-    if (el.scrollTop < 200) void loadOlder()
+
+    /*
+     * 「用户是否贴底」必须同步更新。
+     *
+     * 放到 rAF 里会晚一帧：这一帧的贴底跟随（messages 变化触发的滚动）先跑，
+     * 把用户刚拉上去的位置又滚回底部，滚动事件这才到、判定「仍然贴底」，
+     * 于是永远翻不上去。同步读一次 scrollTop 的开销远小于这个体验问题。
+     */
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK
+
+    if (scrollFrame.current !== null) return
+    scrollFrame.current = window.requestAnimationFrame(() => {
+      scrollFrame.current = null
+      // 值没变时 setState 会被 React 直接跳过，不需要自己再比一次
+      setAtBottom(stickRef.current)
+      const node = scrollRef.current
+      // 滚到接近顶部就自动续拉更早的记录（不用再点浮层里的按钮）
+      if (node && node.scrollTop < 200) void loadOlder()
+    })
   }, [loadOlder])
+
+  useEffect(
+    () => () => {
+      if (scrollFrame.current !== null) window.cancelAnimationFrame(scrollFrame.current)
+      scrollFrame.current = null
+    },
+    [],
+  )
 
   const jumpToBottom = useCallback(() => {
     const el = scrollRef.current
@@ -459,13 +512,23 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     el.scrollTop = el.scrollHeight
     stickRef.current = true
     setAtBottom(true)
+    // 离屏轮次的高度是估算值（content-visibility）：这一帧滚到底后，
+    // 真实高度落定会让 scrollHeight 变大，再补一次才真的贴到底。
+    window.requestAnimationFrame(() => {
+      const node = scrollRef.current
+      if (node && stickRef.current) node.scrollTop = node.scrollHeight
+    })
   }, [])
 
   // 内容变化时只在「本来就贴底」的情况下跟随；翻上去看历史就原地不动。
+  // 合并到下一帧：同一帧内多次 messages 变化只滚一次，别每次都强制同步布局。
   useEffect(() => {
-    const el = scrollRef.current
-    if (!el || !stickRef.current) return
-    el.scrollTop = el.scrollHeight
+    if (!stickRef.current) return
+    const frame = window.requestAnimationFrame(() => {
+      const el = scrollRef.current
+      if (el && stickRef.current) el.scrollTop = el.scrollHeight
+    })
+    return () => window.cancelAnimationFrame(frame)
   }, [messages])
 
   // 内容还没撑满一屏时先自动补一页：否则「有更早的记录」却连滚动条都没有，
@@ -867,6 +930,45 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
     () => computeContextUsage(messages, modelInfo?.limit?.context ?? 0),
     [messages, modelInfo],
   )
+  // 输入框下方的统计条：轮/步、token 总量、缓存命中、tok/s。
+  //
+  // 生成过程中光靠消息变化推不动读数：tokens 要等这一步结束才落地，模型思考时
+  // 连 delta 都没有。所以跑着的时候每 500ms 走一次心跳，让时间和速度跟着走。
+  //
+  // 心跳条件看「有没有未完成的 assistant 消息」，不只看 running 轮询：轮询有
+  // 延迟，漏一拍读数就整段冻住。算的时候一律用 Date.now()，不拿旧的时间戳凑。
+  const streaming = useMemo(
+    () =>
+      messages.some(
+        (message) => message.type === 'assistant' && typeof message.time?.completed !== 'number',
+      ),
+    [messages],
+  )
+  const [statsNow, setStatsNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!runningApi.running && !streaming) return
+    setStatsNow(Date.now())
+    const timer = window.setInterval(() => setStatsNow(Date.now()), 500)
+    return () => window.clearInterval(timer)
+  }, [runningApi.running, streaming])
+
+  /**
+   * 统计输入用「节流后的快照」，不是每个 delta 都算一遍。
+   *
+   * computeSessionStats 要遍历所有消息的 parts：长会话里一次 1~4ms，
+   * 流式 30~50 delta/s 就是每步累计上千毫秒的主线程占用。读数本来就只需要
+   * 看得清变化，150ms 一次足够，心跳仍是 500ms。
+   */
+  const [statsSource, setStatsSource] = useState<ChatMessage[]>(messages)
+  useEffect(() => {
+    if (!runningApi.running && !streaming) {
+      setStatsSource(messages)
+      return
+    }
+    const timer = window.setTimeout(() => setStatsSource(messages), 150)
+    return () => window.clearTimeout(timer)
+  }, [messages, runningApi.running, streaming])
+  const stats = useMemo(() => computeSessionStats(statsSource, Date.now()), [statsSource, statsNow])
 
   const current = sessions.find((session) => session.id === currentID)
   // 下拉默认只列工作台会话；当前正在看的会话即使是外部会话也保留，
@@ -931,6 +1033,7 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
               running={runningApi.running}
               root={root}
               onOpenFile={onOpenFile}
+              scrollRef={scrollRef}
             />
           )}
           {/* 压缩记录放在消息流末尾：历史被重写之后，这里还能看到压过几次、各是多大 */}
@@ -996,6 +1099,7 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
         onPickAgent={(id) => void pickAgent(id)}
         onAddFiles={(files) => void addFiles(files)}
         onRemoveAttachment={removeAttachment}
+        footer={<SessionStatsBar stats={stats} />}
       />
     </div>
   )

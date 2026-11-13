@@ -3,12 +3,15 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import Chat from './components/Chat'
 import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
+import GitPanel from './components/GitPanel'
 import CodeView from './components/CodeView'
 import FileTree from './components/FileTree'
 import ProjectTabs from './components/ProjectTabs'
+import WelcomePane from './components/WelcomePane'
+import UpdateEntry from './components/UpdateEntry'
 import { Icon, IconDefs } from './components/Icon'
 import { getAuthState, onIpcMessage, retryAuth, startAuth, subscribeAuth } from './api/auth'
-import { getInfo, reconnect } from './api/client'
+import { getInfo, getShellState, reconnect } from './api/client'
 import { findLocal, statFile } from './api/localfs'
 import { persistProjects, startProjects } from './api/projects'
 import {
@@ -35,7 +38,13 @@ import {
 import { CHAT_W, SIDE_W, useUiLayout } from './hooks/useUiLayout'
 import { useProjectRunning } from './hooks/useProjectRunning'
 
-const DEFAULT_ROOT = 'F:\\opencode\\workbench'
+/**
+ * 没有历史记录时的工作区。
+ *
+ * 必须留空：以前这里写的是开发机上的一个绝对路径，换台电脑那个目录不存在，
+ * 首屏就是一棵报错的空文件树。空字符串表示「还没选项目」，界面走 WelcomePane。
+ */
+const DEFAULT_ROOT = ''
 const ROOT_KEY = 'oc-workbench:root'
 const THEME_KEY = 'oc-workbench:theme'
 const PROBE_INTERVAL_MS = 10_000
@@ -53,6 +62,8 @@ export default function App() {
   const auth = useSyncExternalStore(subscribeAuth, getAuthState)
   const [connected, setConnected] = useState(false)
   const [view, setView] = useState<'code' | 'diff'>('code')
+  // Git 抽屉是否打开：切项目时由 applyRoot 关掉，避免旧 root 的面板挂在新项目上
+  const [gitOpen, setGitOpen] = useState(false)
   const [root, setRoot] = useState(() => {
     try {
       return window.localStorage.getItem(ROOT_KEY) || DEFAULT_ROOT
@@ -217,10 +228,21 @@ export default function App() {
     probing.current = true
     try {
       await getInfo()
-      if (alive.current) setConnected(true)
+      if (alive.current) {
+        setConnected(true)
+        setRetryError(null)
+      }
       return true
     } catch {
       if (alive.current) setConnected(false)
+      // 没连上就问外壳「为什么」：换台机器最常见的是 opencode 没装/找不到，
+      // 原因直接显示在侧栏，不用用户先点一次「重试」。
+      try {
+        const state = await getShellState()
+        if (alive.current) setRetryError(state.error)
+      } catch {
+        // 状态接口本身都没通（例如 dev 模式没有外壳）：保留原提示
+      }
       return false
     } finally {
       probing.current = false
@@ -328,6 +350,8 @@ export default function App() {
     // 每个项目都是自己的界面：恢复它上次停在哪个文件、哪个视图
     const state = target?.state
     setView(state?.view === 'diff' ? 'diff' : 'code')
+    // 换了 root，旧项目的 Git 状态不再适用，面板一并关掉
+    setGitOpen(false)
     setFileRoot(null)
     setFileLine(null)
     setFile(state?.file ?? null)
@@ -370,6 +394,12 @@ export default function App() {
       setProjects(withActive)
       persistProjects(withActive)
 
+      // 没有任何当前项目（首次启动 / 记录被清掉）时，自动打开最近用的那个。
+      // 目录已被删掉也照切：文件树会给出明确报错，用户能从首页换一个。
+      if (!current && withActive.length > 0) {
+        applyRoot(withActive[0].path, { persist: false })
+        return
+      }
       // 这次启动打开的是哪个项目，就恢复它上次停的位置
       const state = findProject(withActive, current)?.state
       if (!state) return
@@ -600,6 +630,7 @@ export default function App() {
           onAdd={pickFolder}
         />
         <div className="topbar-right">
+        <UpdateEntry version={__APP_VERSION__} />
         <button
           type="button"
    className={`topbar-iconbtn${themePref === 'system' ? ' auto' : ''}`}
@@ -611,13 +642,21 @@ export default function App() {
         </button>
         <button
           type="button"
+          className={`review-toggle${gitOpen ? ' active' : ''}`}
+          onClick={() => setGitOpen((v) => !v)}
+          title="仓库状态、提交、推送、回滚、排除"
+        >
+          Git
+        </button>
+        <button
+          type="button"
           className={`review-toggle${view === 'diff' ? ' active' : ''}`}
           onClick={() => setView((v) => (v === 'diff' ? 'code' : 'diff'))}
         >
           审查
         </button>
         <span className={`status-dot ${statusOk ? 'ok' : 'bad'}`} />
-        <span className="status-text">{statusText}</span>
+        <span className="status-text" title={retryError ?? statusText}>{statusText}</span>
         {showRetry ? (
           <button
             type="button"
@@ -633,6 +672,7 @@ export default function App() {
 
       {notice ? <div className="app-notice">{notice.text}</div> : null}
 
+      {root ? (
       <div
         className="main"
         ref={mainRef}
@@ -671,7 +711,7 @@ export default function App() {
               onPathRenamed={handlePathRenamed}
             />
           ) : (
-            <div className="pane-notice" role="status">
+            <div className={`pane-notice${retryError ? ' error' : ''}`} role="status">
               {auth.status === 'pending'
                 ? '正在连接本地服务…'
                 : (retryError ?? '等待后端连接…')}
@@ -722,8 +762,27 @@ export default function App() {
           <Chat key={root} root={root} connected={connected} onOpenFile={openFile} />
         </aside>
       </div>
+      ) : (
+        <WelcomePane
+          projects={projects}
+          connected={connected}
+          reason={retryError ?? (auth.status === 'failed' ? auth.error : null)}
+          onPick={pickFolder}
+          onOpen={(path) => applyRoot(path)}
+          onRemove={forgetProject}
+        />
+      )}
 
-      <Terminal key={root} root={root} connected={connected} />
+      {root ? <Terminal key={root} root={root} connected={connected} /> : null}
+
+      {root ? (
+        <GitPanel
+          root={root}
+          open={gitOpen}
+          onClose={() => setGitOpen(false)}
+          onOpenFile={openFile}
+        />
+      ) : null}
 
       {/* 缩放比例：只在 Ctrl+滚轮时短暂出现，平时不占位也不吃鼠标 */}
       <div className={`zoom-hint${scaleHint ? ' show' : ''}`} aria-live="polite">

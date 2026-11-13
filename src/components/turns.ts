@@ -99,10 +99,16 @@ function emptyTurn(id: string): Turn {
   }
 }
 
-/** 把消息按「用户提问」切成一轮一轮。 */
-export function groupTurns(messages: ChatMessage[]): Turn[] {
-  const ordered = [...messages].reverse()
+type TurnGroup = {
+  turns: Turn[]
+  /** 每个 turn 覆盖的消息 id（时间正序），增量重算时用来判断这一段是不是原封未动 */
+  ids: string[][]
+}
+
+/** 把已经按时间正序排好的消息切成一轮一轮，并记录每轮覆盖的消息 id。 */
+function buildTurns(ordered: ChatMessage[]): TurnGroup {
   const turns: Turn[] = []
+  const ids: string[][] = []
 
   for (const message of ordered) {
     if (message.type === 'idle') continue
@@ -122,6 +128,7 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
       if (typeof message.time?.created === 'number') turn.startedAt = message.time.created
       if (typeof message.time?.completed === 'number') turn.endedAt = message.time.completed
       turns.push(turn)
+      ids.push([message.id])
       continue
     }
 
@@ -131,6 +138,7 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
       turn.files = Array.isArray(message.files) ? message.files : []
       if (typeof message.time?.created === 'number') turn.startedAt = message.time.created
       turns.push(turn)
+      ids.push([message.id])
       continue
     }
 
@@ -141,6 +149,9 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
       // 开头没有用户消息（例如历史被截断）时补一个空轮次，别把内容丢掉
       turn = emptyTurn(message.id)
       turns.push(turn)
+      ids.push([message.id])
+    } else {
+      ids[ids.length - 1].push(message.id)
     }
 
     const done = typeof message.time?.completed === 'number'
@@ -213,7 +224,96 @@ export function groupTurns(messages: ChatMessage[]): Turn[] {
     }
   }
 
-  return turns
+  return { turns, ids }
+}
+
+/** 把消息按「用户提问」切成一轮一轮。 */
+export function groupTurns(messages: ChatMessage[]): Turn[] {
+  return buildTurns([...messages].reverse()).turns
+}
+
+/** 增量重算的缓存：上一次的成品 + 它吃掉的 id 段 + 当时那批消息对象的引用。 */
+export type TurnsCache = {
+  turns: Turn[]
+  ids: string[][]
+  /** 时间正序的消息数组（引用比较用） */
+  ordered: ChatMessage[]
+}
+
+/**
+ * 增量版 groupTurns。
+ *
+ * 流式输出时每个 delta 都会让 messages 变成新数组，但除正在写的那一条之外，
+ * 其余消息对象的**引用是不变的**（appendText / mergeMessages 都只替换目标消息）。
+ * 所以只要上一轮某个 turn 覆盖的那段消息引用全部没变，就能直接复用上一轮的 Turn
+ * 对象 —— 渲染层 sameTurn 立刻命中，等于整段历史零重建。
+ *
+ * 全量算 1000 轮约 1.8ms/次，30~50 delta/s 就是 6~9% 的主线程；增量后只剩
+ * 最后一轮的构建成本（约 0.02ms）。
+ */
+export function groupTurnsIncremental(
+  prev: TurnsCache | null,
+  messages: ChatMessage[],
+): TurnsCache {
+  const ordered: ChatMessage[] = []
+  for (let i = messages.length - 1; i >= 0; i -= 1) ordered.push(messages[i])
+
+  if (!prev || prev.ids.length === 0) {
+    const built = buildTurns(ordered)
+    return { ...built, ordered }
+  }
+
+  // 上一轮每个 turn 在它那份 ordered 里的起点位置
+  const startOf: number[] = []
+  let cursor = 0
+  for (const seg of prev.ids) {
+    startOf.push(cursor)
+    cursor += seg.length
+  }
+
+  /*
+   * 从头逐轮比对：整段原封不动就复用，遇到第一处不同就停下，
+   * 剩下的（通常只有最后一轮）整段重算。
+   *
+   * 不做「中间挖洞、后面接着复用」：那样切出来的段可能从 assistant 开始，
+   * 归属会和全量算法不一致（assistant 应该并进它前面那一轮）。
+   * 流式输出只改最新一轮，前缀复用已经吃掉了全部收益；
+   * 往上翻页这种低频操作退化成一次全量重算，值得。
+   */
+  const turns: Turn[] = []
+  const ids: string[][] = []
+  let i = 0
+  for (let slot = 0; slot < prev.ids.length; slot += 1) {
+    const seg = prev.ids[slot]
+    if (!sameSegment(prev.ordered, startOf[slot], ordered, i, seg.length)) break
+    if (ordered[i]?.id !== seg[0]) break
+    turns.push(prev.turns[slot])
+    ids.push(seg)
+    i += seg.length
+  }
+
+  if (i < ordered.length) {
+    const rebuilt = buildTurns(ordered.slice(i))
+    turns.push(...rebuilt.turns)
+    ids.push(...rebuilt.ids)
+  }
+
+  return { turns, ids, ordered }
+}
+
+/** 两段消息是否逐条同引用（同引用 ⇒ 内容一定没变）。 */
+function sameSegment(
+  a: ChatMessage[],
+  aFrom: number,
+  b: ChatMessage[],
+  bFrom: number,
+  length: number,
+): boolean {
+  if (aFrom + length > a.length || bFrom + length > b.length) return false
+  for (let k = 0; k < length; k += 1) {
+    if (a[aFrom + k] !== b[bFrom + k]) return false
+  }
+  return true
 }
 
 /** 思考时长的展示文本：进行中按当前时间走秒，结束用累计耗时。 */

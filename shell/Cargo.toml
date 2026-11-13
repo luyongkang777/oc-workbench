@@ -1,6 +1,6 @@
 [package]
 name = "oc-workbench-shell"
-version = "0.1.0"
+version = "1.1.0"
 edition = "2021"
 description = "OpenCode 工作台桌面外壳（tao + wry / WebView2）"
 publish = false
@@ -14,11 +14,16 @@ tao = "0.37"
 wry = "0.57"
 serde_json = "1"
 tiny_http = "0.12"
-ureq = { version = "2", default-features = false }
+ureq = { version = "2", default-features = false, features = ["native-tls", "json"] }
 include_dir = "0.7"
 rfd = "0.15"
 open = "5"
 getrandom = "0.2"
+# 一键登录要构造 Basic 头。Cargo.lock 里本来就有 0.22.1（ureq 的传递依赖，已在编译图里），
+# 显式声明只是把「能用」写进契约，不会多引一个 crate、也不会多编译一次。
+base64 = "0.22"
+# 校验更新包：Cargo.lock 里本来就有 0.10.9（ureq 的传递依赖），不新增编译图
+sha2 = "0.10"
 
 # 依赖一次性编译好，debug 也能秒开窗口
 [profile.dev.package."*"]

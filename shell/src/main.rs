@@ -19,7 +19,10 @@ mod fsindex;
 mod fsread;
 mod fssearch;
 mod fsutil;
+mod gitapi;
 mod projects;
+mod remoteapi;
+mod update;
 mod winenc;
 mod server;
 mod proxy;
@@ -40,6 +43,8 @@ use tao::event_loop::{ControlFlow, EventLoop};
 use tao::window::WindowBuilder;
 use wry::dpi::{PhysicalPosition, PhysicalSize, Position, Size};
 use wry::{Rect, WebViewBuilder};
+#[cfg(debug_assertions)]
+use wry::WebViewBuilderExtWindows;
 
 const APP_TITLE: &str = "OpenCode 工作台";
 const URL_ENV: &str = "OC_WORKBENCH_URL";
@@ -102,12 +107,15 @@ fn init_com_sta() {}
 /// 由后台线程 [`server::spawn_bootstrap`] 去连接（失败每 5 秒重试）。
 fn start_local(token: &str) -> Result<String, String> {
     let backend: Arc<RwLock<Option<auth::Backend>>> = Arc::new(RwLock::new(None));
+    // 与 backend 一起共享：后台线程写失败原因，`GET /api/state` 读给页面。
+    let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let port = server::start(server::Ctx {
         backend: backend.clone(),
         token: token.to_string(),
         port: 0,
+        last_error: last_error.clone(),
     })?;
-    server::spawn_bootstrap(backend);
+    server::spawn_bootstrap(backend, last_error);
     append_log(&format!(
         "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));
@@ -163,7 +171,7 @@ fn run() -> Result<(), String> {
     let ipc_origin = local_origin.clone();
     let token_sent = Arc::new(AtomicBool::new(false));
 
-    let webview = WebViewBuilder::new()
+    let mut builder = WebViewBuilder::new()
         .with_url(&url)
         .with_navigation_handler(move |target: String| {
             // 允许本站、空白页与 data/about 这类内部页；只拦外部导航。
@@ -264,9 +272,28 @@ fn run() -> Result<(), String> {
                 }
             }
             let _ = proxy.send_event(());
-        })
+        });
+
+    // 只有调试版接受 OC_WORKBENCH_DEBUG_PORT：给界面自动化留 CDP 口子。
+    // 发布版编译时 cfg(debug_assertions) 为假，整段（含 with_additional_browser_args）
+    // 被裁掉——线上二进制里没有任何调试端口。
+    #[cfg(debug_assertions)]
+    if let Some(args) = debug_browser_args() {
+        append_log(&format!("[debug] 开启远程调试：{args}
+"));
+        builder = builder.with_additional_browser_args(args);
+    }
+
+    let webview = builder
         .build(&window)
-        .map_err(|e| format!("创建 WebView 失败（确认已安装 WebView2 运行时）：{e}"))?;
+        .map_err(|e| {
+            format!(
+                "创建 WebView 失败：{e}\n\n\
+                 这台机器上可能缺少 WebView2 运行时（Windows 11 与较新的 Windows 10 自带）。\n\
+                 安装后重开本程序即可：\n\
+                 https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+            )
+        })?;
     let webview = Rc::new(webview);
 
     // 先按窗口当前尺寸对齐一次，resize 时再持续跟随。
@@ -315,6 +342,17 @@ fn run() -> Result<(), String> {
 
     #[allow(unreachable_code)]
     Ok(())
+}
+
+/// 调试版的远程调试参数（发布版不编译这段）。
+#[cfg(debug_assertions)]
+fn debug_browser_args() -> Option<String> {
+    let port = std::env::var("OC_WORKBENCH_DEBUG_PORT").ok()?;
+    let port = port.trim();
+    if port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("--remote-debugging-port={port}"))
 }
 
 /// 把排队好的 IPC 响应发给页面：`window.__ocIpc('<payload>')`。
@@ -411,7 +449,17 @@ fn save_root(root: &str) {
     }
 }
 
+/// 日志落点：优先 `%LOCALAPPDATA%\oc-workbench\gui-error.log`。
+///
+/// 不能只写 exe 同目录：装到 Program Files、或从只读盘/U 盘运行时写不进去，
+/// 出问题就一条线索都没有。exe 同目录只作兜底（绿色版、LOCALAPPDATA 不可用时）。
 fn log_path() -> PathBuf {
+    if let Some(base) = std::env::var_os("LOCALAPPDATA") {
+        let dir = PathBuf::from(base).join("oc-workbench");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return dir.join(LOG_NAME);
+        }
+    }
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(LOG_NAME)))

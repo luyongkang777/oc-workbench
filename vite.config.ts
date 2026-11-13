@@ -1,8 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { localFsPlugin } from './scripts/dev-local-fs.mjs'
+import { localGitPlugin } from './scripts/dev-local-git.mjs'
+import { localRemotePlugin } from './scripts/dev-local-remote.mjs'
 import { exec } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
+
+/** 版本号只在构建时注入一次，运行时不再问外壳（顶栏那颗版本号用它）。 */
+const VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version as string
 
 const execAsync = promisify(exec)
 const FALLBACK_TARGET = 'http://127.0.0.1:28894'
@@ -68,7 +74,13 @@ export default defineConfig(async ({ command, isPreview }) => {
   const auth: Auth = shouldPair ? await resolveAuth() : { cookie: '', target: FALLBACK_TARGET }
 
   return {
-    plugins: [react(), localFsPlugin()],
+    define: {
+      __APP_VERSION__: JSON.stringify(VERSION),
+    },
+    // 顺序有意义：LocalFs 拦的是所有 `/local/*`，Git / Remote 必须排它前面，
+    // 否则 `/local/git/status`、`/local/remote/accounts` 会被 fs 插件接走
+    // （回「未知的本地文件接口」）。
+    plugins: [react(), localGitPlugin(), localRemotePlugin(), localFsPlugin()],
     server: {
       port: 5273,
       strictPort: true,

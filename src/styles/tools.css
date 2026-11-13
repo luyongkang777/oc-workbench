@@ -1,8 +1,24 @@
-/* 一轮对话：用户气泡 + 回复 + 工具摘要 */
+/* 一轮对话：用户气泡 + 回复 + 工具摘要。
+   虚拟列表下不用容器的 gap 做间距（spacer 高度必须精确），改为自带上下内边距，
+   这样 getBoundingClientRect().height 量到的就是「含间距」的真实高度。 */
 .chat-turn {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding: 4px 0;
+}
+
+/* 列表容器：窗口化后由 spacer 撑高度，这里不能有任何 gap / padding 干扰 */
+.chat-turns {
+  display: block;
+  /* 父级是 flex column：别让总高被当成可压缩内容（列表高度必须精确等于前缀和） */
+  flex: none;
+}
+
+/* 屏幕外轮次的占位：高度由估算值或上次实测值给出，保证滚动条长度稳定 */
+.chat-pad {
+  width: 100%;
+  pointer-events: none;
 }
 
 .chat-tools {

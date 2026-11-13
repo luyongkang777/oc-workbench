@@ -6,7 +6,7 @@
 
 use std::io::{Read as _, Write as _};
 use std::net::TcpStream;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -23,6 +23,18 @@ fn start_test_server(base: Option<String>, token: &str) -> u16 {
         backend: Arc::new(RwLock::new(backend)),
         token: token.to_string(),
         port: 0,
+        last_error: Arc::new(Mutex::new(None)),
+    })
+    .expect("本地服务应能启动")
+}
+
+/// 带「最近一次失败原因」启动：测 `GET /api/state` 的断开态。
+fn start_test_server_with_error(token: &str, error: Option<&str>) -> u16 {
+    start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: token.to_string(),
+        port: 0,
+        last_error: Arc::new(Mutex::new(error.map(|text| text.to_string()))),
     })
     .expect("本地服务应能启动")
 }
@@ -307,4 +319,78 @@ fn local_api_list_and_read_roundtrip() {
     assert!(escape.starts_with("HTTP/1.1 400"), "越界必须 400：{}", &escape[..escape.len().min(200)]);
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `/local/git/*` 必须由 gitapi 接管（不是 fsapi），并且 token / 方法 / 参数校验都在。
+#[test]
+fn local_git_status_routes_to_gitapi() {
+    let token = "unit-test-local-token";
+    let dir = std::env::temp_dir().join(format!("ocwb-git-route-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+
+    let port = start_test_server(None, token);
+    let host = format!("127.0.0.1:{port}");
+    let slash = char::from(92u8);
+    let root = dir.to_string_lossy().replace(slash, "%5C").replace(':', "%3A");
+    let headers = [("x-oc-token", token)];
+
+    // 没初始化也要 200，且给的是 status 结构（不是 fsapi 的「未知接口」）
+    let status = raw_request(
+        port,
+        "GET",
+        &host,
+        &format!("/local/git/status?root={root}"),
+        &headers,
+    );
+    assert!(
+        status.starts_with("HTTP/1.1 200"),
+        "未初始化也应 200：{}",
+        &status[..status.len().min(200)]
+    );
+    assert!(status.contains("\"initialized\":"), "应是 status 结构：{}", &status[..status.len().min(300)]);
+    assert!(!status.contains("未知的本地文件接口"), "不能被 fsapi 吃掉");
+
+    // 缺 root → 400
+    let missing = raw_request(port, "GET", &host, "/local/git/status", &headers);
+    assert!(missing.starts_with("HTTP/1.1 400"), "缺 root 必须 400");
+
+    // 方法不对 → 405
+    let wrong_method = raw_request(port, "POST", &host, &format!("/local/git/status?root={root}"), &headers);
+    assert!(wrong_method.starts_with("HTTP/1.1 405"), "GET 接口不收 POST");
+
+    // 没有 token → 403（沿用 /local 的统一校验）
+    let no_token = raw_get(port, &host, &format!("/local/git/status?root={root}"));
+    assert!(no_token.starts_with("HTTP/1.1 403"), "缺 token 必须 403");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `GET /api/state`：断开态把「为什么没连上」直接给页面；不需要用户先点重试。
+#[test]
+fn state_endpoint_reports_error_without_auth_attempt() {
+    let token = "t-state";
+    let port = start_test_server_with_error(token, Some("找不到 `opencode` 命令。"));
+    let host = format!("127.0.0.1:{port}");
+    let headers = [("x-oc-token", token)];
+
+    let body = raw_request(port, "GET", &host, "/api/state", &headers);
+    assert!(body.starts_with("HTTP/1.1 200"), "应 200：{}", &body[..body.len().min(200)]);
+    assert!(body.contains("\"connected\":false"), "断开态应报 connected=false：{body}");
+    assert!(body.contains("找不到"), "要把失败原因带给页面：{body}");
+    assert!(body.contains("opencode"));
+
+    // 连上后既没有 error，也带 base
+    let port2 = start_test_server(Some("http://127.0.0.1:28894".to_string()), token);
+    let host2 = format!("127.0.0.1:{port2}");
+    let body2 = raw_request(port2, "GET", &host2, "/api/state", &[("x-oc-token", token)]);
+    assert!(body2.contains("\"connected\":true"), "{body2}");
+    assert!(body2.contains("28894"), "{body2}");
+
+    // 没有 token → 403（和 /api/* 同一道门禁）
+    let denied = raw_get(port, &host, "/api/state");
+    assert!(denied.starts_with("HTTP/1.1 403"), "缺 token 必须 403");
+
+    // 只读接口不收 POST
+    let wrong = raw_request(port, "POST", &host, "/api/state", &headers);
+    assert!(wrong.starts_with("HTTP/1.1 405"), "GET 接口不收 POST");
 }

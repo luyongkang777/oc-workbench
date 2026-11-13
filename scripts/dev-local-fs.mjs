@@ -210,7 +210,8 @@ const MIME = {
   pdf: 'application/pdf',
 }
 
-function sendJson(res, status, body) {
+/** 写 JSON 响应；头已经发出去就断开连接，别在半截响应上再拼一段。 */
+export function sendJson(res, status, body) {
   if (res.headersSent) {
     res.destroy()
     return
@@ -222,7 +223,8 @@ function sendJson(res, status, body) {
   res.end(text)
 }
 
-function httpError(status, message) {
+/** 带 HTTP 状态的错误：中间件统一 catch 后按 status 回 `{ error, status }`。 */
+export function httpError(status, message) {
   return Object.assign(new Error(message), { status })
 }
 
