@@ -85,11 +85,13 @@ https://github.com/luyongkang777/oc-workbench/releases/latest/download/latest.js
 发版只需要打 tag —— `.github/workflows/release.yml` 会在 `windows-latest` 上跑完：
 
 ```powershell
-# 先把 package.json 和 shell/Cargo.toml 的版本改成同一个号
-git commit -am "release: 1.1.3"
+npm.cmd run bump -- patch    # 三处版本一起改，并生成 RELEASE_NOTES.md 草稿
+git add -A && git commit -m "release: 1.1.3"
 git tag v1.1.3
 git push origin main --tags
 ```
+
+完整流程、产物命名规则、常见故障排查见 **[docs/RELEASING.md](docs/RELEASING.md)**。
 
 流水线依次：校验 tag 与 package.json 一致 → 前端测试 → 构建 dist → 外壳测试 → 构建 exe
 （含"前端真嵌进去了"核对）→ 生成 latest.json → 把 exe / latest.json / zip 传成该 tag 的 Release。
@@ -173,7 +175,7 @@ shell/          Rust 外壳（tao + wry / WebView2 + tiny_http）
 scripts/        dev 本地文件中间件（与 Rust 同语义）、大文件 CDP 实测脚本
                 build-exe.mjs 一条命令出 exe（含嵌入核对）；package-release.mjs 出发布包
 specs/workbench/ 需求、任务、进度
-docs/           接口实测笔记
+docs/           接口实测笔记；RELEASING.md 是发版手册
 ```
 
 ## 已知限制
