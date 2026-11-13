@@ -1,3 +1,3 @@
-- 发版自动化：打 tag（如 v1.1.2）自动跑测试 → 构建 exe → 生成 latest.json → 发布 Release
-- tag 与 package.json 版本不一致时流水线直接失败，避免发出对不上号的包
-- 客户端默认更新源仍是 releases/latest/download 别名，新版本发布后老客户端自动可见
+- 发版工具：`npm run bump` 一条命令同步三处版本号，并按提交生成更新说明草稿
+- 新增发版手册 docs/RELEASING.md（流程、产物命名、常见故障、自测清单）
+- 客户端默认更新源不变，新版本发布后老客户端自动可见
