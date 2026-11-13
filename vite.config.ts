@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { localFsPlugin } from './scripts/dev-local-fs.mjs'
 import { localGitPlugin } from './scripts/dev-local-git.mjs'
+import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
 import { localRemotePlugin } from './scripts/dev-local-remote.mjs'
 import { exec } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -77,10 +78,10 @@ export default defineConfig(async ({ command, isPreview }) => {
     define: {
       __APP_VERSION__: JSON.stringify(VERSION),
     },
-    // 顺序有意义：LocalFs 拦的是所有 `/local/*`，Git / Remote 必须排它前面，
-    // 否则 `/local/git/status`、`/local/remote/accounts` 会被 fs 插件接走
-    // （回「未知的本地文件接口」）。
-    plugins: [react(), localGitPlugin(), localRemotePlugin(), localFsPlugin()],
+    // 顺序有意义：LocalFs 拦的是所有 `/local/*`，Git / Remote / Purge 必须排它前面，
+    // 否则 `/local/git/status`、`/local/remote/accounts`、`/local/purge/status`
+    // 会被 fs 插件接走（回「未知的本地文件接口」）。
+    plugins: [react(), localGitPlugin(), localRemotePlugin(), localPurgePlugin(), localFsPlugin()],
     server: {
       port: 5273,
       strictPort: true,
