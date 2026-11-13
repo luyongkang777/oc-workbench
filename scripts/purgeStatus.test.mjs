@@ -182,6 +182,7 @@ test('关键词匹配与插件一致：大小写不敏感、长词优先、无�
     { keyword: 'deepseek', file: 'prompts/deepseek.md' },
     { keyword: 'claude', file: 'prompts/claude.md' },
     { keyword: 'grok', file: 'prompts/grok.md' },
+    { keyword: 'gemini', file: 'prompts/gemini.md' },
     { keyword: 'seek', file: 'prompts/seek.md' },
   ]
 
@@ -189,10 +190,12 @@ test('关键词匹配与插件一致：大小写不敏感、长词优先、无�
   assert.equal(matchPurgeKeyword(keywords, 'auto/GLM-5.3')?.keyword, 'glm')
   assert.equal(matchPurgeKeyword(keywords, 'claude/claude-opus-4.5')?.keyword, 'claude')
   assert.equal(matchPurgeKeyword(keywords, 'cursor/grok-5')?.keyword, 'grok')
+  assert.equal(matchPurgeKeyword(keywords, 'google/gemini-3-pro')?.keyword, 'gemini')
   // deepseek 比自定义短词 seek 长，必须优先命中
   assert.equal(matchPurgeKeyword(keywords, 'deepseek/deepseek-v5')?.keyword, 'deepseek')
   assert.equal(matchPurgeKeyword(keywords, 'mimo-v2.6-pro'), null)
   assert.equal(matchPurgeKeyword([], 'auto/gpt-6.2-sol'), null)
-  // 配置缺失时按插件内置五项兜底
+  // 配置缺失时按插件内置关键词兜底
   assert.equal(matchPurgeKeyword(null, 'auto/gpt-6.2-sol')?.file, 'prompts/gpt.md')
+  assert.equal(matchPurgeKeyword(null, 'google/gemini-2.5-flash')?.file, 'prompts/gemini.md')
 })

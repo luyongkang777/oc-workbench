@@ -29,7 +29,7 @@ export type PurgeKeywordEntry = {
 }
 
 /**
- * 插件内置的关键词表。配置里没写 `keywordMap` 时插件就用这五项，
+ * 插件内置的关键词表。配置里没写 `keywordMap` 时插件就用这几项，
  * 前端据此做同样的兜底判断（只在 status.keywords === null 时用到）。
  */
 export const DEFAULT_PURGE_KEYWORDS: PurgeKeywordEntry[] = [
@@ -38,6 +38,7 @@ export const DEFAULT_PURGE_KEYWORDS: PurgeKeywordEntry[] = [
   { keyword: 'deepseek', file: 'prompts/deepseek.md' },
   { keyword: 'claude', file: 'prompts/claude.md' },
   { keyword: 'grok', file: 'prompts/grok.md' },
+  { keyword: 'gemini', file: 'prompts/gemini.md' },
 ]
 
 /**
