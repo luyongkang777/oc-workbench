@@ -106,6 +106,22 @@ export async function readPurgeStatus(home = homedir()) {
 
   const state = await readJson(path.join(dataDir, 'state.json'))
 
+  // 关键词表：带文件是否存在。配置里没有 keywordMap 时返回 null
+  // （插件会自动套用内置五项默认）；显式 false 时是空数组（全关）。
+  let keywords = null
+  if (config.keywordMap !== undefined && config.keywordMap !== null) {
+    keywords = []
+    if (config.keywordMap && typeof config.keywordMap === 'object' && !Array.isArray(config.keywordMap)) {
+      for (const [key, file] of Object.entries(config.keywordMap)) {
+        if (typeof file !== 'string' || !file.trim()) continue
+        const resolved = await resolvePrompt(dataDir, pluginDir, file)
+        const info = await fileInfo(resolved)
+        keywords.push({ keyword: key.toLowerCase(), file, path: resolved, exists: info.exists, bytes: info.bytes })
+      }
+      keywords.sort((left, right) => left.keyword.localeCompare(right.keyword))
+    }
+  }
+
   return {
     ok: true,
     dataDir,
@@ -125,6 +141,7 @@ export async function readPurgeStatus(home = homedir()) {
     promptExists: promptInfo.exists,
     promptBytes: promptInfo.bytes,
     perModel: models,
+    keywords,
     temperature: config.temperature ?? null,
     maxTokens: config.maxTokens ?? null,
     toolsDeny: Array.isArray(config.tools?.deny) ? config.tools.deny : [],

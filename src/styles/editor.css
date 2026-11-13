@@ -1758,3 +1758,295 @@
 .editor-edit-hint.muted {
   color: var(--text-4);
 }
+
+/* ---------- 破甲注入开关（顶栏，上下文胶囊右侧） ---------- */
+.purge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  margin-left: 6px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.purge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-right: none;
+  border-radius: var(--r-2) 0 0 var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--ease), color var(--ease), border-color var(--ease);
+}
+
+.purge-chip:hover:not(:disabled),
+.purge-caret:hover {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
+  border-color: var(--line-2);
+}
+
+.purge-chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.purge-caret {
+  height: 22px;
+  width: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: var(--text-3);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-radius: 0 var(--r-2) var(--r-2) 0;
+  cursor: pointer;
+  transition: background var(--ease), color var(--ease), border-color var(--ease);
+}
+
+.purge-caret.open {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
+  border-color: var(--line-2);
+}
+
+/* 圆点：绿=开且当前模型命中，灰=关，黄=开了但当前模型不会注入 / 文件缺失 */
+.purge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-3);
+  flex: none;
+}
+
+.purge-chip.on .purge-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-weak);
+}
+
+.purge-chip.warn .purge-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-weak);
+}
+
+.purge-state {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.purge-chip.on .purge-state {
+  color: var(--accent);
+}
+
+.purge-chip.warn .purge-state {
+  color: var(--warn-ink);
+}
+
+.purge-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-2);
+  z-index: 50;
+}
+
+.purge-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.purge-menu-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.purge-menu-sub {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.purge-switch {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex: none;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-control);
+  cursor: pointer;
+  transition: background var(--ease), border-color var(--ease);
+}
+
+.purge-switch.on {
+  background: var(--accent-weak);
+  border-color: var(--accent-line);
+}
+
+.purge-switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.purge-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--text-3);
+  transition: transform var(--ease), background var(--ease);
+}
+
+.purge-switch.on .purge-switch-knob {
+  transform: translateX(14px);
+  background: var(--accent);
+}
+
+.purge-coverage {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--line-1);
+}
+
+.purge-coverage.on {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
+.purge-coverage.warn {
+  color: var(--warn-ink);
+  border-color: var(--warn-line);
+  background: var(--warn-weak);
+}
+
+.purge-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-2);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--danger-soft);
+  background: var(--danger-weak);
+  border: 1px solid var(--danger-line);
+  word-break: break-word;
+}
+
+.purge-facts {
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.purge-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.purge-fact > span:first-child {
+  color: var(--text-3);
+  flex: none;
+}
+
+.purge-fact > span:last-child {
+  text-align: right;
+  word-break: break-word;
+}
+
+.purge-models-title {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.purge-models-title > span {
+  margin-left: 4px;
+  color: var(--text-4);
+}
+
+.purge-models {
+  margin-top: 4px;
+  max-height: 168px;
+  overflow: auto;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+}
+
+.purge-model {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.purge-model:last-child {
+  border-bottom: none;
+}
+
+.purge-model.active {
+  background: var(--accent-weak);
+}
+
+.purge-model.missing .purge-model-file {
+  color: var(--warn-ink);
+}
+
+.purge-model-key {
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+.purge-model-file {
+  color: var(--text-3);
+  flex: none;
+}
+
+.purge-model-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.purge-menu-foot {
+  margin-top: 8px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-4);
+}

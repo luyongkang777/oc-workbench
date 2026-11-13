@@ -223,6 +223,40 @@ fn status_json() -> Value {
         .cloned()
         .unwrap_or_default();
 
+    // 关键词表：带文件是否存在（缺文件时插件会回退到默认正文，而
+    // injectDefault=false 就等于不注入——界面必须能提前看出这一层）。
+    // 配置文件里没有 keywordMap 时返回 null：插件会自动套用内置五项默认。
+    let keywords = match map.get("keywordMap") {
+        None => Value::Null,
+        Some(Value::Null) => Value::Null,
+        Some(entries) => {
+            let mut list: Vec<Value> = Vec::new();
+            if let Some(entries) = entries.as_object() {
+                for (key, value) in entries {
+                    let Some(file) = value.as_str().filter(|text| !text.trim().is_empty()) else {
+                        continue;
+                    };
+                    let path = resolve_prompt(&data, &plugin, file);
+                    let (exists, bytes) = file_info(&path);
+                    list.push(json!({
+                        "keyword": key.to_ascii_lowercase(),
+                        "file": file,
+                        "path": path.to_string_lossy(),
+                        "exists": exists,
+                        "bytes": bytes,
+                    }));
+                }
+            }
+            list.sort_by(|left, right| {
+                left["keyword"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(right["keyword"].as_str().unwrap_or(""))
+            });
+            Value::Array(list)
+        }
+    };
+
     let (state, _, state_exists) = read_json(&data.join("state.json"));
 
     json!({
@@ -244,6 +278,7 @@ fn status_json() -> Value {
         "promptExists": prompt_exists,
         "promptBytes": prompt_bytes,
         "perModel": models,
+        "keywords": keywords,
         "temperature": map.get("temperature").cloned().unwrap_or(Value::Null),
         "maxTokens": map.get("maxTokens").cloned().unwrap_or(Value::Null),
         "toolsDeny": tools_deny,

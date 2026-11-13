@@ -25,6 +25,7 @@ import type { StreamEvent } from '../api/chat'
 import { useChatEvents } from '../hooks/useChatEvents'
 import { useChatForms } from '../hooks/useChatForms'
 import { useChatModels } from '../hooks/useChatModels'
+import { usePurge } from '../hooks/usePurge'
 import { useChatRunning } from '../hooks/useChatRunning'
 import {
   filesToAttachments,
@@ -148,6 +149,7 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
   }, [currentID])
 
   const modelsApi = useChatModels(root, connected)
+  const purgeApi = usePurge(connected)
   const runningApi = useChatRunning(connected, currentID)
   const formsApi = useChatForms(connected, currentID)
   const reloadForms = formsApi.reload
@@ -1017,6 +1019,7 @@ export default function Chat({ root, connected, onOpenFile }: Props) {
           compacting,
           onCompact: () => void compactContext(),
         }}
+        purge={purgeApi}
       />
 
       {error ? <div className="chat-warn">{error}</div> : null}

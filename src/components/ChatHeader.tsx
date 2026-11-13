@@ -8,6 +8,8 @@ import {
 } from '../api/chat'
 import type { ContextUsage } from './contextUsage'
 import ContextMeter from './ContextMeter'
+import PurgeToggle from './PurgeToggle'
+import type { PurgeController } from '../hooks/usePurge'
 import { formatClock, formatDateTime } from './turns'
 
 type ModelKey = { id: string; providerID: string; variant?: string }
@@ -45,6 +47,8 @@ type Props = {
     compacting: boolean
     onCompact: () => void
   }
+  /** 破甲注入开关；不传就不显示（终端等场景用不到） */
+  purge?: PurgeController
 }
 
 export function shortTitle(session: SessionInfo): string {
@@ -97,6 +101,7 @@ export default function ChatHeader({
   showAll,
   onToggleShowAll,
   context,
+  purge,
 }: Props) {
   const [modelsOpen, setModelsOpen] = useState(false)
   const [modesOpen, setModesOpen] = useState(false)
@@ -342,6 +347,8 @@ export default function ChatHeader({
         </div>
 
         {context ? <ContextMeter {...context} /> : null}
+
+        {purge ? <PurgeToggle controller={purge} currentModel={currentModel} /> : null}
 
         <button type="button" className="chat-new" onClick={onNewSession} disabled={!connected}>
           + 新会话

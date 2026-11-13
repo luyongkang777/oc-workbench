@@ -86,8 +86,16 @@ export default defineConfig(async ({ command, isPreview }) => {
       port: 5273,
       strictPort: true,
       watch: {
-        // Rust 外壳的编译产物被占用时，watcher 会 EBUSY 把 dev server 直接搞崩
-        ignored: ['**/shell/**', '**/target/**', '**/dist/**', '**/.git/**', '**/.tmp/**'],
+        // Rust 外壳的编译产物被占用时，watcher 会 EBUSY 把 dev server 直接搞崩。
+        // release/ 里的 WebView2 缓存（Cookies 等）被运行中的实例锁住，同样会崩。
+        ignored: [
+          '**/shell/**',
+          '**/target/**',
+          '**/dist/**',
+          '**/release/**',
+          '**/.git/**',
+          '**/.tmp/**',
+        ],
       },
       proxy: {
         '/api': {
