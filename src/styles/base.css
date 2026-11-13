@@ -940,3 +940,109 @@ body {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
+
+/* ==========================================================================
+   OpenCode CLI：胶囊里的版本标记 + 更新面板里的安装区块
+   ========================================================================== */
+
+/* 胶囊里的第二段：和「工作台版本」用竖线隔开，避免读成一个版本号 */
+.update-cli-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+  padding-left: 6px;
+  margin-left: 1px;
+  font-size: 10px;
+  color: var(--text-3);
+  border-left: 1px solid var(--line-2);
+  white-space: nowrap;
+}
+
+.update-cli-tag.fresh {
+  color: var(--accent);
+}
+
+/* 面板里的 CLI 区块：和上面的「工作台版本」用一条分隔线断开 */
+.update-cli {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-1);
+}
+
+.update-cli-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.update-cli-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.update-cli-state {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.update-cli-state.fresh {
+  color: var(--accent);
+}
+
+/* 路径可能很长：单行省略，完整路径放 title */
+.update-cli-path {
+  font-size: 10.5px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-cli-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.update-cli-bar {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-1);
+  overflow: hidden;
+}
+
+.update-cli-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 220ms var(--ease, ease);
+}
+
+.update-cli-progress-text {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.update-cli-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.update-cli-note {
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

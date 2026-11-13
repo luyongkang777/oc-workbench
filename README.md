@@ -47,7 +47,8 @@ OpenCode 工作台：Rust + WebView2 桌面外壳，内嵌前端，自带本地 
 2. 更新：`POST /local/update/apply` 下载 → 校验体积 + SHA256 + PE 头（MZ）→ 写替换脚本 → 本进程退出
 
 面板里可以关掉「启动时自动检查更新」（写 `settings.json` 的 `autoCheckUpdate`）：
-关掉后启动时不再外联，只在点开面板时检查一次。默认开着。
+关掉后启动时不再外联，只在点开面板时检查一次。默认开着，但**最多 6 小时静默查一次**
+（上次检查时间记在 localStorage），想立刻知道有没有新版就点开面板——面板里的检查不受限制。
 
 面板里可以「跳过这个版本」：只记版本号（`settings.json` 的 `skipVersion`），
 顶栏不再提示，但点开面板仍能更新或取消跳过；发下一个版本时自动失效。
@@ -104,6 +105,50 @@ git push origin main --tags
 
 本地手工出包（不上传）也保留：`npm.cmd run build:exe`，再
 `$env:OC_WORKBENCH_GITHUB="owner/repo"; npm.cmd run release`。
+
+## OpenCode CLI 版本与自动安装
+
+顶栏胶囊除了工作台版本（`v1.2.0`）还带一段 CLI 版本（`oc 2.2.5`）：没装显示 `oc 未装`，
+装的不是 v2 或有新版时那一段变品牌色。点开「版本与更新」面板，下半部分就是 CLI 区块：
+本机版本、实际路径、最新 v2、安装/更新按钮、进度条，「启动时自动安装并更新」开关。
+
+- 版本探测：定位 `opencode` 后跑一次 `--version`（30 秒超时，超时杀整棵进程树），
+  结果缓存 60 秒——几百 MB 的 exe 不能每次查询都重启一遍
+- 最新版本：`GET /local/cli/status` 拉 GitHub 发布列表（`?remote=1` 强制刷新），
+  只认 `v2.x.y` 的 tag、跳过 draft/prerelease、按架构挑 `opencode-windows-x64.zip`
+  （没有就退 `-baseline`，再没有退任意含 windows 的 zip）；结果缓存 10 分钟
+- 安装：`POST /local/cli/install` → 下载（体积校验 + `PK` 头）→ 解压
+  （优先 `%SystemRoot%\System32\tar.exe`，它会认 zip；PATH 里的 GNU tar 不认，会自动退 PowerShell `Expand-Archive`）
+  → 跑一次新文件 `--version` 确认是 v2 → 替换 → 清掉定位缓存
+- 替换为什么能成功：Windows 上运行中的 exe **不能覆盖但可以改名**，所以是
+  「旧文件改名成 `opencode.exe.bak-<新版本>` → 新文件写到原路径」，后端服务正在跑也不影响；
+  写失败会把改名回滚，不会留下一个没有 exe 的目录
+- 装到哪：已经装着的 exe 原地升级（PATH 与 `.cmd` shim 都不用动），没有就装到
+  `%USERPROFILE%\.opencode\bin\opencode.exe`（官方安装器落点，本来就在定位候选里）
+- 自动更新：启动 8 秒后后台看一次，但**最多 6 小时真的联网查一次**（上次检查时间写
+  `settings.json` 的 `lastCliCheckAt`）——没装的情况不受节流，会立即下载安装；
+  开关写 `settings.json` 的 `autoUpdateCli`（默认开）。整个过程只落 `gui-error.log`，不弹窗；
+  装完由已有的 bootstrap 重试（每 5 秒）接上新服务
+- 换镜像：`OC_OPENCODE_RELEASES_API` 指向自己的发布列表接口（格式同 GitHub Releases API）
+
+接口一览（都要 `x-oc-token`）：`GET /local/cli/status[?remote=1][&latest=0]`（`latest=0`
+纯本机、完全不联网）、`POST /local/cli/install`、`POST /local/cli/check`（强制刷新最新版）、
+`POST /local/cli/auto`（`{ "enabled": true|false }`）。
+
+## Git 面板：没把 git 放进 PATH 的机器
+
+`/local/git/*` 不直接 `Command::new("git")`，而是先定位：
+`OC_WORKBENCH_GIT` → PATH（`where`，带 3 秒超时）→ 工作台 exe 同目录 → `Program Files\Git\cmd`
+→ `Program Files (x86)\Git\cmd` → `%LOCALAPPDATA%\Programs\Git\cmd` → GitHub Desktop 自带的 git
+→ scoop / chocolatey。只缓存成功，所以装完 git 点一次「刷新」就能用。
+
+真正找不到时不再甩 `program not found`，而是把查过的位置和下一步写清楚：
+
+> 这台电脑上找不到 git。已查过：PATH、程序所在目录、Program Files\Git、… 装一个
+> Git for Windows（https://git-scm.com/download/win）后点「刷新」即可；已经装了但不在这些
+> 位置，就设环境变量 `OC_WORKBENCH_GIT` 指向 git.exe。
+
+同一套定位也用在测试里（`cargo test` 的那条真仓库冒烟不再依赖 PATH）。
 
 ## 开发
 

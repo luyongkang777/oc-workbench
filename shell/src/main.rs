@@ -13,6 +13,7 @@
 
 mod auth;
 mod body;
+mod cli;
 mod fsapi;
 mod fsdecode;
 mod fsindex;
@@ -116,6 +117,9 @@ fn start_local(token: &str) -> Result<String, String> {
         last_error: last_error.clone(),
     })?;
     server::spawn_bootstrap(backend, last_error);
+    // 后台确认 opencode CLI 是 v2 且是最新版：缺了就装，旧了就更新。
+    // 和 bootstrap 并行：它连不上时每 5 秒重试，装完自然就连上了。
+    cli::spawn_auto_update();
     append_log(&format!(
         "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));

@@ -228,6 +228,24 @@ fn resolve_opencode() -> Option<Target> {
     found
 }
 
+/// 已定位到的可执行文件路径（`.cmd` shim 也会原样返回）。
+///
+/// 给 CLI 版本探测和「原地升级」用：换文件时必须知道用户实际在用哪一个，
+/// 换到别处等于没装。
+pub fn locate() -> Option<PathBuf> {
+    resolve_opencode().map(|target| target.program)
+}
+
+/// 装完/更新完 opencode 后清掉定位缓存。
+///
+/// 缓存只在成功时写入，而升级可能把文件换到新路径（先装到
+/// `%USERPROFILE%\.opencode\bin`），不清就会一直连着旧路径。
+pub fn reset_resolution() {
+    if let Ok(mut guard) = RESOLVED.lock() {
+        *guard = None;
+    }
+}
+
 fn resolve_opencode_uncached() -> Option<Target> {
     // 1. 显式指定优先。允许给「路径」或「命令名」，两种都认。
     if let Some(raw) = env_path(OPENCODE_ENV) {

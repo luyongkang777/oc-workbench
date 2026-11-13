@@ -10,6 +10,17 @@ import {
   skipUpdate,
 } from '../api/update'
 import type { UpdateCheck } from '../api/update'
+import { getCliStatus, installCli, setCliAutoUpdate } from '../api/cli'
+import type { CliStatus } from '../api/cli'
+import {
+  cliActionLabel,
+  cliCanInstall,
+  cliFresh,
+  cliProgress,
+  cliStateLabel,
+  cliTag,
+  formatBytes,
+} from './cliState'
 
 type Phase = 'checking' | 'ready' | 'applying' | 'restarting'
 
@@ -17,6 +28,11 @@ type Phase = 'checking' | 'ready' | 'applying' | 'restarting'
 function badgeOf(result: UpdateCheck): string | null {
   return result.newer && !result.skipped && result.latest ? result.latest : null
 }
+
+/** 启动时静默检查的最小间隔：6 小时（点开面板的检查不受限制）。 */
+const SILENT_INTERVAL_MS = 6 * 60 * 60 * 1000
+/** 上次静默检查的时间戳，存 localStorage。 */
+const SILENT_STAMP_KEY = 'oc.update.lastSilentCheck'
 
 function formatSize(bytes: number): string {
   if (!bytes) return ''
@@ -33,7 +49,24 @@ function formatSize(bytes: number): string {
 export default function UpdateEntry({ version }: { version: string }) {
   const [open, setOpen] = useState(false)
   const [latest, setLatest] = useState<string | null>(null)
+  // OpenCode CLI 的状态：顶栏要直接显示它的版本号，缺了还要能一眼看出来
+  const [cli, setCli] = useState<CliStatus | null>(null)
   const alive = useRef(true)
+
+  /** 读一次 CLI 状态。`latest=false` 时外壳连发布列表都不查，只有本机信息。 */
+  const refreshCli = useCallback(
+    async (remote = false, latest = true): Promise<CliStatus | null> => {
+      try {
+        const next = await getCliStatus(remote, latest)
+        if (alive.current) setCli(next)
+        return next
+      } catch {
+        // 读不到就不显示 CLI 标记，不能因此把工作台版本也一起弄没
+        return null
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     alive.current = true
@@ -43,10 +76,11 @@ export default function UpdateEntry({ version }: { version: string }) {
   }, [])
 
   /**
-   * 启动后的静默检查：只在开着「自动检查」时做。
+   * 启动后的静默检查：开着「自动检查」时才做，而且**最多 6 小时一次**。
    *
-   * 先读一次配置再决定要不要发请求——关掉之后连这一次外联都不该有。
-   * 配置读不到就按默认（开）走，别因为一个本地接口失败就静默失去更新能力。
+   * 以前是每次启动都查（延迟 4 秒就发请求），一天开十几次就是十几次外联。
+   * 现在把上次检查的时间记在 localStorage，没到点直接跳过；要立刻知道有没有
+   * 新版，点开面板——那里的检查不受这个窗口限制。
    */
   // 令牌是页面挂载后才经 IPC 下发的：还没 ready 就发 /local/* 会 403，
   // 于是「读不到配置」的兜底会把关掉的自动检查又打开。必须等握手完成。
@@ -56,16 +90,25 @@ export default function UpdateEntry({ version }: { version: string }) {
     if (auth.status !== 'ready') return
     let cancelled = false
     let timer = 0
+
+    const last = Number(window.localStorage.getItem(SILENT_STAMP_KEY) ?? '0')
+    const due = !Number.isFinite(last) || last <= 0 || Date.now() - last >= SILENT_INTERVAL_MS
+    if (!due) return
+
     const scheduleSilent = () => {
       timer = window.setTimeout(() => {
         checkUpdate()
           .then((result) => {
-            if (!cancelled && alive.current) setLatest(badgeOf(result))
+            if (!cancelled && alive.current) {
+              setLatest(badgeOf(result))
+              // 只有真查过才记时间：失败时下次启动还能再试
+              window.localStorage.setItem(SILENT_STAMP_KEY, String(Date.now()))
+            }
           })
           .catch(() => {
             // 没配更新源、或者暂时连不上：不打扰，点开面板才看细节
           })
-      }, 4000)
+      }, 2000)
     }
     getUpdateConfig()
       .then((config) => {
@@ -80,23 +123,41 @@ export default function UpdateEntry({ version }: { version: string }) {
     }
   }, [auth.status])
 
+  // 顶栏上的 CLI 版本：握手完成后拉一次，**只读本机**（不带 latest），不联网。
+  // 最新的 CLI 版本等用户点开面板再查，避免每次启动都去问 GitHub。
+  useEffect(() => {
+    if (auth.status !== 'ready') return
+    void refreshCli(false, false)
+  }, [auth.status, refreshCli])
+
+  const cliHint = cli
+    ? `OpenCode CLI ${cli.version ? `v${cli.version}` : '未安装'}${cli.path ? ` · ${cli.path}` : ''}`
+    : 'OpenCode CLI 状态未知'
+
   return (
     <div className="update-entry">
       <button
         type="button"
         className={`update-chip${latest ? ' fresh' : ''}`}
-        title={latest ? `有新版本 v${latest}` : '检查更新'}
+        title={`${latest ? `有新版本 v${latest}` : '检查更新'} · ${cliHint}`}
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
         <Icon name="download" size={12} />
         <span>v{version}</span>
+        {cli ? (
+          <span className={`update-cli-tag${cliFresh(cli) ? ' fresh' : ''}`} aria-label={cliHint}>
+            {cliTag(cli)}
+          </span>
+        ) : null}
         {latest ? <span className="update-dot" /> : null}
       </button>
       {open ? (
         <UpdateDialog
           version={version}
+          cli={cli}
+          refreshCli={refreshCli}
           onClose={() => setOpen(false)}
           onResult={(result) => setLatest(badgeOf(result))}
         />
@@ -107,10 +168,14 @@ export default function UpdateEntry({ version }: { version: string }) {
 
 function UpdateDialog({
   version,
+  cli,
+  refreshCli,
   onClose,
   onResult,
 }: {
   version: string
+  cli: CliStatus | null
+  refreshCli: (remote?: boolean, latest?: boolean) => Promise<CliStatus | null>
   onClose: () => void
   onResult: (result: UpdateCheck) => void
 }) {
@@ -123,6 +188,10 @@ function UpdateDialog({
   const [editingSource, setEditingSource] = useState(false)
   // 开关的本地值：点一下立刻反映，落盘失败再回滚
   const [localAuto, setLocalAuto] = useState<boolean | null>(null)
+  // CLI 区块自己的忙碌状态：安装请求还没返回时也要锁住按钮
+  const [cliBusy, setCliBusy] = useState(false)
+  const [cliError, setCliError] = useState<string | null>(null)
+  const [cliAuto, setCliAuto] = useState<boolean | null>(null)
   const alive = useRef(true)
 
   useEffect(() => {
@@ -153,6 +222,18 @@ function UpdateDialog({
   useEffect(() => {
     void runCheck()
   }, [runCheck])
+
+  // 打开面板就同步一次 CLI 状态（外壳带 10 分钟缓存，不会每次点都外联）
+  useEffect(() => {
+    void refreshCli(false)
+  }, [refreshCli])
+
+  // 安装/更新进行中每 1.5 秒跟一次进度；阶段文案和百分比都由外壳给
+  useEffect(() => {
+    if (!cli?.busy) return
+    const timer = window.setInterval(() => void refreshCli(false, false), 1500)
+    return () => window.clearInterval(timer)
+  }, [cli?.busy, refreshCli])
 
   // Esc 关闭；更新进行中不关（关了也拦不住进程退出，只会让人误以为失败）
   useEffect(() => {
@@ -228,12 +309,46 @@ function UpdateDialog({
     }
   }
 
+  /** 下载并安装/更新 OpenCode CLI。请求会阻塞到装完（约 1~5 分钟）。 */
+  async function startCliInstall() {
+    if (cliBusy) return
+    setCliBusy(true)
+    setCliError(null)
+    try {
+      await installCli()
+      await refreshCli(true)
+    } catch (err) {
+      if (alive.current) setCliError((err as Error).message)
+      // 失败了也要回读一次：外壳可能已经把「安装失败」写进状态
+      await refreshCli(false)
+    } finally {
+      if (alive.current) setCliBusy(false)
+    }
+  }
+
+  /** 开/关启动时自动装、自动更新。 */
+  async function toggleCliAuto(enabled: boolean) {
+    setCliAuto(enabled)
+    try {
+      await setCliAutoUpdate(enabled)
+      await refreshCli(false)
+    } catch (err) {
+      if (alive.current) {
+        setCliAuto(null) // 落盘失败就回到服务端的真值
+        setCliError((err as Error).message)
+      }
+    }
+  }
+
   const current = info?.current ?? version
   const latest = info?.latest ?? null
   const configured = info?.configured ?? true
   const isSkipped = info?.skipped ?? false
   const autoCheck = localAuto ?? info?.autoCheck ?? true
   const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting'
+  const cliAutoValue = cliAuto ?? cli?.autoUpdate ?? true
+  const cliBusyNow = cliBusy || (cli?.busy ?? false)
+  const cliBar = cliProgress(cli)
 
   return (
     <div className="update-mask" role="presentation" onClick={() => (busy ? undefined : onClose())}>
@@ -339,7 +454,7 @@ function UpdateDialog({
             />
             <span className="update-auto-title">启动时自动检查更新</span>
             <span className="update-auto-hint">
-              {autoCheck ? '启动约 4 秒后静默检查一次' : '只在点开这个面板时检查'}
+              {autoCheck ? '最多每 6 小时静默检查一次' : '只在点开这个面板时检查'}
             </span>
           </label>
 
@@ -358,6 +473,81 @@ function UpdateDialog({
               </button>
             </div>
           ) : null}
+          {/* OpenCode CLI：工作台的后端全靠它，所以版本、安装、自动更新都放在这里 */}
+          <div className="update-cli">
+            <div className="update-cli-head">
+              <span className="update-cli-name">OpenCode CLI</span>
+              <span className={`update-cli-state${cli?.newer ? ' fresh' : ''}`}>
+                {cliStateLabel(cli)}
+              </span>
+            </div>
+
+            {cli?.path ? (
+              <div className="update-cli-path" title={cli.path}>
+                {cli.path}
+              </div>
+            ) : null}
+
+            <div className="update-row">
+              <span className="update-label">最新 v2</span>
+              <span className="update-value">
+                {cli?.latest
+                  ? `v${cli.latest}${formatBytes(cli.size) ? ` · ${formatBytes(cli.size)}` : ''}`
+                  : cli?.error
+                    ? '未查到'
+                    : '读取中…'}
+              </span>
+            </div>
+
+            {cli?.notes ? <div className="update-notes">{cli.notes}</div> : null}
+
+            {cliBar ? (
+              <div className="update-cli-progress">
+                {cliBar.percent !== null ? (
+                  <span className="update-cli-bar">
+                    <span style={{ width: `${cliBar.percent}%` }} />
+                  </span>
+                ) : null}
+                <span className="update-cli-progress-text">{cliBar.text}</span>
+              </div>
+            ) : null}
+
+            {cliError ?? cli?.error ? (
+              <div className="update-error">{cliError ?? cli?.error}</div>
+            ) : null}
+
+            <label className="update-auto">
+              <input
+                type="checkbox"
+                checked={cliAutoValue}
+                disabled={cliBusyNow}
+                onChange={(event) => void toggleCliAuto(event.target.checked)}
+              />
+              <span className="update-auto-title">自动安装并更新 OpenCode CLI</span>
+              <span className="update-auto-hint">
+                {cliAutoValue
+                  ? '最多每 6 小时检查一次；没装会立即安装 v2'
+                  : '只在点下面的按钮时才安装/更新'}
+              </span>
+            </label>
+
+            <div className="update-cli-actions">
+              <button
+                type="button"
+                className={`update-btn${cli?.newer ? ' primary' : ''}`}
+                onClick={() => void startCliInstall()}
+                disabled={cliBusyNow || !cliCanInstall(cli)}
+                title={
+                  cli?.latest ? `安装/更新到 v${cli.latest}` : '按当前平台选择对应安装包'
+                }
+              >
+                {cliBusyNow ? '处理中…' : cliActionLabel(cli)}
+              </button>
+              {cli?.path && cli.version ? (
+                <span className="update-cli-note">装在 {cli.path}</span>
+              ) : null}
+            </div>
+          </div>
         </div>
 
         <footer className="update-actions">

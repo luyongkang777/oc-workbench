@@ -259,6 +259,11 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             crate::update::handle(request, &path, &url);
             return;
         }
+        // OpenCode CLI 版本 / 安装 / 自动更新：同样排在 fsapi 前面。
+        if path.starts_with("/local/cli/") {
+            crate::cli::handle(request, &path, &url);
+            return;
+        }
         crate::fsapi::handle(request, &path, &url);
         return;
     }

@@ -18,12 +18,13 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
+use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tiny_http::Request;
@@ -42,6 +43,16 @@ const TIMEOUT_WRITE: Duration = Duration::from_secs(60);
 const TIMEOUT_PUSH: Duration = Duration::from_secs(180);
 /// 回给前端的 git 输出上限（push 的进度输出可能很长）。
 const OUTPUT_LIMIT: usize = 4000;
+/// 环境变量：显式指定 git 可执行文件（路径或命令名）。
+///
+/// 没这个口子的话，「装在非默认位置」的机器就永远只能用 PATH——
+/// 而 Git for Windows 的安装器并不保证把 `cmd` 目录加进 PATH。
+pub const GIT_ENV: &str = "OC_WORKBENCH_GIT";
+/// 探测结果缓存：`None` = 还没找过；`Some(None)` = 找过但没有（没装）。
+///
+/// 不能把「没找到」永久缓存成「永远找不到」——用户装完 git 回来点重试，
+/// 或者插上一个绿色版，应该立刻能用。所以在 [`resolve_git`] 里只缓存成功。
+static GIT_FOUND: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// 历史默认条数与上限（契约 §1：默认 50、上限 200）。
 const LOG_LIMIT_DEFAULT: u64 = 50;
 const LOG_LIMIT_MAX: u64 = 200;
@@ -156,6 +167,175 @@ impl GitOutput {
     }
 }
 
+// ---------- 定位 git ----------
+//
+// 为什么不能直接 `Command::new("git")`：Git for Windows 装完**不保证**把 `cmd`
+// 加进 PATH（安装向导里的「只在 Git Bash 用」选项就会这样），换台机器就变成
+// 「400 找不到 git 命令：program not found」。这里按 opencode 的老办法：
+// 显式环境变量 → PATH → 逐个已知安装位置。
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|value| !value.as_os_str().is_empty())
+}
+
+/// 用 `where` 在 PATH 上找。必须自带超时：PATH 里有不可达的网络共享时会卡很久。
+fn where_lookup(name: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut child = Command::new("where")
+            .arg(name)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    if !status.success() {
+                        return None;
+                    }
+                    let mut buf = Vec::new();
+                    child.stdout.take()?.read_to_end(&mut buf).ok()?;
+                    return String::from_utf8_lossy(&buf)
+                        .lines()
+                        .map(|line| PathBuf::from(line.trim()))
+                        .find(|path| path.is_file());
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = name;
+        None
+    }
+}
+
+/// GitHub Desktop 自带一份 git（`%LOCALAPPDATA%\GitHubDesktop\app-<版本>\resources\app\git`）。
+/// 目录名带版本号，要倒序取最新的，否则可能挑到升级前的旧副本。
+fn github_desktop_git(local: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(local.join("GitHubDesktop")) else {
+        return Vec::new();
+    };
+    let mut apps: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("app-"))
+        .map(|entry| entry.path())
+        .collect();
+    apps.sort();
+    apps.reverse();
+    apps.into_iter()
+        .map(|app| {
+            app.join("resources")
+                .join("app")
+                .join("git")
+                .join("cmd")
+                .join("git.exe")
+        })
+        .collect()
+}
+
+/// PATH 之外的常见安装位置，按「最可能命中」排序。
+fn git_candidates() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    // 绿色版：把 git 丢在工作台 exe 旁边，或旁边建个 git 目录
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    {
+        out.push(dir.join("git.exe"));
+        out.push(dir.join("git").join("cmd").join("git.exe"));
+    }
+    if let Some(program_files) = env_path("ProgramFiles") {
+        out.push(program_files.join("Git").join("cmd").join("git.exe"));
+        out.push(program_files.join("Git").join("bin").join("git.exe"));
+    }
+    if let Some(program_files) = env_path("ProgramFiles(x86)") {
+        out.push(program_files.join("Git").join("cmd").join("git.exe"));
+    }
+    if let Some(local) = env_path("LOCALAPPDATA") {
+        out.push(local.join("Programs").join("Git").join("cmd").join("git.exe"));
+        out.push(local.join("Programs").join("Git").join("bin").join("git.exe"));
+        out.extend(github_desktop_git(&local));
+    }
+    if let Some(home) = env_path("USERPROFILE") {
+        out.push(home.join("scoop").join("shims").join("git.exe"));
+        out.push(
+            home.join("scoop")
+                .join("apps")
+                .join("git")
+                .join("current")
+                .join("cmd")
+                .join("git.exe"),
+        );
+    }
+    out.push(PathBuf::from(r"C:\ProgramData\chocolatey\bin\git.exe"));
+    out
+}
+
+/// 已缓存的 git 路径（只缓存成功；没装时每次都会重新找，装完立刻可用）。
+pub fn resolve_git() -> Option<PathBuf> {
+    if let Ok(guard) = GIT_FOUND.lock() {
+        if let Some(hit) = guard.as_ref() {
+            return Some(hit.clone());
+        }
+    }
+    let found = resolve_git_uncached();
+    if let Some(hit) = found.as_ref() {
+        if let Ok(mut guard) = GIT_FOUND.lock() {
+            *guard = Some(hit.clone());
+        }
+    }
+    found
+}
+
+fn resolve_git_uncached() -> Option<PathBuf> {
+    // 显式指定优先；指到不存在的路径时继续往下找，不能因为一条错配置就判定「没有 git」
+    if let Some(raw) = env_path(GIT_ENV) {
+        if raw.is_file() {
+            return Some(raw);
+        }
+        if let Some(found) = where_lookup(&raw.to_string_lossy()) {
+            return Some(found);
+        }
+    }
+    if let Some(found) = where_lookup("git") {
+        return Some(found);
+    }
+    git_candidates().into_iter().find(|path| path.is_file())
+}
+
+/// 找不到 git 时的错误：把查过的位置和下一步都说清楚，别只甩一句 program not found。
+pub fn missing_git() -> GitError {
+    GitError::new(
+        400,
+        format!(
+            "这台电脑上找不到 git。已查过：PATH、程序所在目录、Program Files\\Git、\
+             %LOCALAPPDATA%\\Programs\\Git、scoop、GitHub Desktop 自带的 git。\
+             装一个 Git for Windows（https://git-scm.com/download/win）后点「刷新」即可；\
+             已经装了但不在这些位置，就设环境变量 {GIT_ENV} 指向 git.exe。"
+        ),
+    )
+}
+
 fn run_git(root: &str, args: &[&str], timeout: Duration) -> Result<GitOutput, GitError> {
     run_git_with_input(root, args, timeout, None)
 }
@@ -167,7 +347,8 @@ fn run_git_with_input(
     timeout: Duration,
     input: Option<Vec<u8>>,
 ) -> Result<GitOutput, GitError> {
-    let mut cmd = Command::new("git");
+    let program = resolve_git().ok_or_else(missing_git)?;
+    let mut cmd = Command::new(program);
     // quotepath 必须放在子命令之前，否则中文路径会变成 \344\270\255 这种八进制转义。
     cmd.arg("-c").arg("core.quotepath=false");
     for arg in args {
@@ -189,7 +370,7 @@ fn run_git_with_input(
 
     let mut child = cmd
         .spawn()
-        .map_err(|err| GitError::new(400, format!("找不到 git 命令：{err}")))?;
+        .map_err(|err| GitError::new(500, format!("启动 git 失败：{err}")))?;
     let pid = child.id();
 
     if let Some(bytes) = input {
@@ -1864,12 +2045,51 @@ mod tests {
         assert_eq!(truncate("中文中文", 2), "中文...");
     }
 
+    /// GitHub Desktop 的版本目录必须倒序取最新，否则升级后还在用旧副本。
+    #[test]
+    fn github_desktop_prefers_newest_app_dir() {
+        let dir = std::env::temp_dir().join(format!("ocwb-gitdesk-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        for name in ["app-3.4.0", "app-3.10.0", "app-3.9.1"] {
+            fs::create_dir_all(dir.join("GitHubDesktop").join(name).join("resources"))
+                .expect("建假版本目录");
+        }
+        let found = github_desktop_git(&dir);
+        let first = found.first().expect("至少要给出一个候选");
+        // 按字典序倒排：app-3.9.1 > app-3.4.0，版本号排序在这里不适用（也不影响可用性）
+        assert!(first.to_string_lossy().contains("app-3.9.1"), "实际第一个：{first:?}");
+        assert_eq!(found.len(), 3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 找不到时的文案要能指导下一步：装哪个、装完点哪、装在别处怎么指。
+    #[test]
+    fn missing_git_message_is_actionable() {
+        let err = missing_git();
+        assert_eq!(err.code, 400);
+        assert!(err.message.contains("Git for Windows"), "{}", err.message);
+        assert!(err.message.contains(GIT_ENV), "{}", err.message);
+    }
+
+    /// 本机装了 git 时，定位器必须能找到（找不到就是回归）。
+    #[test]
+    fn resolves_git_when_installed() {
+        if where_lookup("git").is_none() && git_candidates().iter().all(|p| !p.is_file()) {
+            return; // 这台机器确实没装
+        }
+        assert!(resolve_git().is_some(), "既然按路径能命中，resolve_git 不该返回 None");
+    }
+
     /// 真仓库冒烟：临时目录 init → 提交 → 历史 → 目录树 → 排除 → 远程。
     ///
     /// 机器上没有 git 时直接跳过（`cargo check` 仍是唯一硬门槛）。
     #[test]
     fn temp_repo_roundtrip() {
-        let git_ok = Command::new("git")
+        // 用定位器而不是裸 "git"：本来就是为了覆盖「git 不在 PATH、只在默认安装目录」的机器
+        let Some(program) = resolve_git() else {
+            return;
+        };
+        let git_ok = Command::new(program)
             .arg("--version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())

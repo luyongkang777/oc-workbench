@@ -231,6 +231,46 @@ fn save_update_source(url: &str) -> Result<(), String> {
     save_settings(map)
 }
 
+/// 读写一个布尔设置，供在线更新之外的模块（如 CLI 自动更新）用同一份 settings.json。
+///
+/// 键名各管各的，互不覆盖；读不到就当默认值——一条配置写坏不该让功能起不来。
+pub fn bool_setting(key: &str, default: bool) -> bool {
+    match load_settings().get(key) {
+        Some(serde_json::Value::Bool(flag)) => *flag,
+        _ => default,
+    }
+}
+
+/// 写布尔设置：等于默认值时删键，保持设置文件最小（和 autoCheck 的处理一致）。
+pub fn set_bool_setting(key: &str, value: bool, default: bool) -> Result<(), String> {
+    let mut map = load_settings();
+    if value == default {
+        map.remove(key);
+    } else {
+        map.insert(key.to_string(), serde_json::Value::Bool(value));
+    }
+    save_settings(map)
+}
+
+/// 读一个整型设置（毫秒时间戳之类），没有就当 None。
+pub fn number_setting(key: &str) -> Option<i64> {
+    load_settings().get(key).and_then(|value| value.as_i64())
+}
+
+/// 写整型设置；传 None 删键。
+pub fn set_number_setting(key: &str, value: Option<i64>) -> Result<(), String> {
+    let mut map = load_settings();
+    match value {
+        Some(number) => {
+            map.insert(key.to_string(), serde_json::Value::Number(number.into()));
+        }
+        None => {
+            map.remove(key);
+        }
+    }
+    save_settings(map)
+}
+
 /// settings.json 的键：启动时是否自动检查更新（默认开）。
 const AUTO_KEY: &str = "autoCheckUpdate";
 /// settings.json 的键：用户主动跳过的版本号。
