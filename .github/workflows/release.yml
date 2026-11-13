@@ -58,6 +58,11 @@ jobs:
       - name: 前端测试
         run: npm test
 
+      # build.rs 在编译期把 dist 嵌进二进制，没有 dist 连 cargo test 都编译不过，
+      # 所以测试前必须先出一次前端产物（后面的 build:exe 会再跑一遍，很快）。
+      - name: 构建前端产物
+        run: npm run build
+
       # 用 --release 跑：后面 build:exe 也是 release，依赖只编一次。
       - name: 外壳测试
         working-directory: shell
