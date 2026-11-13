@@ -1853,9 +1853,11 @@ body.resizing .col-resizer::after {
 }
 
 .subagent-pane {
-  flex: 0 0 320px;
+  /* 可以收缩：窗口窄的时候 320px 固定宽会把中间的编辑器压到 0，
+     宁可面板自己变窄（内部本来就省略），也别让主编辑区消失。 */
+  flex: 0 1 320px;
   width: 320px;
-  min-width: 260px;
+  min-width: 180px;
   border-left: 1px solid var(--line-1);
   background: var(--bg-1);
   display: flex;

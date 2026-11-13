@@ -17,10 +17,11 @@ export type LiveSession = SessionLike & { id?: string; title?: string }
 export type SessionLights = {
   /** 正在生成的目录（normKey 集合），喂给顶栏项目标签 */
   dirs: Set<string>
-  /** 会话 id → 最新 title/time/metadata，喂给状态灯和标签栏 */
+  /**
+   * 会话 id → 最新 title/time/metadata，喂给状态灯和标签栏。
+   * 查不到某条会话 = 这一轮没拿到它的状态，调用方应显示灰灯（不猜空闲）。
+   */
   status: Map<string, LiveSession>
-  /** 是否至少拿到过一次快照：没有快照时不能断言「这条会话空闲」 */
-  ready: boolean
 }
 
 const EMPTY = new Map<string, LiveSession>()
@@ -49,14 +50,12 @@ function sameStatus(left: Map<string, LiveSession>, right: Map<string, LiveSessi
 export function useSessionLights(connected: boolean, projectCount: number): SessionLights {
   const [dirs, setDirs] = useState<Set<string>>(() => new Set())
   const [status, setStatus] = useState<Map<string, LiveSession>>(EMPTY)
-  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     if (!connected) {
       // 断开时清掉快照：留着旧数据会让人以为灯是实时的
       setDirs((prev) => (prev.size === 0 ? prev : new Set()))
       setStatus((prev) => (prev.size === 0 ? prev : EMPTY))
-      setReady(false)
       return
     }
     let alive = true
@@ -89,7 +88,6 @@ export function useSessionLights(connected: boolean, projectCount: number): Sess
           })
         }
         setStatus((prev) => (sameStatus(prev, next) ? prev : next))
-        setReady(true)
       } catch {
         // 单次失败沿用上一次结果，等下一轮；连续失败也不影响界面可用
       }
@@ -103,5 +101,5 @@ export function useSessionLights(connected: boolean, projectCount: number): Sess
     }
   }, [connected, projectCount])
 
-  return { dirs, status, ready }
+  return { dirs, status }
 }

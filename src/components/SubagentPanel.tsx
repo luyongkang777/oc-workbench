@@ -15,9 +15,20 @@ import {
   type SubagentRow,
 } from './subagent'
 
-/** 轮询间隔。有子智能体时跟手一点；一个都没有时降频，别为了空列表一直打服务端。 */
-const POLL_MS = 1200
-const POLL_IDLE_MS = 3000
+/**
+ * 轮询间隔。
+ *
+ * 面板一轮要爬三层树：先问主会话的直接子会话（1 个请求），再为每个子会话问
+ * 孙子（N 个请求）。实测 8 个子智能体时每轮 9 个请求，1.2 秒一轮 = 8.8 req/s。
+ * 所以分成三档：有在跑的才用快档；都已经结束就慢档（它们不会再派新的）；
+ * 一个子智能体都没有用最慢档。
+ */
+const POLL_RUNNING_MS = 1200
+const POLL_SETTLED_MS = 5000
+
+/** 「已确认没有子孙」的记录有效期：过期后重新问一次，防止漏掉后来派生的孙子。 */
+const LEAF_TTL_MS = 15_000
+const POLL_IDLE_MS = 8000
 
 /** 时间刷新（耗时每秒在跳，但不需要重查服务端）。 */
 const TICK_MS = 1000
@@ -62,6 +73,14 @@ export default function SubagentPanel({ sessionID, connected, onOpen, mode, onTo
   /** 上一次拉消息的会话 id 集合：用来判断「哪些还在跑」，避免重复拉同一个 */
   const pulledRef = useRef<Record<string, number>>({})
 
+  /**
+   * 已确认「没有子孙、而且已经跑完」的子会话 → 上次确认时间。
+   *
+   * 面板每轮都要为每个直接子会话问一次孙子，8 个子智能体就是 9 个请求。
+   * 跑完的子会话不可能再派新的，所以 15 秒内不再问它，请求数直接降到 2~3 个。
+   */
+  const leavesRef = useRef<Record<string, number>>({})
+
   // ---- 每秒刷新一次耗时（不发请求）
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), TICK_MS)
@@ -79,10 +98,10 @@ export default function SubagentPanel({ sessionID, connected, onOpen, mode, onTo
 
     let alive = true
     let timer = 0
-    /** 空列表用慢档（用户可能只是开着会话在别处忙），有东西才用快档 */
-    let seenAny = false
+    /** 三档轮询：有在跑的 → 快；都结束了 → 慢；一个都没有 → 最慢 */
+    let nextDelay = POLL_IDLE_MS
     const schedule = () => {
-      if (alive) timer = window.setTimeout(tick, seenAny ? POLL_MS : POLL_IDLE_MS)
+      if (alive) timer = window.setTimeout(tick, nextDelay)
     }
 
     async function tick() {
@@ -92,11 +111,32 @@ export default function SubagentPanel({ sessionID, connected, onOpen, mode, onTo
         return
       }
       try {
-        const tree = await listSubagentTree(sessionID!)
+        // 15 秒内已确认没有子孙、而且早就跑完的子会话，不再为它问孙子
+        const nowMs = Date.now()
+        const skip = new Set(
+          Object.entries(leavesRef.current)
+            .filter(([, at]) => nowMs - at < LEAF_TTL_MS)
+            .map(([id]) => id),
+        )
+        const tree = await listSubagentTree(sessionID!, 3, skip)
         if (!alive) return
         setSessions(tree)
-        seenAny = tree.length > 0
         setError(null)
+
+        // 更新「确认没有子孙」的集合：只有在跑完、且确实没孩子的才算稳定
+        const parents = new Set(
+          tree.map((node) => node.parentID).filter((id): id is string => Boolean(id)),
+        )
+        const nextLeaves: Record<string, number> = {}
+        for (const node of tree) {
+          if (node.depth !== 1) continue
+          const running = (node.time?.busy ?? 0) > (node.time?.idle ?? 0)
+          // 在跑的随时会派新的；已经有孩子的当然不是叶子
+          if (running || parents.has(node.id)) continue
+          // 这一轮真的问过它才刷新时间戳；被跳过就沿用旧到期时间
+          nextLeaves[node.id] = skip.has(node.id) ? (leavesRef.current[node.id] ?? nowMs) : nowMs
+        }
+        leavesRef.current = nextLeaves
 
         // 只给「在跑」的拉消息，拿当前工具名
         const running = tree
@@ -106,12 +146,23 @@ export default function SubagentPanel({ sessionID, connected, onOpen, mode, onTo
             return busy > idle
           })
           .slice(0, ACTIVITY_LIMIT)
+        // 下一轮节奏：有人在跑才需要跟手；都结束了它们不会再派新的
+        nextDelay =
+          running.length > 0 ? POLL_RUNNING_MS : tree.length > 0 ? POLL_SETTLED_MS : POLL_IDLE_MS
 
         const runningIDs = new Set(running.map((session) => session.id))
-        // 不在跑的把缓存丢掉，免得面板一直显示它最后那句话
+        // 不在跑的把它缓存清掉，免得面板一直显示它最后那句话（注释说的就是这个，
+        // 但以前只清了 pulledRef 这个节流表，activities 一直没清）
         pulledRef.current = Object.fromEntries(
           Object.entries(pulledRef.current).filter(([id]) => runningIDs.has(id)),
         )
+        setActivities((prev) => {
+          const keys = Object.keys(prev)
+          if (keys.every((id) => runningIDs.has(id))) return prev
+          const next: Record<string, Activity> = {}
+          for (const id of keys) if (runningIDs.has(id)) next[id] = prev[id]
+          return next
+        })
 
         await Promise.all(
           running.map(async (session) => {

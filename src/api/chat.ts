@@ -259,15 +259,25 @@ export type SubagentNode = SessionInfo & { depth: number }
  *
  * 服务端没有「给我整棵树」的接口，只能一层层问。三层足够：子智能体再派孙辈已经
  * 很少见，再深只会把面板刷满、请求数也翻倍。归档的会话就跳过。
+ *
+ * `skip` 是调用方给的「别再问它孩子」的 id 集合（已经确认过没有孩子的空闲子会话）。
+ * 面板每 1.2 秒刷一次，8 个子智能体就是 9 个请求；跳过确认过的能省掉大部分。
  */
-export async function listSubagentTree(rootID: string, maxDepth = 3): Promise<SubagentNode[]> {
+export async function listSubagentTree(
+  rootID: string,
+  maxDepth = 3,
+  skip?: Set<string>,
+): Promise<SubagentNode[]> {
   const out: SubagentNode[] = []
   const seen = new Set<string>([rootID])
   let frontier: string[] = [rootID]
 
   for (let depth = 1; depth <= maxDepth; depth += 1) {
+    const asked = skip ? frontier.filter((id) => !skip.has(id)) : frontier
+    // 全被跳过：这一层往下没有新东西可拿，直接收工
+    if (asked.length === 0) break
     const lists = await Promise.all(
-      frontier.map((id) => listChildSessions(id).catch(() => [] as SessionInfo[])),
+      asked.map((id) => listChildSessions(id).catch(() => [] as SessionInfo[])),
     )
     const next: string[] = []
     for (const list of lists) {

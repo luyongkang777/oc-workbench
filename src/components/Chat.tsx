@@ -91,8 +91,12 @@ type Props = {
   onSessionChange?: (sessionID: string | null) => void
   /** 当前会话的信息（哪怕它不在本目录顶层列表里）：标签栏靠它显示标题和灯 */
   onSessionInfo?: (session: SessionInfo) => void
-  /** 当前会话是否在生成：子会话不在轮询列表里，标签灯靠这个兜底 */
-  onSessionRunning?: (sessionID: string, running: boolean) => void
+  /**
+   * 当前会话是否在生成：子会话不在轮询列表里，标签灯靠这个兜底。
+   * `null` = 不知道（Chat 即将卸载，比如用户切到别的标签）——标签据此显示灰灯，
+   * 而不是继续亮着上一次的黄灯。
+   */
+  onSessionRunning?: (sessionID: string, running: boolean | null) => void
 }
 
 /**
@@ -1083,6 +1087,14 @@ export default function Chat({
   useEffect(() => {
     if (currentID) onSessionRunning?.(currentID, runningApi.running)
   }, [currentID, runningApi.running, onSessionRunning])
+
+  // 卸载（切到别的标签）时上报「不知道」：否则最后一帧的黄灯会永久留在那个标签上
+  const reportRunningRef = useRef(onSessionRunning)
+  reportRunningRef.current = onSessionRunning
+  useEffect(() => {
+    if (!currentID) return
+    return () => reportRunningRef.current?.(currentID, null)
+  }, [currentID])
 
   return (
     <div className="chat">

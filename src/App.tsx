@@ -443,6 +443,9 @@ export default function App() {
     setView(state?.view === 'diff' ? 'diff' : 'code')
     // 换了 root，旧项目的 Git 状态不再适用，面板一并关掉
     setGitOpen(false)
+    // 旧项目里点过「开成标签」的请求必须清掉：ChatTabs 是按 root 重挂载的，
+    // 留着它会在新项目里自动开出一个指向旧项目会话的标签，还去拉旧历史
+    setTabRequest(null)
     setFileRoot(null)
     setFileLine(null)
     setFile(state?.file ?? null)

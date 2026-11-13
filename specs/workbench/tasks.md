@@ -178,6 +178,41 @@
      这类「props 少接一根线」端到端看灯色变化才抓得到，tsc 和单测都发现不了
   3. CDP 里 `localStorage` 按源隔离：在 about:blank 写再导航过去读不到，必须先落到目标源再写
 
+## T20 ✅ 修复 opencode 识别问题（shim 脚本）
+
+- 根因：npm/bun 装的 opencode 在 PATH 里落的是 `opencode.cmd`（或同名无扩展名 bash 脚本）。
+  旧代码对定位到的路径直接 `Command::new(path)`，Windows 对 `.cmd` 走 CreateProcess 会失败，
+  表现为「已安装，版本读取失败：os error 193」。实测：直接 spawn `.cmd` 得 EINVAL，经 `cmd /C` 得 `opencode v2.3.0`。
+- 内容（`shell/src/auth.rs`、`shell/src/cli.rs`）：
+  1. `classify()` 用「扩展名 + 文件头是否 MZ」判定 shim，`pick_runnable()` 把非 PE 的候选换成同目录 `.exe`/`.cmd`
+  2. `command_for_path()` 对 shim 走 `cmd /C`，`exe_version()` 改成用它（不再直接 exec）
+  3. `install_target()` 只在「定位到的是真 PE」时原地升级，否则装到同一个目录的 `opencode.exe`
+  4. `status_json()` 装完后重算 `installed`/`path`/`version`/`newer`，避免「路径有了、状态还是未安装」
+- 验收（真机）：debug 版起 `OC_WORKBENCH_DEBUG_PORT` → `/local/cli/status` 返回
+  `installed=true, version="2.3.0", path="...\.local\bin\opencode.cmd", error=null`，界面顶栏显示 `oc 2.3.0`；
+  Rust 测试 144 项全过（含 `version_probe_goes_through_cmd_for_shim`）
+
+## T21 ✅ 查看运行中的子智能体
+
+- 范围：`src/components/SubagentPanel.tsx`、`src/components/subagent.ts`、`src/api/chat.ts`、`src/App.tsx`、
+  `src/styles/panels.css`、`scripts/subagent.test.mjs`
+- 内容：右侧面板按 `parentID` 逐层爬子会话（最多 3 层），列出状态/标题/耗时/token/花费；
+  只给「在跑」的最多 8 个拉消息显示当前工具；跑超过 5 分钟标「卡住？」；点一行跳到那个子会话；
+  三档轮询（有在跑的 1.2s / 都结束了 5s / 一个都没有 8s），并跳过 15 秒内确认过没有子孙的空闲子会话
+- 验收（真机，`opencode` 会话有 8 个子智能体）：面板列出 8 行、汇总「2 个在跑 / 共 8 个」、
+  在跑行显示当前工具与参数、耗时 122h 的两行带「卡住？」，点一行能跳进该子会话；
+  请求速率由 8.8 req/s 降到 6.5 req/s
+
+## 上述两项复审中修掉的问题
+
+- 🔴 `pickActivity` 取到的是**最旧**的工具：服务端消息倒序（索引 0 最新）、消息内 part 正序，
+  旧实现从数组尾部往前扫 → 面板显示子智能体最开始用的 `skill`，实际当前是 `shell`。
+  改成按时间戳取最新（时间相同再按位置），补 `scripts/pickActivity.test.mjs` 5 项回归
+- 🔴 点进子智能体后标题丢失：子会话不在顶层会话列表里，头部显示「会话」、标签显示「新会话」。
+  改成按 id 补查 `getSession`，并通过 `onSessionInfo`/`onSessionRunning` 上报给标签栏
+- 🟡 标签栏漏传 `lights`（T19 遗留），界面灯不刷新
+- 🟡 面板每轮为每个子会话问一次孙子，8 个子智能体时 8.8 req/s → 加「确认无子孙」的 15 秒缓存 + 三档轮询
+
 ## 待评估
 
 - LSP 接入（Monaco + typescript-language-server）：目前是本地词法补全，LSP 只用来补「类型级成员/签名」

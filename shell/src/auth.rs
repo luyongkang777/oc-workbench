@@ -24,6 +24,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -112,23 +113,42 @@ struct Target {
 /// 而失败时每 5 秒重试一次、每次多跑一个 `where` 也就几十毫秒。
 static RESOLVED: Mutex<Option<Target>> = Mutex::new(None);
 
+/// 缓存代次：`reset_resolution()` 每次 +1。
+///
+/// 用来挡住「解析过程中刚好装完 → 旧结果写回缓存」这种竞态：
+/// 解析开始时记下代次，写缓存前再比一次，变了就丢弃本次结果。
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
 fn env_path(name: &str) -> Option<PathBuf> {
     std::env::var_os(name)
         .map(PathBuf::from)
         .filter(|value| !value.as_os_str().is_empty())
 }
 
-/// 文件头是不是 `MZ`（PE 可执行文件）。
+/// 文件头是不是一个**可执行的** PE：`MZ` + e_lfanew 处的 `PE\0\0`。
 ///
-/// 读不到、或者不是 MZ，都按「非 PE」处理——后续会走 cmd，
-/// 出错也是 cmd 的错，不会变成误导人的 os error 193。
-fn is_pe(path: &Path) -> bool {
-    use std::io::Read;
+/// 只看 MZ 不够：下载中断/复制一半的 exe、16 位 DOS 程序也都以 MZ 开头，
+/// 但拿去 CreateProcess 照样失败（os error 193）——正是这次要修的报错。
+/// 读不到、或任何一步对不上，都按「非 PE」处理，后续走 cmd。
+pub(crate) fn is_pe(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
     let Ok(mut file) = std::fs::File::open(path) else {
         return false;
     };
-    let mut head = [0u8; 2];
-    file.read_exact(&mut head).is_ok() && &head == b"MZ"
+    let mut dos = [0u8; 64];
+    if file.read_exact(&mut dos).is_err() || &dos[..2] != b"MZ" {
+        return false;
+    }
+    // e_lfanew 在 DOS 头 0x3C 处，4 字节小端，指向 PE 签名
+    let lfanew = u32::from_le_bytes([dos[0x3C], dos[0x3D], dos[0x3E], dos[0x3F]]) as u64;
+    if lfanew == 0 || lfanew > 0x10_0000 {
+        return false;
+    }
+    if file.seek(SeekFrom::Start(lfanew)).is_err() {
+        return false;
+    }
+    let mut sig = [0u8; 4];
+    file.read_exact(&mut sig).is_ok() && &sig == b"PE\0\0"
 }
 
 /// 判断要不要走 cmd：扩展名是 .cmd/.bat/.ps1 的，或者文件本身不是 PE，都算 shim。
@@ -251,6 +271,19 @@ fn pick_from_where_output(text: &str) -> Option<PathBuf> {
     }
     hits.into_iter().next()
 }
+/// 解码控制台程序的输出。
+///
+/// Windows 控制台程序（`where`、`chcp` 等）按**控制台代码页**写 stdout，
+/// 中文系统是 936/GBK，不是 UTF-8。以前一律 `from_utf8_lossy`，中文用户名或
+/// 中文安装目录会变成一串 U+FFFD，路径直接失效——「装了却说没装」的另一半根因。
+fn decode_console(bytes: &[u8]) -> String {
+    // 纯 ASCII 和已经是 UTF-8 的输出都不会走到 fallback
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_string(),
+        Err(_) => crate::winenc::decode_lossy(bytes),
+    }
+}
+
 
 ///
 /// 必须自带超时：PATH 里有不可达的网络共享时 `where` 会卡很久。
@@ -275,7 +308,10 @@ fn where_lookup(name: &str) -> Option<PathBuf> {
                     }
                     let mut buf = Vec::new();
                     child.stdout.take()?.read_to_end(&mut buf).ok()?;
-                    let text = String::from_utf8_lossy(&buf).to_string();
+                    // where.exe 按控制台代码页输出（中文系统是 936/GBK），不是 UTF-8。
+                    // 按 UTF-8 解码会把中文路径变成 U+FFFD，随后 is_file() 为 false，
+                    // 用户明明装着 opencode 也被判「未安装」。先试 UTF-8，失败退 GB18030。
+                    let text = decode_console(&buf);
                     return pick_from_where_output(&text);
                 }
                 Ok(None) => {}
@@ -308,10 +344,18 @@ fn resolve_opencode() -> Option<Target> {
         }
     }
 
+    // 记下「开始解析时」的代次。解析要跑 where（最长 3 秒），这期间用户可能刚好
+    // 装完 opencode 并调 reset_resolution()；如果直接把结果写回缓存，就会把安装前
+    // 的旧路径又塞回去，之后一直连旧路径直到重启进程。
+    let generation = GENERATION.load(Ordering::SeqCst);
     let found = resolve_opencode_uncached();
     if let Some(hit) = found.as_ref() {
-        if let Ok(mut guard) = RESOLVED.lock() {
-            *guard = Some(hit.clone());
+        // 指向一个并不存在的文件（OPENCODE_ENV 写了个找不到的命令名）时不要缓存：
+        // 缓存了以后用户真装好了也永远是这条坏路径。
+        if hit.program.is_file() && GENERATION.load(Ordering::SeqCst) == generation {
+            if let Ok(mut guard) = RESOLVED.lock() {
+                *guard = Some(hit.clone());
+            }
         }
     }
     found
@@ -330,6 +374,8 @@ pub fn locate() -> Option<PathBuf> {
 /// 缓存只在成功时写入，而升级可能把文件换到新路径（先装到
 /// `%USERPROFILE%\.opencode\bin`），不清就会一直连着旧路径。
 pub fn reset_resolution() {
+    // 先涨代次：正在解析中的线程看到代次变了就不会把旧结果写回缓存
+    GENERATION.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut guard) = RESOLVED.lock() {
         *guard = None;
     }
@@ -819,12 +865,26 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("建临时目录");
         dir
     }
+    /// 造一个「最小但合法」的 PE：MZ + e_lfanew 指向 PE\0\0。
+    ///
+    /// 只写 `MZ` 两个字节的假件会被 `is_pe` 判成非 PE——那正是我们想要的：
+    /// 下载中断的半截 exe 不该被当成可执行文件。
+    fn write_fake_pe(path: &Path) {
+        let mut bytes = vec![0u8; 0x80];
+        bytes[0] = b'M';
+        bytes[1] = b'Z';
+        // e_lfanew = 0x40
+        bytes[0x3C..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+        bytes[0x40..0x44].copy_from_slice(b"PE\0\0");
+        std::fs::write(path, bytes).expect("写假 PE");
+    }
+
 
     #[test]
     fn real_pe_is_not_treated_as_shim() {
         let dir = temp_dir("pe");
         let exe = dir.join("opencode.exe");
-        std::fs::write(&exe, b"MZ\x90\x00").expect("写假 PE");
+        write_fake_pe(&exe);
         let target = classify(exe.clone());
         assert!(!target.shim);
         assert_eq!(target.program, exe);
@@ -860,7 +920,7 @@ mod tests {
         let script = dir.join("opencode");
         std::fs::write(&script, b"#!/bin/sh\n").expect("写假 shim");
         let exe = dir.join("opencode.exe");
-        std::fs::write(&exe, b"MZ\x90\x00").expect("写假 PE");
+        write_fake_pe(&exe);
 
         assert_eq!(pick_runnable(&script), exe, "应换成同目录的真 PE");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1011,7 +1071,7 @@ mod tests {
         let cmd = dir.join("opencode.cmd");
         std::fs::write(&cmd, b"@echo off\r\n").expect("写 cmd");
         let exe = dir.join("opencode.exe");
-        std::fs::write(&exe, b"MZ\x90\x00").expect("写假 PE");
+        write_fake_pe(&exe);
 
         let text = format!("{}\r\n{}\r\n", cmd.display(), exe.display());
         assert_eq!(pick_from_where_output(&text), Some(exe));
@@ -1029,5 +1089,21 @@ mod tests {
         // 不存在的路径不算命中
         assert_eq!(pick_from_where_output(r"C:\nope\opencode"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `where` 的输出是控制台代码页（中文系统 GBK），不是 UTF-8。
+    ///
+    /// 这是「装了却说没装」的另一半根因：按 UTF-8 解码后中文目录变成 U+FFFD，
+    /// `is_file()` 必然 false，于是 pick_from_where_output 一个都选不出来。
+    #[test]
+    fn decode_console_handles_gbk_path() {
+        // 「测试目录」的 GBK 字节
+        let gbk = [
+            0x46u8, 0x3A, 0x5C, 0x74, 0x6D, 0x70, 0x5C, 0xB2, 0xE2, 0xCA, 0xD4, 0xC4, 0xBF, 0xC2, 0xBC,
+            0x5C, 0x6F, 0x70, 0x65, 0x6E, 0x63, 0x6F, 0x64, 0x65, 0x2E, 0x63, 0x6D, 0x64,
+        ];
+        assert_eq!(decode_console(&gbk), r"F:\tmp\测试目录\opencode.cmd");
+        // 纯 ASCII（本机常见情况）走原样
+        assert_eq!(decode_console(b"C:\\a\\opencode.cmd"), r"C:\a\opencode.cmd");
     }
 }

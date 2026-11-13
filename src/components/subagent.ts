@@ -153,36 +153,61 @@ export function summarizeInput(input?: Record<string, unknown>): string {
 export type Activity = { tool: string; detail: string }
 
 /**
- * 从消息里取「最后一次动作」。
+ * 从消息里取「最后一次动作」（当前正在跑的工具，或最后说的一句话）。
  *
- * 服务端消息是倒序（最新在前），但为了不依赖顺序，这里从尾部往前扫，
- * 谁位置靠后就取谁。只认 assistant 消息里的 tool / text 段。
+ * 服务端返回的消息是**倒序**（索引 0 = 最新，实测 msgTimes 递减），而一条消息内部
+ * 的 part 是**正序**（时间递增）。以前从数组尾部往前扫，等于从最旧的消息开始找，
+ * 拿到的是子智能体最开始用的那个工具，不是它现在在干什么（实测：应得 shell，却给 skill）。
+ *
+ * 现在按「时间戳 → 数组位置」取最新：
+ *   - 有时间戳：取最大的（顺序变了也不会错）
+ *   - 时间戳相同或缺失：消息取靠前的（数组倒序，靠前更新），part 取靠后的（part 正序）
  */
-export function pickActivity(messages?: Array<{ type?: string; content?: MessagePart[] }>): Activity {
+export function pickActivity(
+  messages?: Array<{ type?: string; content?: MessagePart[]; time?: { created?: number } }>,
+): Activity {
   if (!Array.isArray(messages) || messages.length === 0) return { tool: '', detail: '' }
 
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i]
+  let best: { at: number; msgIndex: number; partIndex: number; activity: Activity } | null = null
+
+  for (let mi = 0; mi < messages.length; mi += 1) {
+    const message = messages[mi]
     if (!message || message.type !== 'assistant') continue
     const content = message.content
     if (!Array.isArray(content)) continue
+    const messageAt = message.time?.created ?? 0
+    // part 在消息内部是正序的，但 text 没有自己的时间（只有 tool 有 created/ran）。
+    // 用「不回退的游标」当它的时间，否则「先调工具、后输出文字」会被判成工具更新，
+    // 面板就会一直停在上一个工具名上。
+    let cursorAt = messageAt
 
-    for (let j = content.length - 1; j >= 0; j -= 1) {
-      const part = content[j]
+    for (let pi = 0; pi < content.length; pi += 1) {
+      const part = content[pi]
       if (!part) continue
-      if (part.type === 'tool' && (part.name || part.tool)) {
-        return {
-          tool: String(part.name ?? part.tool ?? 'tool'),
-          detail: summarizeInput(part.state?.input),
-        }
-      }
-      if (part.type === 'text' && part.text) {
-        return { tool: '', detail: part.text }
-      }
+      const isTool = part.type === 'tool' && Boolean(part.name || part.tool)
+      const isText = part.type === 'text' && Boolean(part.text)
+      if (!isTool && !isText) continue
+
+      const own = part.time?.created ?? part.time?.ran
+      if (typeof own === 'number' && own > cursorAt) cursorAt = own
+      const at = cursorAt
+      const activity: Activity = isTool
+        ? { tool: String(part.name ?? part.tool ?? 'tool'), detail: summarizeInput(part.state?.input) }
+        : { tool: '', detail: part.text ?? '' }
+
+      const newer =
+        !best ||
+        at > best.at ||
+        (at === best.at &&
+          (mi < best.msgIndex || (mi === best.msgIndex && pi > best.partIndex)))
+
+      if (newer) best = { at, msgIndex: mi, partIndex: pi, activity }
     }
   }
-  return { tool: '', detail: '' }
+
+  return best?.activity ?? { tool: '', detail: '' }
 }
+
 
 // ---------------------------------------------------------------- 行构建
 

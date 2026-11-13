@@ -60,6 +60,22 @@ type Props = {
   compact?: boolean
 }
 
+/**
+ * 会话灯：优先用轮询到的最新快照。
+ *
+ * 快照里没有这条会话时一律灰（未验证），不再退回挂载那一刻的旧数据——
+ * 那样一条当时在跑、之后早就跑完的会话会永远亮着黄灯，比灰灯更误导。
+ */
+function lightFor(
+  session: SessionInfo,
+  lights: Map<string, SessionLike> | undefined,
+  connected: boolean,
+) {
+  const live = lights?.get(session.id)
+  if (!live) return 'unknown' as const
+  return sessionLight(live, connected)
+}
+
 export function shortTitle(session: SessionInfo): string {
   const title = session.title?.trim()
   // 空标题＝刚建、服务端还在等第一条消息起名；占位标题＝老版本写死的那种。
@@ -184,7 +200,7 @@ export default function ChatHeader({
   }
 
   const currentLight = current
-    ? sessionLight(lights?.get(current.id) ?? current, connected)
+    ? lightFor(current, lights, connected)
     : 'unknown'
 
   return (
@@ -383,7 +399,7 @@ export default function ChatHeader({
           ) : (
             sessions.map((session) => {
               const at = sessionLastAt(session)
-              const light = sessionLight(lights?.get(session.id) ?? session, connected)
+              const light = lightFor(session, lights, connected)
               const opened = panelIDs?.has(session.id) ?? false
               return (
                 <div

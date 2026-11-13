@@ -25,6 +25,11 @@ export type ChatTab = {
   id: string
   /** 指向的会话；undefined = 还没建（用户点了 + 但没发消息） */
   sessionID?: string
+  /**
+   * 这一格是不是「刚进工作台时自动开的那一格」。
+   * 只有它允许自动挑一条最近的会话填进去；用户自己点 + 出来的空格子要保持空白。
+   */
+  pick?: boolean
 }
 
 type Props = {
@@ -95,10 +100,13 @@ export default function ChatTabs({
   const [activeID, setActiveID] = useState<string>(() => readTabs(root).activeID)
   const [seq, setSeq] = useState(0)
   /**
-   * Chat 上报的会话信息（标题/时间）：子会话不在轮询列表里，
-   * 顶层 lights 拿不到它，标签只能靠这份兜底。按会话 id 存，切走也留着。
+   * Chat 上报的会话信息（标题 + 是否在跑）：子会话不在轮询列表里，
+   * 顶层 lights 拿不到它，标签只能靠这份兜底。
+   * running 三态：true 在跑 / false 空闲 / undefined 不知道（Chat 卸载后）→ 显示灰灯。
    */
-  const [extraInfo, setExtraInfo] = useState<Record<string, { title?: string; running: boolean }>>({})
+  const [extraInfo, setExtraInfo] = useState<
+    Record<string, { title?: string; running?: boolean }>
+  >({})
 
   // 切项目：换成那个项目自己的标签配置
   useEffect(() => {
@@ -110,7 +118,8 @@ export default function ChatTabs({
   // 一个标签都没有时补一个空槽位：首次进入也要有地方聊天
   useEffect(() => {
     if (tabs.length > 0) return
-    const tab = { id: nextTabID(0) }
+    // 首次进入自动开的那一格：允许自动挑最近会话
+    const tab = { id: nextTabID(0), pick: true }
     setTabs([tab])
     setActiveID(tab.id)
     setSeq(1)
@@ -155,6 +164,28 @@ export default function ChatTabs({
     },
     [activeTab],
   )
+  /**
+   * 子会话（子智能体）不在轮询列表里：Chat 把它的信息报上来，标签栏留着当兜底。
+   * 用 useCallback 固定引用：这是传给 Chat 的 effect 依赖，每次渲染换新函数会白跑。
+   */
+  const rememberSession = useCallback((session: { id: string; title?: string }) => {
+    setExtraInfo((prev) => {
+      const title = session.title?.trim()
+      const old = prev[session.id]
+      if (old && old.title === title) return prev
+      return { ...prev, [session.id]: { title, running: old?.running ?? false } }
+    })
+  }, [])
+
+  const rememberRunning = useCallback((sessionID: string, running: boolean | null) => {
+    setExtraInfo((prev) => {
+      const old = prev[sessionID]
+      // null = 不知道：清成 undefined，标签按灰灯显示，别留着上一次的黄
+      const next = running === null ? undefined : running
+      if (old && old.running === next) return prev
+      return { ...prev, [sessionID]: { title: old?.title, running: next } }
+    })
+  }, [])
 
   /** 会话列表里的 ⧉：已经在某个标签里就跳过去，否则占一个空槽位。 */
   const openSessionTab = useCallback(
@@ -187,12 +218,17 @@ export default function ChatTabs({
   const openNewTab = useCallback(() => {
     setTabs((prev) => {
       if (prev.length >= MAX_TABS) return prev
-      const tab = { id: nextTabID(seq) }
+      // 用「现有最大序号 + 1」当后缀，而不是闭包里的 seq：
+      // seq 是异步的，同一事件循环里连点两次会拿到同一个值，生成重复 id
+      const used = new Set(prev.map((tab) => tab.id))
+      let next = 0
+      while (used.has(nextTabID(next))) next += 1
+      const tab = { id: nextTabID(next) }
       setSeq((value) => value + 1)
       setActiveID(tab.id)
       return [...prev, tab]
     })
-  }, [seq])
+  }, [])
 
   const closeTab = useCallback(
     (id: string) => {
@@ -222,9 +258,20 @@ export default function ChatTabs({
           const info = tab.sessionID ? lights?.get(tab.sessionID) : undefined
           // 子会话（子智能体）不在轮询列表里：用 Chat 上报的那份兜底
           const extra = tab.sessionID ? extraInfo[tab.sessionID] : undefined
-          const live = info ?? (extra ? { time: extra.running ? { busy: 1, idle: 0 } : { busy: 0, idle: 1 } } : undefined)
-          const light = tab.sessionID ? sessionLight((live ?? {}) as SessionLike, connected) : 'unknown'
-          const title = tab.sessionID ? (info?.title?.trim() || extra?.title?.trim() || '新会话') : '新会话'
+          // 三态：轮询有数据就用它；否则看 Chat 上报的 running；都没有就是「不知道」→ 灰灯
+          const light = !tab.sessionID
+            ? 'unknown'
+            : info
+              ? sessionLight(info as SessionLike, connected)
+              : extra?.running === undefined
+                ? 'unknown'
+                : sessionLight(
+                    { time: extra.running ? { busy: 1, idle: 0 } : { busy: 0, idle: 1 } },
+                    connected,
+                  )
+          const title = tab.sessionID
+            ? info?.title?.trim() || extra?.title?.trim() || '新会话'
+            : '新会话'
           const isActive = tab.id === activeTab?.id
           return (
             <div
@@ -292,28 +339,15 @@ export default function ChatTabs({
           connected={connected}
           onOpenFile={onOpenFile}
           initialSessionID={activeTab.sessionID}
-          // 只有「唯一的那个标签」才自动挑最近会话；多标签里的空槽位保持空白
-          autoPickSession={tabs.length === 1}
+          // 只有「刚进工作台自动开的那一格」才挑最近会话；用户点 + 出来的空格子、
+          // 以及已经指向某条会话的格子（含子智能体那种不在列表里的）都不许动
+          autoPickSession={Boolean(activeTab.pick) && !activeTab.sessionID}
           lights={lights}
           onSessionChange={followSession}
           onOpenInPanel={openSessionTab}
           panelIDs={openedIDs}
-          onSessionInfo={(session) => {
-            // 只记子会话（顶层列表里有的不需要兜底），顺便把标题留在标签上
-            setExtraInfo((prev) => {
-              const title = session.title?.trim()
-              const old = prev[session.id]
-              if (old && old.title === title) return prev
-              return { ...prev, [session.id]: { title, running: old?.running ?? false } }
-            })
-          }}
-          onSessionRunning={(sessionID, running) => {
-            setExtraInfo((prev) => {
-              const old = prev[sessionID]
-              if (old && old.running === running) return prev
-              return { ...prev, [sessionID]: { title: old?.title, running } }
-            })
-          }}
+          onSessionInfo={rememberSession}
+          onSessionRunning={rememberRunning}
         />
       ) : null}
     </div>

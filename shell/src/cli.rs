@@ -565,14 +565,18 @@ fn install_target() -> Result<PathBuf, String> {
             .extension()
             .map(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe"))
             .unwrap_or(false);
-        let is_pe = std::fs::read(&exe)
-            .map(|bytes| bytes.len() >= 2 && &bytes[..2] == b"MZ")
-            .unwrap_or(false);
-        if is_exe && is_pe {
+        // 只看文件头 2 字节。以前 `std::fs::read` 读整个文件——本机一个旧版
+        // opencode 就有 200MB+，为两个字节读 200MB 纯属白烧内存。
+        if is_exe && crate::auth::is_pe(&exe) {
             return Ok(exe);
         }
-        if let Some(dir) = exe.parent() {
-            return Ok(dir.join("opencode.exe"));
+        // 必须是绝对路径且有父目录：OPENCODE_ENV 指向一个找不到的「命令名」时
+        // locate() 会原样返回那个相对路径，parent() 是空串，join 出来就是
+        // "opencode.exe" —— replace_exe 会往进程当前目录写一个 200MB 的 exe。
+        if exe.is_absolute() {
+            if let Some(dir) = exe.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+                return Ok(dir.join("opencode.exe"));
+            }
         }
     }
     let home = std::env::var_os("USERPROFILE")
@@ -867,14 +871,33 @@ fn status_json(force_remote: bool, want_latest: bool) -> String {
     }
     // 装完/换路径后 status 要反映新路径；`installed` 与版本一起重算，
     // 否则会出现「路径有了、状态还是未安装」这种自相矛盾的组合。
+    let mut version_error: Option<String> = None;
     let (installed, path, version) = match crate::auth::locate().filter(|_| path.is_none()) {
         Some(exe) => {
             let fresh_path = exe.to_string_lossy().to_string();
-            let fresh_version = installed_version().ok().or(version);
+            // 探测失败不能 `.ok()` 一吞了之：那样会 installed=true + version=null +
+            // error=null，前端只能显示一句没头没尾的「版本读取失败」。
+            let fresh_version = match installed_version() {
+                Ok(value) => Some(value),
+                Err(err) => {
+                    version_error = Some(err);
+                    version
+                }
+            };
             (true, Some(fresh_path), fresh_version)
         }
         None => (installed, path, version),
     };
+    // 版本探测重新成功了，就把之前那条「读取失败」清掉；仍失败则补上原因
+    match version_error {
+        Some(err) => error = Some(err),
+        None if installed && version.is_some() => {
+            if error.as_deref().is_some_and(|text| text.contains("版本")) {
+                error = None;
+            }
+        }
+        None => {}
+    }
     // 版本被刷新后 `newer` 必须跟着重算：否则刚装完还高亮「更新到 vX」。
     if let Some(current) = version.as_deref() {
         if let Some(latest_version) = latest.as_deref() {
