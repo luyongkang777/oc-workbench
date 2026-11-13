@@ -53,6 +53,8 @@ pub const GIT_ENV: &str = "OC_WORKBENCH_GIT";
 /// 不能把「没找到」永久缓存成「永远找不到」——用户装完 git 回来点重试，
 /// 或者插上一个绿色版，应该立刻能用。所以在 [`resolve_git`] 里只缓存成功。
 static GIT_FOUND: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// 只记一次「用的是哪个 git」，方便排查「明明是同一个版本，为什么这台机器不行」。
+static GIT_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// 历史默认条数与上限（契约 §1：默认 50、上限 200）。
 const LOG_LIMIT_DEFAULT: u64 = 50;
 const LOG_LIMIT_MAX: u64 = 200;
@@ -348,6 +350,9 @@ fn run_git_with_input(
     input: Option<Vec<u8>>,
 ) -> Result<GitOutput, GitError> {
     let program = resolve_git().ok_or_else(missing_git)?;
+    if !GIT_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        crate::append_log(&format!("[git] 使用 {}\n", program.display()));
+    }
     let mut cmd = Command::new(program);
     // quotepath 必须放在子命令之前，否则中文路径会变成 \344\270\255 这种八进制转义。
     cmd.arg("-c").arg("core.quotepath=false");

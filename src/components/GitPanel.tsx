@@ -455,6 +455,18 @@ export default function GitPanel({ root, open, onClose, onOpenFile }: GitPanelPr
         <div className="git-error" role="alert">
           <Icon name="warn" size={14} />
           <span className="git-error-text">{error}</span>
+          {/* 装完 git 不用满面板找按钮：错误条上直接给一次重试 */}
+          <button
+            type="button"
+            className="git-error-retry"
+            onClick={() => {
+              setError(null)
+              void load()
+            }}
+            title="重新读取仓库状态"
+          >
+            重试
+          </button>
           <button type="button" className="git-error-close" onClick={() => setError(null)} title="关闭提示">
             <Icon name="close" size={12} />
           </button>

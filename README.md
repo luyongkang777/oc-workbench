@@ -108,7 +108,7 @@ git push origin main --tags
 
 ## OpenCode CLI 版本与自动安装
 
-顶栏胶囊除了工作台版本（`v1.2.0`）还带一段 CLI 版本（`oc 2.2.5`）：没装显示 `oc 未装`，
+顶栏胶囊除了工作台版本（`v1.2.1`）还带一段 CLI 版本（`oc 2.2.5`）：没装显示 `oc 未装`，
 装的不是 v2 或有新版时那一段变品牌色。点开「版本与更新」面板，下半部分就是 CLI 区块：
 本机版本、实际路径、最新 v2、安装/更新按钮、进度条，「启动时自动安装并更新」开关。
 
@@ -147,6 +147,10 @@ git push origin main --tags
 > 这台电脑上找不到 git。已查过：PATH、程序所在目录、Program Files\Git、… 装一个
 > Git for Windows（https://git-scm.com/download/win）后点「刷新」即可；已经装了但不在这些
 > 位置，就设环境变量 `OC_WORKBENCH_GIT` 指向 git.exe。
+
+错误条上另有一颗「重试」：装完 git 点它立刻重读状态，不用满面板找刷新。
+第一次真正调用 git 时，外壳会在 `gui-error.log` 里写一行 `[git] 使用 <路径>`，
+排查「同一个版本，为什么这台机器不行」直接看它就够。
 
 同一套定位也用在测试里（`cargo test` 的那条真仓库冒烟不再依赖 PATH）。
 

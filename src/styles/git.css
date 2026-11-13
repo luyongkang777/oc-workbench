@@ -147,6 +147,24 @@
   background: var(--danger-weak-hover);
 }
 
+/* 错误条上的「重试」：小号文字按钮，和关闭按钮同一行，但更好点 */
+.git-error-retry {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+
+.git-error-retry:hover {
+  background: var(--danger-weak-hover);
+}
+
 /* ---------- 空态 ---------- */
 .git-empty {
   padding: 20px 16px;
