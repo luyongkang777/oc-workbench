@@ -46,6 +46,9 @@ OpenCode 工作台：Rust + WebView2 桌面外壳，内嵌前端，自带本地 
 1. 检查：`GET /local/update/check` 拉清单。没配更新源就立刻返回，**不发任何网络请求**
 2. 更新：`POST /local/update/apply` 下载 → 校验体积 + SHA256 + PE 头（MZ）→ 写替换脚本 → 本进程退出
 
+面板里可以关掉「启动时自动检查更新」（写 `settings.json` 的 `autoCheckUpdate`）：
+关掉后启动时不再外联，只在点开面板时检查一次。默认开着。
+
 面板里可以「跳过这个版本」：只记版本号（`settings.json` 的 `skipVersion`），
 顶栏不再提示，但点开面板仍能更新或取消跳过；发下一个版本时自动失效。
 

@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { getAuthState, subscribeAuth } from '../api/auth'
 import { Icon } from './Icon'
-import { applyUpdate, checkUpdate, saveUpdateSource, skipUpdate } from '../api/update'
+import {
+  applyUpdate,
+  checkUpdate,
+  getUpdateConfig,
+  saveUpdateSource,
+  setAutoCheck,
+  skipUpdate,
+} from '../api/update'
 import type { UpdateCheck } from '../api/update'
 
 type Phase = 'checking' | 'ready' | 'applying' | 'restarting'
@@ -34,20 +42,43 @@ export default function UpdateEntry({ version }: { version: string }) {
     }
   }, [])
 
-  /** 静默检查：不改变界面状态，只更新按钮上的提示点。 */
+  /**
+   * 启动后的静默检查：只在开着「自动检查」时做。
+   *
+   * 先读一次配置再决定要不要发请求——关掉之后连这一次外联都不该有。
+   * 配置读不到就按默认（开）走，别因为一个本地接口失败就静默失去更新能力。
+   */
+  // 令牌是页面挂载后才经 IPC 下发的：还没 ready 就发 /local/* 会 403，
+  // 于是「读不到配置」的兜底会把关掉的自动检查又打开。必须等握手完成。
+  const auth = useSyncExternalStore(subscribeAuth, getAuthState)
+
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      checkUpdate()
-        .then((result) => {
-          if (!alive.current) return
-          setLatest(badgeOf(result))
-        })
-        .catch(() => {
-          // 没配更新源、或者暂时连不上：不打扰，用户点开面板才知道细节
-        })
-    }, 4000)
-    return () => window.clearTimeout(timer)
-  }, [])
+    if (auth.status !== 'ready') return
+    let cancelled = false
+    let timer = 0
+    const scheduleSilent = () => {
+      timer = window.setTimeout(() => {
+        checkUpdate()
+          .then((result) => {
+            if (!cancelled && alive.current) setLatest(badgeOf(result))
+          })
+          .catch(() => {
+            // 没配更新源、或者暂时连不上：不打扰，点开面板才看细节
+          })
+      }, 4000)
+    }
+    getUpdateConfig()
+      .then((config) => {
+        if (!cancelled && config.autoCheck) scheduleSilent()
+      })
+      .catch(() => {
+        if (!cancelled) scheduleSilent()
+      })
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [auth.status])
 
   return (
     <div className="update-entry">
@@ -90,6 +121,8 @@ function UpdateDialog({
   const [savingSource, setSavingSource] = useState(false)
   // 有内置默认源，面板默认只读显示；想换成镜像/私服时点「更改」再展开输入框
   const [editingSource, setEditingSource] = useState(false)
+  // 开关的本地值：点一下立刻反映，落盘失败再回滚
+  const [localAuto, setLocalAuto] = useState<boolean | null>(null)
   const alive = useRef(true)
 
   useEffect(() => {
@@ -152,6 +185,19 @@ function UpdateDialog({
     }
   }
 
+  /** 开/关启动时自动检查。 */
+  async function toggleAuto(enabled: boolean) {
+    setLocalAuto(enabled)
+    try {
+      await setAutoCheck(enabled)
+    } catch (err) {
+      if (alive.current) {
+        setLocalAuto(null) // 落盘失败就回到服务端的真值
+        setError((err as Error).message)
+      }
+    }
+  }
+
   async function saveSource() {
     if (savingSource) return
     setSavingSource(true)
@@ -186,6 +232,7 @@ function UpdateDialog({
   const latest = info?.latest ?? null
   const configured = info?.configured ?? true
   const isSkipped = info?.skipped ?? false
+  const autoCheck = localAuto ?? info?.autoCheck ?? true
   const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting'
 
   return (
@@ -282,6 +329,19 @@ function UpdateDialog({
               </div>
             </div>
           ) : null}
+
+          <label className="update-auto">
+            <input
+              type="checkbox"
+              checked={autoCheck}
+              disabled={busy}
+              onChange={(event) => void toggleAuto(event.target.checked)}
+            />
+            <span className="update-auto-title">启动时自动检查更新</span>
+            <span className="update-auto-hint">
+              {autoCheck ? '启动约 4 秒后静默检查一次' : '只在点开这个面板时检查'}
+            </span>
+          </label>
 
           {configured && info?.source && phase === 'ready' && !editingSource ? (
             <div className="update-source-now" title={info.source}>

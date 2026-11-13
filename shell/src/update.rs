@@ -231,8 +231,35 @@ fn save_update_source(url: &str) -> Result<(), String> {
     save_settings(map)
 }
 
+/// settings.json 的键：启动时是否自动检查更新（默认开）。
+const AUTO_KEY: &str = "autoCheckUpdate";
 /// settings.json 的键：用户主动跳过的版本号。
 const SKIP_KEY: &str = "skipVersion";
+
+/// 启动时要不要自动检查：没配过就是开。
+pub fn auto_check() -> bool {
+    match load_settings().get(AUTO_KEY) {
+        Some(serde_json::Value::Bool(flag)) => *flag,
+        _ => true,
+    }
+}
+
+/// 写/清「自动检查」。开着是默认值，所以 true 时直接把键删掉，让设置文件保持最小。
+fn with_auto(
+    mut map: serde_json::Map<String, serde_json::Value>,
+    enabled: bool,
+) -> serde_json::Map<String, serde_json::Value> {
+    if enabled {
+        map.remove(AUTO_KEY);
+    } else {
+        map.insert(AUTO_KEY.to_string(), serde_json::Value::Bool(false));
+    }
+    map
+}
+
+fn save_auto(enabled: bool) -> Result<(), String> {
+    save_settings(with_auto(load_settings(), enabled))
+}
 
 /// 被跳过的版本（没有就是 None）。
 ///
@@ -354,6 +381,8 @@ pub struct CheckResult {
     pub newer: bool,
     /// 用户跳过了这个版本（顶栏不再提示，但点开面板还能更新）。
     pub skipped: bool,
+    /// 启动时是否自动检查（面板里的开关状态）。
+    pub auto_check: bool,
     pub notes: String,
     pub size: u64,
     pub url: Option<String>,
@@ -369,6 +398,7 @@ impl CheckResult {
             "latest": self.latest,
             "newer": self.newer,
             "skipped": self.skipped,
+            "autoCheck": self.auto_check,
             "notes": self.notes,
             "size": self.size,
             "url": self.url,
@@ -388,6 +418,7 @@ pub fn check() -> CheckResult {
             latest: None,
             newer: false,
             skipped: false,
+            auto_check: auto_check(),
             notes: String::new(),
             size: 0,
             url: None,
@@ -405,6 +436,7 @@ pub fn check() -> CheckResult {
                 latest: Some(manifest.version),
                 newer,
                 skipped,
+                auto_check: auto_check(),
                 notes: manifest.notes,
                 size: manifest.size,
                 url: Some(manifest.url),
@@ -418,6 +450,7 @@ pub fn check() -> CheckResult {
             latest: None,
             newer: false,
             skipped: false,
+            auto_check: auto_check(),
             notes: String::new(),
             size: 0,
             url: None,
@@ -645,6 +678,8 @@ pub fn handle(request: Request, path: &str, _url: &str) {
         "/local/update/apply" => apply_endpoint(request),
         "/local/update/source" => source_endpoint(request),
         "/local/update/skip" => skip_endpoint(request),
+        "/local/update/config" => config_endpoint(request),
+        "/local/update/auto" => auto_endpoint(request),
         other => json_respond(
             request,
             404,
@@ -801,6 +836,89 @@ fn source_endpoint(request: Request) {
                 request,
                 200,
                 serde_json::json!({ "ok": true, "source": url }).to_string(),
+            );
+        }
+        Err(err) => json_respond(request, 500, serde_json::json!({ "error": err }).to_string()),
+    }
+}
+
+/// `GET /local/update/config`：页面启动时要的那几项设置。
+///
+/// 单独一个轻量端点：自动检查关掉时，页面不该为了「要不要检查」而先做一次检查。
+fn config_endpoint(request: Request) {
+    if !method_is(&request, Method::Get) {
+        json_respond(
+            request,
+            405,
+            serde_json::json!({ "error": "只支持 GET" }).to_string(),
+        );
+        return;
+    }
+    let body = serde_json::json!({
+        "autoCheck": auto_check(),
+        "source": source(),
+        "skipped": skipped_version(),
+    })
+    .to_string();
+    json_respond(request, 200, body);
+}
+
+/// `POST /local/update/auto`：开/关启动时自动检查。
+fn auto_endpoint(request: Request) {
+    if !method_is(&request, Method::Post) {
+        json_respond(
+            request,
+            405,
+            serde_json::json!({ "error": "只支持 POST" }).to_string(),
+        );
+        return;
+    }
+    let Some((request, body)) = read_body_with_timeout(request, 16 * 1024) else {
+        return;
+    };
+    let bytes = match body {
+        BodyRead::Ok(bytes) => bytes,
+        BodyRead::TooLarge => {
+            json_respond(
+                request,
+                413,
+                serde_json::json!({ "error": "请求体过大" }).to_string(),
+            );
+            return;
+        }
+        BodyRead::Failed(err) => {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": format!("读取请求体失败：{err}") }).to_string(),
+            );
+            return;
+        }
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(err) => {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": format!("请求体不是 JSON：{err}") }).to_string(),
+            );
+            return;
+        }
+    };
+    let enabled = parsed
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    match save_auto(enabled) {
+        Ok(()) => {
+            crate::append_log(&format!("[update] 启动时自动检查：{}
+", if enabled { "开" } else { "关" }));
+            json_respond(
+                request,
+                200,
+                serde_json::json!({ "ok": true, "autoCheck": enabled }).to_string(),
             );
         }
         Err(err) => json_respond(request, 500, serde_json::json!({ "error": err }).to_string()),
@@ -973,6 +1091,31 @@ mod tests {
         );
         let blank = with_skip(with, Some("  "));
         assert!(blank.get("skipVersion").is_none(), "空白也算取消");
+    }
+
+    #[test]
+    fn auto_check_defaults_on_and_clears_to_default() {
+        let empty = serde_json::Map::new();
+        // 关掉写 false 键；开回来就把键删掉（默认即开）
+        let off = with_auto(empty, false);
+        assert_eq!(
+            off.get(AUTO_KEY).and_then(|v| v.as_bool()),
+            Some(false),
+            "关掉要落一个显式 false"
+        );
+
+        let mut with_source = off.clone();
+        with_source.insert(
+            "updateUrl".into(),
+            serde_json::Value::String("https://x/latest.json".into()),
+        );
+        let back_on = with_auto(with_source, true);
+        assert!(back_on.get(AUTO_KEY).is_none(), "开回来等同默认，不该留键");
+        assert_eq!(
+            back_on.get("updateUrl").and_then(|v| v.as_str()),
+            Some("https://x/latest.json"),
+            "不能顺手把更新源删掉"
+        );
     }
 
     #[test]

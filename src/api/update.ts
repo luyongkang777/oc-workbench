@@ -12,6 +12,8 @@ export type UpdateCheck = {
   newer: boolean
   /** 用户主动跳过了这个版本（顶栏不再提示，点开面板仍可更新）。 */
   skipped: boolean
+  /** 启动时是否自动检查（面板里的开关状态）。 */
+  autoCheck: boolean
   notes: string
   /** 新包字节数；0 表示清单没给。 */
   size: number
@@ -38,6 +40,31 @@ export async function applyUpdate(): Promise<{ ok: boolean; version: string }> {
     180_000,
     { method: 'POST' },
   )
+}
+
+/** 页面启动时要的设置：要不要自动检查、更新源、跳过的是哪个版本。 */
+export type UpdateConfig = {
+  autoCheck: boolean
+  source: string | null
+  skipped: string | null
+}
+
+/**
+ * 读更新设置。
+ *
+ * 单独一个轻量 GET：关掉自动检查时，页面不该为了「要不要检查」先做一次检查。
+ */
+export async function getUpdateConfig(): Promise<UpdateConfig> {
+  return localRequest<UpdateConfig>('/local/update/config', undefined, 10_000)
+}
+
+/** 开/关启动时自动检查。 */
+export async function setAutoCheck(enabled: boolean): Promise<void> {
+  await localRequest('/local/update/auto', undefined, 15_000, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
 }
 
 /** 跳过某个版本；传空串表示取消跳过。 */

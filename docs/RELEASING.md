@@ -109,6 +109,8 @@ npm.cmd run release
 - **入口**：顶栏 `v1.1.2` 胶囊，有新版本时变品牌色 + 一颗点；点开是「版本与更新」
 - **更新源优先级**：环境变量 `OC_WORKBENCH_UPDATE_URL` → `settings.json` 的 `updateUrl`
   （**空串 = 主动关闭**，不再检查）→ 内置默认 `releases/latest/download/latest.json`
+- **自动检查开关**：面板里的「启动时自动检查更新」写 `settings.json` 的 `autoCheckUpdate`；
+  关掉后启动时不再外联（连配置读取都只走本地接口），只在点开面板时手动检查。默认开
 - **跳过某个版本**：面板里点「跳过这个版本」，写进 `settings.json` 的 `skipVersion`；
   顶栏不再提示，但点开面板仍显示「已跳过」，可以随时「取消跳过」或直接更新。
   只记版本号，发下一个版本时自动失效，不用记得回来关
