@@ -191,7 +191,7 @@ function main() {
       '接下来：',
       '  1. 改 RELEASE_NOTES.md（第一条是给用户看的一句话）',
       `  2. git add -A && git commit -m "release: ${version}"`,
-      withTag ? `  3. git push origin main --tags` : `  3. git tag ${tag} && git push origin main --tags`,
+      withTag ? `  3. git push origin HEAD:main --tags` : `  3. git tag ${tag} && git push origin HEAD:main --tags`,
       '',
     ].join('\n'),
   )

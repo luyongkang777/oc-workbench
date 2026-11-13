@@ -33,8 +33,12 @@ npm.cmd run bump -- patch --dry-run  # 只看会改成什么，不写文件
 git add -A
 git commit -m "release: 1.1.3"
 git tag v1.1.3
-git push origin main --tags
+git push origin HEAD:main --tags
 ```
+
+> 用 `HEAD:main` 而不是 `main`：这个仓库平时在 `feature/workbench-v0` 上开发，
+> 本地的 `main` 是旧的镜像；`HEAD:main` 表示「把当前分支推成远端 main」，
+> 不会推错。
 
 推送 tag 后去 [Actions](https://github.com/luyongkang777/oc-workbench/actions) 看，
 一次大约 3～4 分钟。成功后 `releases/latest/download/latest.json` 立即指向新版本。
