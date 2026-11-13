@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icon } from './Icon'
-import { applyUpdate, checkUpdate, saveUpdateSource } from '../api/update'
+import { applyUpdate, checkUpdate, saveUpdateSource, skipUpdate } from '../api/update'
 import type { UpdateCheck } from '../api/update'
 
 type Phase = 'checking' | 'ready' | 'applying' | 'restarting'
+
+/** 顶栏提示点要不要亮：有新版本且用户没跳过它。 */
+function badgeOf(result: UpdateCheck): string | null {
+  return result.newer && !result.skipped && result.latest ? result.latest : null
+}
 
 function formatSize(bytes: number): string {
   if (!bytes) return ''
@@ -35,7 +40,7 @@ export default function UpdateEntry({ version }: { version: string }) {
       checkUpdate()
         .then((result) => {
           if (!alive.current) return
-          setLatest(result.newer && result.latest ? result.latest : null)
+          setLatest(badgeOf(result))
         })
         .catch(() => {
           // 没配更新源、或者暂时连不上：不打扰，用户点开面板才知道细节
@@ -62,7 +67,7 @@ export default function UpdateEntry({ version }: { version: string }) {
         <UpdateDialog
           version={version}
           onClose={() => setOpen(false)}
-          onResult={(result) => setLatest(result.newer && result.latest ? result.latest : null)}
+          onResult={(result) => setLatest(badgeOf(result))}
         />
       ) : null}
     </div>
@@ -127,6 +132,26 @@ function UpdateDialog({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, phase])
 
+  /** 跳过这个版本（只影响提示，不阻止手动更新）。 */
+  async function skipThis(version: string) {
+    try {
+      await skipUpdate(version)
+      await runCheck()
+    } catch (err) {
+      if (alive.current) setError((err as Error).message)
+    }
+  }
+
+  /** 取消跳过：清掉记录后重新检查。 */
+  async function unskip() {
+    try {
+      await skipUpdate('')
+      await runCheck()
+    } catch (err) {
+      if (alive.current) setError((err as Error).message)
+    }
+  }
+
   async function saveSource() {
     if (savingSource) return
     setSavingSource(true)
@@ -160,6 +185,7 @@ function UpdateDialog({
   const current = info?.current ?? version
   const latest = info?.latest ?? null
   const configured = info?.configured ?? true
+  const isSkipped = info?.skipped ?? false
   const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting'
 
   return (
@@ -196,9 +222,24 @@ function UpdateDialog({
               <span className="update-label">最新版本</span>
               <span className={`update-value${info?.newer ? ' fresh' : ''}`}>
                 v{latest}
-                {info?.newer ? '（可更新）' : '（已是最新）'}
+                {info?.newer ? (isSkipped ? '（已跳过）' : '（可更新）') : '（已是最新）'}
                 {formatSize(info?.size ?? 0) ? ` · ${formatSize(info?.size ?? 0)}` : ''}
               </span>
+            </div>
+          ) : null}
+
+          {info?.newer && latest && phase === 'ready' ? (
+            <div className="update-skiprow">
+              {isSkipped ? (
+                <button type="button" className="update-link" onClick={() => void unskip()}>
+                  取消跳过（恢复提示）
+                </button>
+              ) : (
+                <button type="button" className="update-link" onClick={() => void skipThis(latest)}>
+                  跳过这个版本
+                </button>
+              )}
+              {isSkipped ? <span className="update-skipnote">顶栏不会再提示，仍可随时更新</span> : null}
             </div>
           ) : null}
 

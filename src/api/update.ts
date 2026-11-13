@@ -10,6 +10,8 @@ export type UpdateCheck = {
   source: string | null
   latest: string | null
   newer: boolean
+  /** 用户主动跳过了这个版本（顶栏不再提示，点开面板仍可更新）。 */
+  skipped: boolean
   notes: string
   /** 新包字节数；0 表示清单没给。 */
   size: number
@@ -36,6 +38,15 @@ export async function applyUpdate(): Promise<{ ok: boolean; version: string }> {
     180_000,
     { method: 'POST' },
   )
+}
+
+/** 跳过某个版本；传空串表示取消跳过。 */
+export async function skipUpdate(version: string): Promise<void> {
+  await localRequest('/local/update/skip', undefined, 15_000, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ version }),
+  })
 }
 
 /** 保存更新源（清单地址）；传空串表示清除。 */

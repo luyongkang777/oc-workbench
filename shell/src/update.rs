@@ -213,17 +213,61 @@ fn load_settings() -> serde_json::Map<String, serde_json::Value> {
     }
 }
 
+/// 落盘 settings.json（保留没见过的键）。
+fn save_settings(map: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let path = settings_path().ok_or_else(|| "没有 LOCALAPPDATA".to_string())?;
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(map))
+        .map_err(|err| format!("序列化设置失败：{err}"))?;
+    fs::write(&path, text).map_err(|err| format!("写设置失败：{err}"))
+}
+
 /// 只改 `updateUrl`，其余键原样保留（以后加别的设置不会互相覆盖）。
 fn save_update_source(url: &str) -> Result<(), String> {
-    let path = settings_path().ok_or_else(|| "没有 LOCALAPPDATA".to_string())?;
     let mut map = load_settings();
     map.insert(
         "updateUrl".to_string(),
         serde_json::Value::String(url.trim().to_string()),
     );
-    let text = serde_json::to_string_pretty(&serde_json::Value::Object(map))
-        .map_err(|err| format!("序列化设置失败：{err}"))?;
-    fs::write(&path, text).map_err(|err| format!("写设置失败：{err}"))
+    save_settings(map)
+}
+
+/// settings.json 的键：用户主动跳过的版本号。
+const SKIP_KEY: &str = "skipVersion";
+
+/// 被跳过的版本（没有就是 None）。
+///
+/// 只记「哪一个版本」，不记「不更新」：发下一个版本时它自然不再匹配，
+/// 用户不用记得回来关掉。
+pub fn skipped_version() -> Option<String> {
+    load_settings()
+        .get(SKIP_KEY)
+        .and_then(|value| value.as_str())
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+/// 在设置表里写入/清除 skipVersion（纯函数，单测不碰环境变量）。
+fn with_skip(
+    mut map: serde_json::Map<String, serde_json::Value>,
+    version: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
+    match version.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(value) => {
+            map.insert(
+                SKIP_KEY.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+        }
+        None => {
+            map.remove(SKIP_KEY);
+        }
+    }
+    map
+}
+
+/// 设置/清除「跳过这个版本」；传 None 表示取消跳过。
+fn save_skip(version: Option<&str>) -> Result<(), String> {
+    save_settings(with_skip(load_settings(), version))
 }
 
 /// 解析更新源的三层优先级（纯函数，方便单测）：
@@ -308,6 +352,8 @@ pub struct CheckResult {
     pub source: Option<String>,
     pub latest: Option<String>,
     pub newer: bool,
+    /// 用户跳过了这个版本（顶栏不再提示，但点开面板还能更新）。
+    pub skipped: bool,
     pub notes: String,
     pub size: u64,
     pub url: Option<String>,
@@ -322,6 +368,7 @@ impl CheckResult {
             "source": self.source,
             "latest": self.latest,
             "newer": self.newer,
+            "skipped": self.skipped,
             "notes": self.notes,
             "size": self.size,
             "url": self.url,
@@ -340,6 +387,7 @@ pub fn check() -> CheckResult {
             source: None,
             latest: None,
             newer: false,
+            skipped: false,
             notes: String::new(),
             size: 0,
             url: None,
@@ -349,12 +397,14 @@ pub fn check() -> CheckResult {
     match fetch_manifest(&source) {
         Ok(manifest) => {
             let newer = is_newer(&manifest.version, CURRENT_VERSION);
+            let skipped = newer && skipped_version().as_deref() == Some(manifest.version.as_str());
             CheckResult {
                 configured: true,
                 current: CURRENT_VERSION,
                 source: Some(source),
                 latest: Some(manifest.version),
                 newer,
+                skipped,
                 notes: manifest.notes,
                 size: manifest.size,
                 url: Some(manifest.url),
@@ -367,6 +417,7 @@ pub fn check() -> CheckResult {
             source: Some(source),
             latest: None,
             newer: false,
+            skipped: false,
             notes: String::new(),
             size: 0,
             url: None,
@@ -593,6 +644,7 @@ pub fn handle(request: Request, path: &str, _url: &str) {
         "/local/update/check" => check_endpoint(request),
         "/local/update/apply" => apply_endpoint(request),
         "/local/update/source" => source_endpoint(request),
+        "/local/update/skip" => skip_endpoint(request),
         other => json_respond(
             request,
             404,
@@ -755,6 +807,78 @@ fn source_endpoint(request: Request) {
     }
 }
 
+/// `POST /local/update/skip`：记下「跳过这个版本」。
+///
+/// 只记版本号而不是「关闭更新」：发下一个版本时自然不再匹配，
+/// 用户不需要记得回来关掉；传空版本号表示取消跳过。
+fn skip_endpoint(request: Request) {
+    if !method_is(&request, Method::Post) {
+        json_respond(
+            request,
+            405,
+            serde_json::json!({ "error": "只支持 POST" }).to_string(),
+        );
+        return;
+    }
+    let Some((request, body)) = read_body_with_timeout(request, 16 * 1024) else {
+        return;
+    };
+    let bytes = match body {
+        BodyRead::Ok(bytes) => bytes,
+        BodyRead::TooLarge => {
+            json_respond(
+                request,
+                413,
+                serde_json::json!({ "error": "请求体过大" }).to_string(),
+            );
+            return;
+        }
+        BodyRead::Failed(err) => {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": format!("读取请求体失败：{err}") }).to_string(),
+            );
+            return;
+        }
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(err) => {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": format!("请求体不是 JSON：{err}") }).to_string(),
+            );
+            return;
+        }
+    };
+    let version = parsed
+        .get("version")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let saved = if version.is_empty() { None } else { Some(version.as_str()) };
+    match save_skip(saved) {
+        Ok(()) => {
+            crate::append_log(&format!(
+                "[update] 跳过版本：{}",
+                saved.unwrap_or("（已取消）")
+            ));
+            crate::append_log("
+");
+            json_respond(
+                request,
+                200,
+                serde_json::json!({ "ok": true, "skipped": saved }).to_string(),
+            );
+        }
+        Err(err) => json_respond(request, 500, serde_json::json!({ "error": err }).to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -819,6 +943,36 @@ mod tests {
             resolve_source(Some("https://env/x.json"), &map).as_deref(),
             Some("https://env/x.json")
         );
+    }
+
+    #[test]
+    fn skip_keeps_other_settings_and_can_be_cleared() {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "updateUrl".into(),
+            serde_json::Value::String("https://x/latest.json".into()),
+        );
+
+        let with = with_skip(map, Some("1.1.3"));
+        assert_eq!(
+            with.get("skipVersion").and_then(|v| v.as_str()),
+            Some("1.1.3")
+        );
+        assert_eq!(
+            with.get("updateUrl").and_then(|v| v.as_str()),
+            Some("https://x/latest.json"),
+            "不能把更新源改掉"
+        );
+
+        // 空串等价于取消跳过
+        let cleared = with_skip(with.clone(), None);
+        assert!(cleared.get("skipVersion").is_none());
+        assert_eq!(
+            cleared.get("updateUrl").and_then(|v| v.as_str()),
+            Some("https://x/latest.json")
+        );
+        let blank = with_skip(with, Some("  "));
+        assert!(blank.get("skipVersion").is_none(), "空白也算取消");
     }
 
     #[test]

@@ -109,6 +109,9 @@ npm.cmd run release
 - **入口**：顶栏 `v1.1.2` 胶囊，有新版本时变品牌色 + 一颗点；点开是「版本与更新」
 - **更新源优先级**：环境变量 `OC_WORKBENCH_UPDATE_URL` → `settings.json` 的 `updateUrl`
   （**空串 = 主动关闭**，不再检查）→ 内置默认 `releases/latest/download/latest.json`
+- **跳过某个版本**：面板里点「跳过这个版本」，写进 `settings.json` 的 `skipVersion`；
+  顶栏不再提示，但点开面板仍显示「已跳过」，可以随时「取消跳过」或直接更新。
+  只记版本号，发下一个版本时自动失效，不用记得回来关
 - **更新流程**：下载到 `%LOCALAPPDATA%\oc-workbench\update\` → 校验体积/SHA256/MZ →
   写 `apply-<pid>.cmd` → 本进程退出 → 脚本反复重试覆盖 exe → 启动新版本
 - **为什么用脚本**：Windows 不允许运行中的 exe 覆盖自己。脚本**不等 PID 退出**，

@@ -744,6 +744,17 @@ body {
   color: var(--accent);
 }
 
+.update-skiprow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-skipnote {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 .update-notes {
   padding: 8px 10px;
   color: var(--text-2);
