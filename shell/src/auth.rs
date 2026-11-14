@@ -817,15 +817,26 @@ enum ShellPlan {
 }
 
 /// 需要改动服务配置时返回计划；配置已经正确就返回 None（不发任何命令）。
+///
+/// 三条原则：
+///   1. pwsh 探针判定「不需要兜底」时，只清理我们自己写进去的 powershell.exe；
+///   2. 用户手工把 SHELL 设成别的东西（cmd / bash / 自己的 pwsh）时**绝不覆盖**；
+///   3. 配置已经对得上就不发任何命令（不白停一次服务）。
 fn shell_plan() -> Option<ShellPlan> {
     let desired = crate::shellprobe::shell_override();
     let current = read_service_shell();
+    if let Some(have) = current.as_deref() {
+        // 值不是我们写的那种：视为用户自己的选择，一个字节都不动。
+        if !is_powershell(have) {
+            return None;
+        }
+    }
     match (desired, current) {
         (Some(want), Some(have)) if paths_equal(&want, &have) => None,
         (Some(want), _) => Some(ShellPlan::Set(want)),
-        // 只清我们自己设过的那种值：用户手设别的 shell 时不动。
-        (None, Some(have)) if is_powershell(&have) => Some(ShellPlan::Clear),
-        _ => None,
+        // pwsh 已经好了：把自己之前压上去的 powershell.exe 撤掉。
+        (None, Some(_)) => Some(ShellPlan::Clear),
+        (None, None) => None,
     }
 }
 
@@ -1123,6 +1134,20 @@ mod restart_tests {
         assert!(!is_powershell(r"C:\Program Files\PowerShell\7\pwsh.exe"));
         assert!(!is_powershell(r"C:\Windows\System32\cmd.exe"));
     }
+
+    /// 用户手工设了别的 SHELL（cmd/bash/自己的 pwsh）：即使 pwsh 坏了也不该覆盖。
+    ///
+    /// 判据是「值是不是我们写的那种 powershell」；不是就当用户自己的选择。
+    #[test]
+    fn user_shell_is_never_overwritten() {
+        assert!(!is_powershell(r"C:\Windows\System32\cmd.exe"));
+        assert!(!is_powershell(r"C:\Program Files\Git\bin\bash.exe"));
+        assert!(!is_powershell(r"C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(is_powershell(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        ));
+    }
+
 
     /// 本机 PID 一定存活。
     #[test]

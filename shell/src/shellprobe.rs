@@ -192,4 +192,39 @@ mod tests {
         let exe = powershell_path().expect("应能找到 powershell.exe");
         assert!(exe.is_file(), "{} 不是文件", exe.display());
     }
+    /// 探针遇到畸形 pwsh（0 字节 / 假 exe / 同名目录）必须判死，不能 panic。
+    ///
+    /// 这些是真实环境里会出现的：Store 别名没装完、杀软隔离后留下的残骸、
+    /// 以及用户手工在同名路径建了目录。
+    #[test]
+    fn probe_rejects_malformed_pwsh() {
+        let dir = std::env::temp_dir().join(format!("ocwb-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建目录");
+
+        // 0 字节：Store 别名安装未完成的样子
+        let zero = dir.join("zero.exe");
+        std::fs::write(&zero, b"").expect("写 0 字节");
+        assert!(!probe_runs(&zero), "0 字节必须判死");
+
+        // 假 exe：内容是文本，CreateProcess 会失败
+        let fake = dir.join("fake.exe");
+        std::fs::write(&fake, b"not a real ever").expect("写假 exe");
+        assert!(!probe_runs(&fake), "假 exe 必须判死");
+
+        // 同名目录：is_file() 会挡住它，probe 也不能崩
+        let as_dir = dir.join("dir.exe");
+        std::fs::create_dir_all(&as_dir).expect("建同名目录");
+        assert!(!probe_runs(&as_dir), "同名目录必须判死");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 探针必须能正确判活真实的 powershell.exe（证明确实是「实测」而不是总判死）。
+    #[test]
+    fn probe_accepts_real_powershell() {
+        let exe = powershell_path().expect("应能找到 powershell.exe");
+        assert!(probe_runs(&exe), "真实 powershell 必须判活");
+    }
+
 }
