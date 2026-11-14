@@ -397,7 +397,14 @@ export default function ChatHeader({
 
         {purge ? <PurgeToggle controller={purge} currentModel={currentModel} /> : null}
 
-        <button type="button" className="chat-new" onClick={onNewSession} disabled={!connected}>
+        <button
+          type="button"
+          className="chat-new"
+          onClick={onNewSession}
+          disabled={!connected}
+          title="新会话"
+          aria-label="新会话"
+        >
           <span className="chat-new-plus" aria-hidden="true">＋</span>
           <span className="chat-new-text">新会话</span>
         </button>
