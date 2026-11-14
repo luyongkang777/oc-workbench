@@ -1,7 +1,7 @@
 {
   "name": "oc-workbench",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "verify:tools": "node scripts/verify-tool-output.mjs",
     "verify:single": "node scripts/verify-single-instance.mjs",
     "verify:single:cross": "node scripts/verify-single-instance-crossversion.mjs",
-    "test": "node --experimental-strip-types --test scripts/codeWindow.test.mjs scripts/htmlPreview.test.mjs scripts/turns.test.mjs scripts/turnsIncremental.test.mjs scripts/turnWindow.test.mjs scripts/formState.test.mjs scripts/chatCommands.test.mjs scripts/attachments.test.mjs scripts/fileLinks.test.mjs scripts/localPath.test.mjs scripts/diffWindow.test.mjs scripts/editorWrite.test.mjs scripts/fsOps.test.mjs scripts/completion.test.mjs scripts/streamPatch.test.mjs scripts/findLocate.test.mjs scripts/projectList.test.mjs scripts/projectStatus.test.mjs scripts/contextUsage.test.mjs scripts/compactLog.test.mjs scripts/messages.test.mjs scripts/wrapLayout.test.mjs scripts/theme.test.mjs scripts/sessionStats.test.mjs scripts/gitops.test.mjs scripts/gitFormat.test.mjs scripts/graphLayout.test.mjs scripts/remoteAccounts.test.mjs scripts/bumpVersion.test.mjs scripts/cliState.test.mjs scripts/purgeStatus.test.mjs scripts/connectionPolicy.test.mjs scripts/subagent.test.mjs scripts/sessionLight.test.mjs scripts/pickActivity.test.mjs scripts/draftState.test.mjs scripts/viewZoom.test.mjs scripts/windowChrome.test.mjs scripts/visibility.test.mjs scripts/mcpStatus.test.mjs",
+    "test": "node --experimental-strip-types --test scripts/codeWindow.test.mjs scripts/htmlPreview.test.mjs scripts/turns.test.mjs scripts/turnsIncremental.test.mjs scripts/turnWindow.test.mjs scripts/formState.test.mjs scripts/chatCommands.test.mjs scripts/attachments.test.mjs scripts/fileLinks.test.mjs scripts/localPath.test.mjs scripts/diffWindow.test.mjs scripts/editorWrite.test.mjs scripts/fsOps.test.mjs scripts/completion.test.mjs scripts/streamPatch.test.mjs scripts/findLocate.test.mjs scripts/projectList.test.mjs scripts/projectStatus.test.mjs scripts/contextUsage.test.mjs scripts/compactLog.test.mjs scripts/messages.test.mjs scripts/wrapLayout.test.mjs scripts/theme.test.mjs scripts/sessionStats.test.mjs scripts/gitops.test.mjs scripts/gitFormat.test.mjs scripts/graphLayout.test.mjs scripts/remoteAccounts.test.mjs scripts/bumpVersion.test.mjs scripts/cliState.test.mjs scripts/purgeStatus.test.mjs scripts/connectionPolicy.test.mjs scripts/subagent.test.mjs scripts/sessionLight.test.mjs scripts/pickActivity.test.mjs scripts/draftState.test.mjs scripts/viewZoom.test.mjs scripts/windowChrome.test.mjs scripts/visibility.test.mjs scripts/mcpStatus.test.mjs scripts/revert.test.mjs",
     "release": "node scripts/package-release.mjs",
     "bump": "node scripts/bump-version.mjs"
   },
