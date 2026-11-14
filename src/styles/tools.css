@@ -24,21 +24,23 @@
 .chat-tools {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-width: 92%;
+  gap: 5px;
+  max-width: 100%;
 }
 
 .chat-tools-summary {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
-  padding: 3px 8px;
+  min-height: 30px;
+  padding: 5px 10px;
   background: var(--bg-2);
   border: 1px solid var(--line-2);
   border-left: 3px solid var(--accent-line);
+  border-radius: var(--r-2);
   color: var(--text-2);
-  font-size: 11.5px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -49,13 +51,13 @@
 
 .chat-tools-caret {
   color: var(--text-3);
-  font-size: 10px;
-  width: 10px;
+  font-size: var(--fs-2xs);
+  width: 12px;
 }
 
 .chat-tools-kinds {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -64,9 +66,9 @@
 .chat-tools-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-left: 6px;
-  padding-left: 8px;
+  gap: 4px;
+  margin-left: 7px;
+  padding-left: 10px;
   border-left: 1px solid var(--line-1);
 }
 
@@ -80,9 +82,9 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--text-2);
-  padding: 1px 0;
+  padding: 2px 0;
 }
 
 /* 名字本身就是展开按钮：重置 button 默认外观，只留一个可点的箭头 */
@@ -111,32 +113,31 @@
 
 .chat-tool-caret {
   color: var(--text-3);
-  font-size: 10px;
-  width: 10px;
+  font-size: var(--fs-2xs);
+  width: 12px;
 }
 
-/* 展开后的参数 / 返回内容：等宽、保留换行、超高才滚动 */
 .chat-tool-body {
-  margin: 2px 0 6px 18px;
-  padding: 6px 8px;
+  margin: 3px 0 8px 20px;
+  padding: 8px 10px;
   background: var(--bg-2);
   border: 1px solid var(--line-1);
-  border-radius: var(--r-1);
-  max-height: 340px;
+  border-radius: var(--r-2);
+  max-height: 360px;
   overflow: auto;
 }
 
 .chat-tool-label {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 
 .chat-tool-pre {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-word;
@@ -147,7 +148,7 @@
 }
 
 .chat-tool-more {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
@@ -167,7 +168,7 @@
 
 .chat-tool-status {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 /* 工具详情是文件路径时：保留等宽字体，但做成可点的按钮（重置 button 默认外观） */

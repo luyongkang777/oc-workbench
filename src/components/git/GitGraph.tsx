@@ -24,7 +24,8 @@ type GitGraphProps = {
 
 /* 布局常量写死（不读 CSS 变量）：SVG 几何不该被主题或用户样式改动 */
 /** 行高 */
-const ROW_H = 26
+/** 行高与 git.css 的 .git-graph-row 一致（改了一处必须同步另一处）。 */
+const ROW_H = 30
 /** 单条 lane 的宽度 */
 const LANE_W = 14
 /** 图形列左侧留白 */

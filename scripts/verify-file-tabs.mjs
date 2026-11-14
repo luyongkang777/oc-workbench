@@ -146,12 +146,14 @@ window.__oct = {
     await new Promise((resolve) => setTimeout(resolve, 350))
     return { ok, elapsed: Math.round(performance.now() - started) }
   },
-  /** 树的总行数：.tree-rows 的高度 = rows.length × 24（ROW_HEIGHT），不受虚拟化影响。 */
+  /** 树的总行数：.tree-rows 高度 ÷ 单行高度（行高从 .tree-row 实测，别再写死 24/27）。 */
   totalRows() {
     const box = document.querySelector('.tree-rows')
     if (!box) return 0
     const height = parseFloat(box.style.height || '0')
-    return Math.round(height / 24)
+    const row = document.querySelector('.tree-row')
+    const rowH = row ? parseFloat(getComputedStyle(row).height) || 27 : 27
+    return Math.round(height / rowH)
   },
   async waitActive(name, timeout = 15000) {
     const started = performance.now()

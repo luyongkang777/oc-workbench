@@ -8,7 +8,7 @@
   right: 0;
   bottom: 0;
   z-index: 70;
-  width: 420px;
+  width: 480px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -17,7 +17,7 @@
   border-left: 1px solid var(--line-2);
   box-shadow: var(--shadow-3);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* 窄屏不挡死整个界面 */
@@ -50,7 +50,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
+  height: 38px;
   padding: 0 8px 0 12px;
   flex: 0 0 auto;
   border-bottom: 1px solid var(--line-1);
@@ -63,7 +63,7 @@
   gap: 7px;
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-2);
 }
@@ -106,7 +106,7 @@
   margin: 8px 12px 0;
   padding: 6px 8px 6px 10px;
   flex: 0 0 auto;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--danger-soft);
   background: var(--danger-weak);
@@ -153,7 +153,7 @@
   height: 18px;
   padding: 0 6px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--danger);
   background: transparent;
   border: 1px solid var(--danger-line);
@@ -170,7 +170,7 @@
   padding: 20px 16px;
   text-align: center;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -192,7 +192,7 @@
 .git-init-text {
   max-width: 280px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.75;
 }
 
@@ -202,7 +202,7 @@
   gap: 7px;
   height: 30px;
   padding: 0 16px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-inverse);
   background: var(--accent);
   border: 1px solid var(--accent);
@@ -223,17 +223,16 @@
   opacity: 0.7;
 }
 
-/* ---------- 顶部状态条 ---------- */
 .git-statusbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 10px;
-  padding: 8px 12px;
+  gap: 5px 12px;
+  padding: 10px 12px;
   flex: 0 0 auto;
   background: var(--bg-0);
   border-bottom: 1px solid var(--line-1);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -279,7 +278,7 @@
   padding: 6px 12px;
   flex: 0 0 auto;
   border-bottom: 1px solid var(--line-1);
-  font-size: 11.5px;
+  font-size: 13px;
 }
 
 .git-remote {
@@ -300,7 +299,7 @@
   flex: 0 0 auto;
   height: 20px;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 18px;
   color: var(--text-2);
   background: transparent;
@@ -333,7 +332,7 @@
   height: 24px;
   padding: 0 8px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-1);
   background: var(--bg-inset);
   border: 1px solid var(--line-2);
@@ -355,7 +354,7 @@
   flex: 0 0 auto;
   height: 24px;
   padding: 0 9px;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 22px;
   border-radius: var(--r-2);
   cursor: pointer;
@@ -392,12 +391,11 @@
   opacity: 0.7;
 }
 
-/* ---------- 页签 ---------- */
 .git-tabs {
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  padding: 6px 8px 0;
+  padding: 8px 8px 0;
   flex: 0 0 auto;
   border-bottom: 1px solid var(--line-1);
 }
@@ -405,11 +403,11 @@
 .git-tab {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 10px;
-  font-size: 11.5px;
-  line-height: 22px;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+  line-height: 28px;
   color: var(--text-2);
   background: transparent;
   border: 1px solid transparent;
@@ -421,18 +419,6 @@
     background var(--ease);
 }
 
-.git-tab:hover {
-  color: var(--text-1);
-  background: var(--bg-hover);
-}
-
-/* 选中态抬到 bg-2，和下方内容区连成一片 */
-.git-tab.active {
-  color: var(--text-1);
-  background: var(--bg-2);
-  border-color: var(--line-1);
-}
-
 /* 改动数量：一枚极小的计数徽标，别抢页签文字 */
 .git-tab-count {
   display: inline-flex;
@@ -441,7 +427,7 @@
   min-width: 15px;
   height: 14px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
@@ -483,18 +469,11 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px 4px;
-}
-
-.git-section-title {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-2);
-  user-select: none;
+  padding: 10px 12px 6px;
 }
 
 .git-section-count {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -511,9 +490,9 @@
 .git-change {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 26px;
-  padding: 3px 12px;
+  gap: 9px;
+  min-height: 30px;
+  padding: 4px 12px;
   transition: background var(--ease);
 }
 
@@ -529,10 +508,10 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  min-width: 34px;
-  height: 16px;
-  padding: 0 5px;
-  font-size: 10px;
+  min-width: 38px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: var(--fs-2xs);
   font-weight: 500;
   line-height: 1;
   border: 1px solid transparent;
@@ -578,7 +557,7 @@
   min-width: 0;
   padding: 0;
   font: inherit;
-  font-size: 11.5px;
+  font-size: 13px;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -597,7 +576,7 @@
 
 .git-change-flag {
   flex: 0 0 auto;
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -607,7 +586,7 @@
   flex: 0 0 auto;
   height: 20px;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 18px;
   color: var(--text-3);
   background: transparent;
@@ -640,18 +619,18 @@
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  gap: 8px;
-  padding: 8px 12px 12px;
+  gap: 9px;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--line-1);
 }
 
 .git-commit-input {
   width: 100%;
-  min-height: 62px;
-  padding: 6px 8px;
+  min-height: 82px;
+  padding: 8px 10px;
   font: inherit;
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
   color: var(--text-1);
   background: var(--bg-inset);
   border: 1px solid var(--line-2);
@@ -679,7 +658,7 @@
 .git-commit-hint {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -689,10 +668,10 @@
 /* 提交是这一步的主操作，用品牌色实心 */
 .git-primary {
   flex: 0 0 auto;
-  height: 26px;
-  padding: 0 14px;
-  font-size: 11.5px;
-  line-height: 24px;
+  height: 30px;
+  padding: 0 16px;
+  font-size: var(--fs-xs);
+  line-height: 28px;
   color: var(--text-inverse);
   background: var(--accent);
   border: 1px solid var(--accent);
@@ -719,8 +698,8 @@
 .git-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 9px;
+  padding: 10px 12px;
   flex: 0 0 auto;
   background: var(--bg-0);
   border-top: 1px solid var(--line-1);
@@ -732,9 +711,9 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 24px;
-  font-size: 11.5px;
-  line-height: 22px;
+  height: 28px;
+  font-size: var(--fs-xs);
+  line-height: 26px;
   border-radius: var(--r-2);
   cursor: pointer;
   transition:
@@ -797,7 +776,7 @@
 
 .git-drop-hint {
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-3);
   user-select: none;
@@ -858,14 +837,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-1);
 }
 
 .git-tree-ignored {
   flex: 0 0 auto;
   padding: 0 5px;
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 15px;
   color: var(--text-3);
   background: var(--bg-control);
@@ -877,7 +856,7 @@
   flex: 0 0 auto;
   height: 20px;
   padding: 0 7px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 18px;
   color: var(--text-2);
   background: transparent;
@@ -903,7 +882,7 @@
 
 .git-tree-loading {
   padding: 6px 12px 6px 26px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-3);
 }
 
@@ -920,8 +899,8 @@
 .git-commit-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 7px 12px;
+  gap: 9px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--line-1);
   transition: background var(--ease);
 }
@@ -934,7 +913,7 @@
   flex: 0 0 auto;
   padding-top: 1px;
   font-family: ui-monospace, Consolas, 'Cascadia Mono', monospace;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-3);
   user-select: text;
 }
@@ -951,7 +930,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-1);
 }
 
@@ -959,7 +938,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--text-3);
 }
 
@@ -968,7 +947,7 @@
   flex: 0 0 auto;
   height: 20px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 18px;
   color: var(--text-2);
   background: transparent;
@@ -1017,13 +996,13 @@
 }
 
 .git-confirm-title {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-1);
 }
 
 .git-confirm-text {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-2);
   word-break: break-word;
@@ -1034,7 +1013,7 @@
   display: flex;
   gap: 6px;
   padding: 6px 8px;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-2);
   background: var(--bg-0);
@@ -1054,7 +1033,7 @@
 .git-confirm-cancel {
   height: 24px;
   padding: 0 10px;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 22px;
   border-radius: var(--r-2);
   cursor: pointer;
@@ -1156,7 +1135,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-1);
   text-overflow: ellipsis;
@@ -1179,7 +1158,7 @@
   height: 24px;
   padding: 0 6px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-1);
   background: var(--bg-inset);
   border: 1px solid var(--line-2);
@@ -1198,7 +1177,7 @@
   height: 22px;
   padding: 0 8px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 20px;
   border-radius: var(--r-2);
   cursor: pointer;
@@ -1250,7 +1229,7 @@
   height: 26px;
   padding: 0 10px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-3);
   background: transparent;
   border: none;
@@ -1310,7 +1289,7 @@
 .git-form-label {
   flex: 0 0 auto;
   min-width: 40px;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-2);
 }
 
@@ -1320,7 +1299,7 @@
   height: 26px;
   padding: 0 8px;
   font: inherit;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-1);
   background: var(--bg-inset);
   border: 1px solid var(--line-2);
@@ -1351,7 +1330,7 @@
   height: 26px;
   padding: 0 8px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-2);
   background: transparent;
   border: 1px solid var(--line-2);
@@ -1369,7 +1348,7 @@
 
 /* 获取途径 / 说明：小字，长句要能换行 */
 .git-form-hint {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-3);
   word-break: break-word;
@@ -1378,7 +1357,7 @@
 /* 错误只在卡片内显示，不用 alert */
 .git-form-error {
   padding: 5px 8px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--danger-soft);
   background: var(--danger-weak);
@@ -1429,7 +1408,7 @@
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--text-1);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1439,7 +1418,7 @@
 .git-repo-tag {
   flex: 0 0 auto;
   padding: 0 5px;
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 16px;
   color: var(--text-2);
   background: var(--bg-control);
@@ -1451,7 +1430,7 @@
 .git-repo-empty {
   flex: 0 0 auto;
   padding: 0 5px;
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 16px;
   color: var(--accent);
   background: var(--accent-weak);
@@ -1465,7 +1444,7 @@
   height: 20px;
   padding: 0 8px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 18px;
   color: var(--accent);
   background: transparent;
@@ -1496,15 +1475,14 @@
   overflow: hidden;
 }
 
-/* 摘要条固定在图之上：滚动时也要看得见当前分支和未推送数量 */
 .git-graph-summary {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 10px;
-  padding: 6px 12px;
+  gap: 5px 12px;
+  padding: 8px 12px;
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   border-bottom: 1px solid var(--line-1);
   user-select: none;
@@ -1534,9 +1512,9 @@
 .git-graph-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 26px;
-  padding-right: 8px;
+  gap: 9px;
+  height: 30px;
+  padding-right: 10px;
   border-bottom: 1px solid var(--line-1);
   transition: background var(--ease);
 }
@@ -1572,18 +1550,10 @@
 .git-graph-title {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
-}
-
-.git-graph-hash {
-  flex: 0 0 auto;
-  font-family: ui-monospace, Consolas, 'Cascadia Mono', monospace;
-  font-size: 10.5px;
-  color: var(--text-3);
-  user-select: text;
 }
 
 .git-graph-msg {
@@ -1597,11 +1567,11 @@
 /* refs 标签：默认=本地分支（中性），head / remote / tag 三档各有色调 */
 .git-graph-ref {
   flex: 0 0 auto;
-  max-width: 132px;
+  max-width: 150px;
   overflow: hidden;
-  padding: 0 5px;
-  font-size: 10px;
-  line-height: 14px;
+  padding: 0 6px;
+  font-size: var(--fs-2xs);
+  line-height: 16px;
   color: var(--text-2);
   background: var(--bg-control);
   border: 1px solid var(--line-2);
@@ -1635,7 +1605,7 @@
   gap: 4px;
   min-width: 0;
   overflow: hidden;
-  font-size: 10.5px;
+  font-size: 12px;
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -1650,7 +1620,7 @@
 .git-graph-local {
   flex: 0 0 auto;
   padding: 0 5px;
-  font-size: 10px;
+  font-size: 11.5px;
   line-height: 14px;
   color: var(--warn);
   background: var(--warn-weak);
@@ -1664,7 +1634,7 @@
   flex: 0 0 auto;
   height: 20px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 18px;
   color: var(--text-2);
   background: transparent;
@@ -1706,7 +1676,7 @@
 .git-graph-more button {
   height: 24px;
   padding: 0 12px;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 22px;
   color: var(--text-2);
   background: transparent;
@@ -1736,7 +1706,7 @@
   padding: 20px 16px;
   text-align: center;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -1756,7 +1726,7 @@
   height: 22px;
   padding: 0 8px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-2);
   background: transparent;
   border: 1px solid transparent;
@@ -1787,7 +1757,7 @@
 
 /* 「密码只用来换一次令牌」这类补充说明：比 git-form-hint 再轻一档 */
 .git-pw-hint {
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--text-3);
 }
@@ -1795,7 +1765,7 @@
 /* GitHub 不走账号密码：一句提醒，别做成错误红条 */
 .git-login-note {
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--warn-ink);
   background: var(--warn-weak);
@@ -1810,7 +1780,7 @@
   height: 24px;
   padding: 0 9px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-2);
   background: transparent;
   border: 1px solid var(--line-2);
@@ -1837,7 +1807,7 @@
   margin: 8px 12px 0;
   padding: 6px 8px 6px 10px;
   flex: 0 0 auto;
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-1);
   background: var(--success-weak);

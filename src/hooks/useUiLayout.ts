@@ -9,8 +9,8 @@ const SIDE_KEY = 'oc-workbench:side-w'
 const CHAT_KEY = 'oc-workbench:chat-w'
 const SCALE_KEY = 'oc-workbench:scale'
 
-export const SIDE_W = { min: 180, max: 380, def: 232 }
-export const CHAT_W = { min: 360, max: 820, def: 500 }
+export const SIDE_W = { min: 180, max: 380, def: 240 }
+export const CHAT_W = { min: 360, max: 820, def: 520 }
 export const SCALE = { min: 0.8, max: 1.6, def: 1 }
 
 const HINT_MS = 1600

@@ -6,8 +6,8 @@
   display: flex;
   min-height: 0;
   /* 两个分隔条拖出来的宽度；App.tsx 用 inline style 覆盖 */
-  --side-w: 232px;
-  --chat-w: 500px;
+  --side-w: 240px;
+  --chat-w: 520px;
 }
 
 /* ---------- 分隔条 ---------- */
@@ -64,9 +64,9 @@ body.resizing .col-resizer::after {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 32px;
+  height: 38px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-2);
   border-bottom: 1px solid var(--line-1);
@@ -77,7 +77,7 @@ body.resizing .col-resizer::after {
 .pane-notice {
   padding: 10px 12px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   word-break: break-all;
 }
@@ -96,10 +96,10 @@ body.resizing .col-resizer::after {
 /* 顶栏「未连接」时的手动重试按钮 */
 .retry-button {
   flex: 0 0 auto;
-  height: 20px;
+  height: var(--ctl-sm);
   padding: 0 8px;
-  font-size: 11px;
-  line-height: 18px;
+  font-size: var(--fs-xs);
+  line-height: calc(var(--ctl-sm) - 2px);
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
@@ -130,9 +130,9 @@ body.resizing .col-resizer::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px 6px 12px;
+  padding: 6px 8px 8px 12px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* 长路径要省掉开头而不是结尾，所以本体继续用 rtl + ellipsis */
@@ -169,13 +169,14 @@ body.resizing .col-resizer::after {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
-  line-height: 24px;
+  height: 27px;
+  line-height: 27px;
   padding-right: 8px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   color: var(--text-1);
+  font-size: var(--fs-sm);
 }
 
 .tree-row:hover {
@@ -188,15 +189,15 @@ body.resizing .col-resizer::after {
 }
 
 .tree-caret {
-  width: 12px;
+  width: 14px;
   color: var(--text-2);
-  flex: 0 0 12px;
-  font-size: 10px;
+  flex: 0 0 14px;
+  font-size: var(--fs-2xs);
 }
 
 .tree-icon {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   filter: saturate(0.6);
 }
 
@@ -208,7 +209,7 @@ body.resizing .col-resizer::after {
 /* 加载中 / 空目录 / 加载失败的状态行 */
 .tree-status {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -219,9 +220,9 @@ body.resizing .col-resizer::after {
 
 .tree-retry {
   flex: 0 0 auto;
-  height: 18px;
+  height: var(--ctl-xs);
   padding: 0 6px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
@@ -240,10 +241,10 @@ body.resizing .col-resizer::after {
   background: transparent;
   border: 1px solid var(--line-2);
   color: var(--text-1);
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  padding: 4px 10px;
   cursor: pointer;
-  max-width: 200px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -271,7 +272,7 @@ body.resizing .col-resizer::after {
 }
 
 .chat-sessions {
-  max-height: 180px;
+  max-height: 220px;
   overflow: auto;
   border-bottom: 1px solid var(--line-1);
   background: var(--bg-inset);
@@ -284,7 +285,7 @@ body.resizing .col-resizer::after {
   gap: 8px;
   padding-right: 8px;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .chat-session-item:hover {
@@ -302,11 +303,11 @@ body.resizing .col-resizer::after {
   gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
-  padding: 5px 4px 5px 12px;
+  padding: 7px 4px 7px 12px;
   background: transparent;
   border: none;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -342,7 +343,7 @@ body.resizing .col-resizer::after {
   background: transparent;
   border: none;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -365,17 +366,17 @@ body.resizing .col-resizer::after {
 
 .chat-session-time {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   flex: 0 0 auto;
 }
 .chat-session-more {
   width: 100%;
-  padding: 6px 12px;
+  padding: 8px 12px;
   background: transparent;
   border: none;
   border-top: 1px solid var(--line-1);
   color: var(--info);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   text-align: left;
   cursor: pointer;
 }
@@ -409,10 +410,10 @@ body.resizing .col-resizer::after {
 
 .chat-bubble {
   max-width: 100%;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: var(--r-3);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--fs-md);
+  line-height: 1.75;
   white-space: pre-wrap;
   /* 用户气泡是纯文本（长路径 / 长串也常出现），必须能断；
      非标准的 word-break: break-word 等价于 anywhere，成本更高，改用标准属性 */
@@ -429,8 +430,8 @@ body.resizing .col-resizer::after {
   background: color-mix(in srgb, var(--bg-1) 92%, transparent); /* --bg-1 92%，随主题变，浮在气泡上看不出边框 */
   color: var(--text-1);
   font-family: inherit;
-  font-size: 10px;
-  line-height: 16px;
+  font-size: var(--fs-2xs);
+  line-height: 18px;
   white-space: nowrap;
   cursor: pointer;
   /* 默认不可见也不可点，避免浮层常驻压住气泡文字、吞掉拖选。
@@ -475,13 +476,13 @@ body.resizing .col-resizer::after {
 .chat-menu-item {
   display: block;
   width: 100%;
-  padding: 5px 10px;
+  padding: 7px 10px;
   border: none;
   border-radius: var(--r-2);
   background: transparent;
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -527,7 +528,7 @@ body.resizing .col-resizer::after {
   border: none;
   color: var(--text-2);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
 }
@@ -558,7 +559,7 @@ body.resizing .col-resizer::after {
   flex: 0 0 auto;
   width: 10px;
   color: var(--text-3);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .chat-reasoning-label {
@@ -569,7 +570,7 @@ body.resizing .col-resizer::after {
 .chat-reasoning-hint {
   margin-left: auto;
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 
 .chat-reasoning-body {
@@ -578,7 +579,7 @@ body.resizing .col-resizer::after {
   padding: 4px 10px 6px;
   border-top: 1px solid var(--line-1);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -597,7 +598,7 @@ body.resizing .col-resizer::after {
   gap: 6px;
   padding: 4px 8px;
   color: var(--reasoning);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .chat-waiting-dot {
@@ -641,14 +642,14 @@ body.resizing .col-resizer::after {
   border-radius: var(--r-2);
   background: var(--warn);
   color: var(--text-inverse);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 16px;
 }
 
 .chat-form-title {
   color: var(--warn-ink);
-  font-size: 12px;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -673,12 +674,12 @@ body.resizing .col-resizer::after {
 
 .chat-form-label-text {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .chat-form-desc {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .chat-form-options {
@@ -703,7 +704,7 @@ body.resizing .col-resizer::after {
   background: var(--bg-inset);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -728,7 +729,7 @@ body.resizing .col-resizer::after {
   flex: 0 0 12px;
   width: 12px;
   color: var(--warn);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
 }
 
@@ -745,7 +746,7 @@ body.resizing .col-resizer::after {
 
 .chat-form-option-desc {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 15px;
 }
 
@@ -763,7 +764,7 @@ body.resizing .col-resizer::after {
   border-radius: var(--r-2);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   outline: none;
 }
 
@@ -785,7 +786,7 @@ body.resizing .col-resizer::after {
   background: var(--warn);
   color: var(--text-inverse);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -801,7 +802,7 @@ body.resizing .col-resizer::after {
   background: transparent;
   color: var(--text-2);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -819,7 +820,7 @@ body.resizing .col-resizer::after {
   border: 1px solid var(--line-2);
   border-left: 3px solid var(--accent-line);
   background: var(--bg-2);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-2);
 }
 
@@ -832,7 +833,7 @@ body.resizing .col-resizer::after {
 }
 
 .chat-meta {
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--text-3);
 }
 
@@ -844,9 +845,9 @@ body.resizing .col-resizer::after {
 }
 
 .pane-action {
-  height: 22px;
-  padding: 0 8px;
-  font-size: 11.5px;
+  height: var(--ctl-sm);
+  padding: 0 9px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   background: transparent;
   border: none;
@@ -863,17 +864,16 @@ body.resizing .col-resizer::after {
 }
 
 /* 顶部一次性提示条 */
-/* 提示条不再横劈整个界面：左侧 3px 色条承担语义，底色收到极淡 */
 .app-notice {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  padding: 7px 12px;
   background: var(--danger-weak);
   border-bottom: 1px solid var(--danger-line);
   border-left: 3px solid var(--danger);
   color: var(--danger-soft);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- 模式选择（服务端 agent） ---------- */
@@ -886,11 +886,11 @@ body.resizing .col-resizer::after {
 .mode-toggle {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
-  max-width: 132px;
-  padding: 0 8px;
-  font-size: 11.5px;
+  gap: 5px;
+  height: 28px;
+  max-width: 160px;
+  padding: 0 9px;
+  font-size: 13px;
   color: var(--text-1);
   background: transparent;
   border: 1px solid var(--line-2);
@@ -920,17 +920,17 @@ body.resizing .col-resizer::after {
 
 .mode-toggle-caret {
   flex: 0 0 auto;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--text-3);
 }
 
 .mode-menu {
   position: absolute;
-  top: 26px;
+  top: 34px;
   left: 0;
   z-index: 30;
-  width: 264px;
-  padding: 4px;
+  width: 300px;
+  padding: 5px;
   background: var(--bg-1);
   border: 1px solid var(--line-2);
   border-radius: var(--r-3);
@@ -940,14 +940,14 @@ body.resizing .col-resizer::after {
 .mode-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   width: 100%;
-  padding: 6px 8px;
+  padding: 8px 10px;
   background: transparent;
   border: none;
   border-radius: var(--r-2);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -974,8 +974,8 @@ body.resizing .col-resizer::after {
   -webkit-box-orient: vertical;
   overflow: hidden;
   color: var(--text-3);
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
 }
 
 /* ---------- 模型选择 ---------- */
@@ -989,10 +989,10 @@ body.resizing .col-resizer::after {
   background: transparent;
   border: 1px solid var(--line-2);
   color: var(--text-1);
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: 13px;
+  padding: 4px 9px;
   cursor: pointer;
-  max-width: 170px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1007,10 +1007,10 @@ body.resizing .col-resizer::after {
 
 .model-menu {
   position: absolute;
-  top: 24px;
+  top: 34px;
   left: 0;
   z-index: 30;
-  width: 280px;
+  width: 320px;
   background: var(--bg-1);
   border: 1px solid var(--line-2);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
@@ -1022,12 +1022,12 @@ body.resizing .col-resizer::after {
 .model-filter {
   width: 100%;
   box-sizing: border-box;
-  padding: 5px 8px;
+  padding: 7px 10px;
   background: var(--bg-0);
   border: none;
   border-bottom: 1px solid var(--line-1);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   outline: none;
 }
 
@@ -1052,7 +1052,7 @@ body.resizing .col-resizer::after {
   border: none;
   border-left: 1px solid var(--line-1);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -1071,11 +1071,11 @@ body.resizing .col-resizer::after {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 5px 10px;
+  padding: 7px 10px;
   background: transparent;
   border: none;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -1099,19 +1099,19 @@ body.resizing .col-resizer::after {
 .model-provider {
   flex: 0 0 auto;
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 
 .model-empty {
   padding: 10px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .chat-session-empty {
   padding: 8px 12px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* 生成中的「停止」按钮 */
@@ -1163,6 +1163,9 @@ body.resizing .col-resizer::after {
 
 .chat-new {
   flex: 0 0 auto;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .model-name {
@@ -1193,11 +1196,11 @@ body.resizing .col-resizer::after {
 .variant-toggle {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
-  max-width: 104px;
-  padding: 0 8px;
-  font-size: 11px;
+  gap: 5px;
+  height: 28px;
+  max-width: 120px;
+  padding: 0 9px;
+  font-size: var(--fs-xs);
   color: var(--reasoning);
   background: transparent;
   border: 1px solid var(--line-2);
@@ -1228,11 +1231,11 @@ body.resizing .col-resizer::after {
 
 .variant-menu {
   position: absolute;
-  top: 26px;
+  top: 34px;
   right: 0;
   z-index: 30;
-  width: 176px;
-  padding: 4px;
+  width: 200px;
+  padding: 5px;
   background: var(--bg-1);
   border: 1px solid var(--line-2);
   border-radius: var(--r-3);
@@ -1244,13 +1247,13 @@ body.resizing .col-resizer::after {
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  padding: 5px 8px;
+  padding: 7px 10px;
   background: transparent;
   border: none;
   border-radius: var(--r-2);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -1274,7 +1277,7 @@ body.resizing .col-resizer::after {
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
   color: var(--reasoning);
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 14px;
 }
 
@@ -1291,7 +1294,7 @@ body.resizing .col-resizer::after {
   border-bottom: 1px solid var(--line-1);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
   overflow: hidden;
@@ -1306,7 +1309,7 @@ body.resizing .col-resizer::after {
 .model-variant-title {
   padding: 6px 10px 2px;
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: 0.05em;
 }
 
@@ -1325,7 +1328,7 @@ body.resizing .col-resizer::after {
   border: none;
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -1342,7 +1345,7 @@ body.resizing .col-resizer::after {
 .model-variant-id {
   flex: 0 0 auto;
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 
 .model-variant-item.active .model-variant-id {
@@ -1356,7 +1359,7 @@ body.resizing .col-resizer::after {
   background: transparent;
   border: none;
   color: var(--danger);
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -1391,7 +1394,7 @@ body.resizing .col-resizer::after {
   height: 26px;
   padding: 0 10px;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-1);
   background: transparent;
   border: 0;
@@ -1444,7 +1447,7 @@ body.resizing .col-resizer::after {
 }
 
 .tree-dialog-title {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-1);
 }
 
@@ -1452,7 +1455,7 @@ body.resizing .col-resizer::after {
 .tree-dialog-kind select {
   height: 28px;
   padding: 0 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-1);
   background: var(--bg-0);
   border: 1px solid var(--line-2);
@@ -1468,7 +1471,7 @@ body.resizing .col-resizer::after {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-2);
 }
 
@@ -1477,7 +1480,7 @@ body.resizing .col-resizer::after {
 }
 
 .tree-dialog-error {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--danger);
 }
 
@@ -1490,7 +1493,7 @@ body.resizing .col-resizer::after {
 .tree-dialog-btn {
   height: 26px;
   padding: 0 14px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
@@ -1572,9 +1575,9 @@ body.resizing .col-resizer::after {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
-  height: 24px;
-  padding: 0 6px 0 10px;
-  font-size: 12px;
+  height: 28px;
+  padding: 0 8px 0 11px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   border: 1px solid transparent;
   border-radius: var(--r-2);
@@ -1643,10 +1646,10 @@ body.resizing .col-resizer::after {
   justify-content: center;
   gap: 5px;
   flex: 0 0 auto;
-  height: 24px;
-  min-width: 26px;
-  padding: 0 6px;
-  font-size: 12px;
+  height: 28px;
+  min-width: 30px;
+  padding: 0 8px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   background: var(--bg-control);
   border: 1px solid var(--line-1);
@@ -1718,8 +1721,8 @@ body.resizing .col-resizer::after {
   align-self: flex-end;
   color: var(--text-3);
   font-family: inherit;
-  font-size: 10px;
-  line-height: 14px;
+  font-size: var(--fs-2xs);
+  line-height: 16px;
   font-variant-numeric: tabular-nums;
   user-select: none;
 }
@@ -1796,10 +1799,11 @@ body.resizing .col-resizer::after {
   gap: 5px;
   /* 有富余宽度时按比例伸展，但不超过 240px：两个标签也能填满 500px */
   flex: 1 1 auto;
-  min-width: 78px;
-  max-width: 240px;
-  padding: 0 4px 0 8px;
-  font-size: 12px;
+  min-width: 84px;
+  max-width: 260px;
+  height: 34px;
+  padding: 0 6px 0 10px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   cursor: pointer;
   border-bottom: 2px solid transparent;
@@ -1836,7 +1840,7 @@ body.resizing .col-resizer::after {
   border: none;
   border-radius: var(--r-2);
   color: var(--text-3);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -1885,28 +1889,28 @@ body.resizing .col-resizer::after {
 /* 主会话派的子智能体列在右侧：正在跑哪个工具、多久了、烧了多少，点一行跳过去。
    收起来时只剩一条竖条按钮，不占宽度。 */
 .subagent-bar {
-  flex: 0 0 28px;
-  width: 28px;
+  flex: 0 0 32px;
+  width: 32px;
   border-left: 1px solid var(--line-1);
   background: var(--bg-1);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 6px;
+  padding-top: 8px;
 }
 
 .subagent-bar-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  width: 24px;
-  padding: 4px 0;
+  gap: 5px;
+  width: 26px;
+  padding: 5px 0;
   background: transparent;
   border: none;
   border-radius: var(--r-2);
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   writing-mode: vertical-rl;
 }
@@ -1918,7 +1922,7 @@ body.resizing .col-resizer::after {
 
 .subagent-bar-icon {
   writing-mode: horizontal-tb;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .subagent-bar-count {
@@ -1929,7 +1933,7 @@ body.resizing .col-resizer::after {
   background: var(--accent-weak);
   color: var(--accent);
   font-variant-numeric: tabular-nums;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 16px;
   text-align: center;
 }
@@ -1948,19 +1952,19 @@ body.resizing .col-resizer::after {
 }
 
 .subagent-head {
-  height: 32px;
-  flex: 0 0 32px;
+  height: 40px;
+  flex: 0 0 40px;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px 0 4px;
+  padding: 0 8px 0 6px;
   border-bottom: 1px solid var(--line-1);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .subagent-head-toggle {
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1968,7 +1972,7 @@ body.resizing .col-resizer::after {
   border: none;
   border-radius: var(--r-1);
   color: var(--text-3);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   cursor: pointer;
 }
 
@@ -1985,7 +1989,7 @@ body.resizing .col-resizer::after {
 
 .subagent-head-summary {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1996,7 +2000,7 @@ body.resizing .col-resizer::after {
 .subagent-head-tokens,
 .subagent-head-cost {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex: 0 0 auto;
@@ -2005,14 +2009,14 @@ body.resizing .col-resizer::after {
 .subagent-error {
   padding: 6px 10px;
   color: var(--danger);
-  font-size: 11px;
+  font-size: 12px;
   border-bottom: 1px solid var(--line-1);
 }
 
 .subagent-empty {
   padding: 12px 12px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -2069,7 +2073,7 @@ body.resizing .col-resizer::after {
 
 .subagent-mark {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   color: var(--text-3);
 }
@@ -2093,7 +2097,7 @@ body.resizing .col-resizer::after {
 .subagent-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2105,7 +2109,7 @@ body.resizing .col-resizer::after {
   align-items: baseline;
   gap: 4px;
   padding-left: 15px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -2131,7 +2135,7 @@ body.resizing .col-resizer::after {
   align-items: baseline;
   gap: 5px;
   padding-left: 15px;
-  font-size: 11px;
+  font-size: 12px;
   min-width: 0;
   overflow: hidden;
 }
@@ -2156,8 +2160,9 @@ body.resizing .col-resizer::after {
    注意：editor.css 在 main.tsx 里比 panels.css 后加载，同优先级写 .chat-header
    会被它盖掉，看着「改了没效果」，这里必须用 #root 提优先级。 */
 #root .chat-header {
-  padding: 0 6px;
-  gap: 3px;
+  height: 40px;
+  padding: 0 8px;
+  gap: 5px;
 }
 
 /* 标签栏已经把会话名写在上面了，头部那个按钮再写一遍就是重复，
@@ -2170,5 +2175,64 @@ body.resizing .col-resizer::after {
   min-width: 0;
   max-width: none;
   flex: 0 0 auto;
-  padding: 2px 4px;
+  padding: 3px 6px;
 }
+
+/* ---------- 聊天头部：窄列按优先级折叠 ---------- */
+/* 头部一行要塞下 会话 / 模式 / 模型 / 思考 / 上下文 / 破甲 / 新会话。
+   聊天列被拖窄或分屏时，先收掉「说明性文字」，留住按钮本体：
+   否则整行会溢出面板块，直接画到编辑器或子智能体栏上（实测 360px 时溢出 119px）。
+   档位由 App.tsx 按 chatW 算好写在 .chat-pane[data-chat-tier] 上——
+   不用 @container：container-type 会给 .chat-pane 造堆叠上下文，
+   聊天里的图片灯箱（fixed, z-index 300）会被 Git 抽屉压住。 */
+#root .chat-new {
+  gap: 6px;
+}
+
+/* 档 1 及更窄（≤520）：破甲去掉「破甲」二字，思考去掉「思考：」前缀。
+   上下文百分比和模型名是常看信息，留到最窄才收。
+   注意档位是互斥的单值：2/3 必须把 1 的规则一起写上，不会自动继承。 */
+#root .chat-pane:not([data-chat-tier='0']) .purge-label,
+#root .chat-pane:not([data-chat-tier='0']) .variant-toggle-prefix {
+  display: none;
+}
+
+/* 档 2（≤460）：新会话只留「＋」，模式名限宽 */
+#root .chat-pane[data-chat-tier='2'] .chat-new-text,
+#root .chat-pane[data-chat-tier='3'] .chat-new-text {
+  display: none;
+}
+
+#root .chat-pane[data-chat-tier='2'] .mode-toggle,
+#root .chat-pane[data-chat-tier='3'] .mode-toggle {
+  max-width: 120px;
+}
+
+#root .chat-pane[data-chat-tier='2'] .chat-new,
+#root .chat-pane[data-chat-tier='3'] .chat-new {
+  padding: 0 9px;
+}
+
+/* 档 3（≤410）：进入最紧档，靠缩小点按区与间距把整行收进 360px */
+#root .chat-pane[data-chat-tier='3'] .chat-header {
+  padding: 0 6px;
+  gap: 4px;
+}
+
+#root .chat-pane[data-chat-tier='3'] .purge-state,
+#root .chat-pane[data-chat-tier='3'] .chat-context-text {
+  display: none;
+}
+
+#root .chat-pane[data-chat-tier='3'] .model-picker {
+  min-width: 48px;
+}
+
+#root .chat-pane[data-chat-tier='3'] .chat-context-bar {
+  width: 28px;
+}
+
+#root .chat-pane[data-chat-tier='3'] .chat-context-chip {
+  padding: 0 6px;
+}
+

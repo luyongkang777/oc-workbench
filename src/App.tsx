@@ -1095,7 +1095,7 @@ export default function App() {
           onPointerDown={beginResize('chat')}
         />
 
-        <aside className="chat-pane">
+        <aside className="chat-pane" data-chat-tier={chatW <= 410 ? 3 : chatW <= 460 ? 2 : chatW <= 520 ? 1 : 0}>
           <ChatTabs
             key={root}
             root={root}

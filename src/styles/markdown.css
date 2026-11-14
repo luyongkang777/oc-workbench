@@ -2,7 +2,7 @@
 .md {
   /* .chat-bubble 是 pre-wrap 的，块级渲染不能继承，否则空行会翻倍 */
   white-space: normal;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.65;
   /*
    * 用 break-word 而不是 anywhere：anywhere 的断点要参与 min-content 计算，
@@ -50,11 +50,11 @@
 }
 
 .md h3 {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .md h4 {
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .md ul,
@@ -78,7 +78,7 @@
   background: var(--bg-inset);
   color: var(--warn);
   font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 /* 代码块：行内那个 padding 要还原成整块 */
@@ -99,7 +99,7 @@
   padding: 0;
   background: transparent;
   color: var(--text-1);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.55;
   display: block;
   white-space: pre;
@@ -131,7 +131,7 @@
 .md table {
   margin: 8px 0;
   border-collapse: collapse;
-  font-size: 11.5px;
+  font-size: 12px;
   display: block;
   overflow-x: auto;
 }
@@ -155,7 +155,7 @@
   border: 1px dashed var(--line-2);
   border-radius: var(--r-2);
   color: var(--text-2);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 /* 聊天/预览里的可点文件路径：长得像链接，点了在中间栏打开 */
@@ -190,7 +190,7 @@
 /* 远程图片的「点击加载」按钮：沿用占位样式，但要是可点的按钮 */
 button.md-img {
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   background: transparent;
   cursor: pointer;
 }

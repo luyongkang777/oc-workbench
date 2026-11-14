@@ -47,8 +47,8 @@ const CODE_KINDS: { ext: string; label: string }[] = [
 
 /** 这些目录不显示，避免文件树被依赖/产物淹没 */
 const HIDDEN = new Set(['node_modules', '.git', 'dist', 'target', '.vite', '.vite-temp', '.cache'])
-/** 行高与 panels.css 的 .tree-row 保持一致。 */
-const ROW_HEIGHT = 24
+/** 行高与 panels.css 的 .tree-row 一致（改了要同步这里）。 */
+const ROW_HEIGHT = 27
 const OVERSCAN_ROWS = 10
 /** 已加载目录的轮询间隔：够快看到 agent 新写的文件，又不至于把本地服务打满。 */
 const POLL_INTERVAL_MS = 2000

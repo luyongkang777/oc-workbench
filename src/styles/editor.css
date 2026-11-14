@@ -29,12 +29,13 @@
   container-name: editor-box;
 }
 
+/* 文件信息条：大小 / 行数 / 编码 / 预览切换 */
 .editor-path {
-  height: 32px;
-  line-height: 32px;
+  height: 34px;
+  line-height: 34px;
   padding: 0 12px;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   border-bottom: 1px solid var(--line-1);
   white-space: nowrap;
   flex: 0 0 auto;
@@ -93,7 +94,7 @@
   background: var(--bg-2);
   color: var(--text-2);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -111,18 +112,16 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 26px;
+  height: 30px;
   padding: 0 12px;
   flex: 0 0 auto;
   background: var(--bg-1);
   border-bottom: 1px solid var(--line-1);
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   overflow: hidden;
   position: relative;
-  /* 右侧给缩放控件留固定位置：它是「被裁掉就没法用」的入口，不能被别的信息挤掉 */
-  padding-right: 152px;
   /* 同 .editor：允许被父容器压缩，否则 padding-right 会变成 164px 的硬最小宽度，
      窗格比它窄时工具栏就画到窗格外（穿到聊天面板上）。 */
   min-width: 0;
@@ -148,13 +147,13 @@
 }
 
 .view-zoom-btn {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   color: var(--text-3);
   background: transparent;
@@ -174,10 +173,10 @@
 }
 
 .view-zoom-value {
-  min-width: 40px;
-  height: 18px;
-  padding: 0 4px;
-  font-size: 11px;
+  min-width: 44px;
+  height: 20px;
+  padding: 0 5px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
   background: transparent;
@@ -198,10 +197,10 @@
 }
 
 .view-zoom-fit {
-  height: 18px;
-  padding: 0 8px;
+  height: 20px;
+  padding: 0 9px;
   margin-left: 2px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   background: transparent;
   border: 1px solid var(--line-2);
@@ -218,20 +217,13 @@
   flex: 1 1 auto;
 }
 
-.editor-modes {
-  display: inline-flex;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-2);
-  overflow: hidden;
-}
-
 .editor-modes button {
-  height: 20px;
-  padding: 0 10px;
+  height: 22px;
+  padding: 0 11px;
   background: transparent;
   border: none;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 
@@ -255,7 +247,7 @@
   gap: 16px;
   padding: 24px 24px 64px; /* 底部多留，让内容比几何中心高约 20px，光学居中 */
   color: var(--text-3);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.6;
   letter-spacing: 0.1px;
   text-align: center;
@@ -293,7 +285,7 @@
   border: 1px solid var(--danger-line);
   background: var(--danger-weak);
   color: var(--danger);
-  font-size: 12px;
+  font-size: 13px;
   white-space: pre-wrap;
 }
 
@@ -302,7 +294,7 @@
   margin-top: 10px;
   height: 22px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
@@ -330,7 +322,7 @@
   /* 纵向 padding 必须为 0：虚拟滚动按「行数 × 19px」算，任何 padding 都会让位置恒偏 */
   padding: 0;
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 19px;
 }
 
@@ -380,11 +372,6 @@
   color: transparent;
 }
 
-.code-failed {
-  color: var(--danger);
-}
-
-/* ---------- 会话 ---------- */
 .chat-pane {
   width: var(--chat-w);
   flex: 0 0 var(--chat-w);
@@ -401,12 +388,12 @@
 }
 
 .chat-header {
-  height: 32px;
+  height: 40px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-2);
   border-bottom: 1px solid var(--line-1);
@@ -414,7 +401,7 @@
 }
 
 .chat-badge {
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 6px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
@@ -437,9 +424,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
-  padding: 0 8px;
-  font-size: 11px;
+  height: 28px;
+  padding: 0 9px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-2);
   background: var(--bg-control);
@@ -462,8 +449,8 @@
 }
 
 .chat-context-bar {
-  width: 34px;
-  height: 4px;
+  width: 40px;
+  height: 5px;
   border-radius: 999px;
   background: var(--line-2);
   overflow: hidden;
@@ -513,7 +500,7 @@
 }
 
 .chat-context-head {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-1);
 }
@@ -523,7 +510,7 @@
   flex-wrap: wrap;
   gap: 4px 12px;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
 }
 
@@ -542,7 +529,7 @@
 /* 压缩进行中的补充说明：按钮上的秒表只说明「还在跑」，这一行说明「在做什么」 */
 .chat-context-note {
   width: 100%;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--text-3);
 }
@@ -550,7 +537,7 @@
 .chat-context-action {
   flex: 1;
   height: 24px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-1);
   background: var(--bg-control);
   border: 1px solid var(--line-2);
@@ -576,7 +563,7 @@
   padding: 8px 12px;
   background: var(--warn-weak);
   color: var(--warn);
-  font-size: 12px;
+  font-size: 13px;
   border-bottom: 1px solid var(--warn-line);
 }
 
@@ -589,7 +576,7 @@
   gap: 2px 8px;
   /* 右边留给关闭按钮：说明文字换行时按钮也不会跟着掉到第二行 */
   padding: 7px 34px 7px 12px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   border-top: 1px solid var(--line-2);
 }
@@ -614,7 +601,7 @@
 }
 
 .chat-notice-detail {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
 }
 
@@ -673,7 +660,7 @@
   gap: 6px;
   width: 100%;
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-2);
   text-align: left;
   background: none;
@@ -700,7 +687,7 @@
 
 .chat-compact-log-hint {
   flex: none;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-3);
 }
 
@@ -716,7 +703,7 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -742,7 +729,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--danger);
 }
 
@@ -750,7 +737,7 @@
   align-self: flex-start;
   margin-top: 4px;
   padding: 2px 6px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-3);
   background: none;
   border: 1px solid var(--line-2);
@@ -779,7 +766,7 @@
   gap: 6px;
   width: 100%;
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-2);
   text-align: left;
   background: none;
@@ -808,7 +795,7 @@
 
 .chat-summary-hint {
   margin-left: auto;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-3);
 }
 
@@ -817,7 +804,7 @@
   overflow: auto;
   padding: 2px 12px 10px;
   border-top: 1px solid var(--line-1);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* 压缩失败：服务端回了 200 但消息上带 error（例如 Nothing to compact yet） */
@@ -830,7 +817,7 @@
 }
 
 .chat-summary-error {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--danger);
 }
 
@@ -873,8 +860,8 @@
   position: absolute;
   right: 14px;
   bottom: 12px;
-  padding: 4px 10px;
-  font-size: 11px;
+  padding: 6px 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-2);
   background: var(--bg-2);
@@ -891,7 +878,7 @@
 
 .chat-placeholder {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.8;
   text-align: center;
 }
@@ -899,11 +886,11 @@
 .chat-input-wrap {
   position: relative;
   flex: 0 0 auto;
-  padding: 8px 10px 10px;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--line-1);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 /* 拖文件进来时整块提示一下，松手即加入附件 */
@@ -915,7 +902,7 @@
 
 .chat-input-row {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-end;
 }
 
@@ -926,7 +913,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 2px;
+  gap: 4px;
   margin: -2px 0 0;
 }
 
@@ -934,10 +921,10 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 20px;
-  padding: 0 6px;
+  height: 24px;
+  padding: 0 7px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 1;
   color: var(--text-3);
@@ -984,15 +971,17 @@
 .chat-stat-pop {
   position: absolute;
   left: 0;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 8px);
   z-index: 40;
-  width: min(368px, 86vw);
-  padding: 10px 12px;
+  width: min(420px, 100%);
+  max-height: min(60vh, 520px);
+  overflow: auto;
+  padding: 12px 14px;
   background: var(--bg-3);
   border: 1px solid var(--line-2);
   border-radius: var(--r-3);
   box-shadow: var(--shadow-2);
-  font-size: 11.5px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-2);
   text-transform: none;
@@ -1007,13 +996,13 @@
 }
 
 .chat-stat-head-title {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 
 .chat-stat-head-counts {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -1022,12 +1011,12 @@
 .chat-stat-turn {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-top: 7px;
-  padding: 5px 7px;
+  gap: 5px 14px;
+  margin-top: 8px;
+  padding: 6px 8px;
   border-radius: var(--r-2);
   background: var(--bg-control);
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -1050,9 +1039,9 @@
 }
 
 .chat-stat-section {
-  padding-bottom: 3px;
+  padding-bottom: 4px;
   border-bottom: 1px solid var(--line-1);
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   letter-spacing: 0.02em;
 }
@@ -1060,9 +1049,9 @@
 .chat-stat-rows {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  margin-top: 3px;
-  font-size: 11px;
+  gap: 2px;
+  margin-top: 4px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1077,16 +1066,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 7px;
-  padding-top: 6px;
+  margin-top: 8px;
+  padding-top: 7px;
   border-top: 1px solid var(--line-1);
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
 .chat-stat-note {
-  margin-top: 5px;
-  font-size: 10.5px;
+  margin-top: 6px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
@@ -1121,7 +1110,7 @@
 .chat-attach-name {
   padding: 2px 4px;
   color: var(--text-1);
-  font-size: 9.5px;
+  font-size: 11.5px;
   line-height: 1.3;
   text-align: center;
   word-break: break-all;
@@ -1139,25 +1128,20 @@
   background: rgba(0, 0, 0, 0.72);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 14px;
   cursor: pointer;
 }
 
-.chat-attach-remove:hover {
-  background: var(--danger-weak-hover);
-  color: var(--text-1);
-}
-
 .chat-attach-add {
   flex: 0 0 auto;
-  height: 60px;
-  padding: 0 10px;
+  height: 84px;
+  padding: 0 12px;
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -1173,30 +1157,33 @@
 
 .chat-attach-notice {
   color: var(--warn);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .chat-input {
   flex: 1;
-  height: 60px;
+  height: 84px;
   resize: none;
   background: var(--bg-0);
   border: 1px solid var(--line-2);
   color: var(--text-3);
-  padding: 8px;
+  padding: 10px 12px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-md);
+  line-height: 1.6;
   outline: none;
+  border-radius: var(--r-2);
 }
 
 .chat-send {
-  height: 28px;
-  padding: 0 14px;
+  height: 36px;
+  padding: 0 18px;
   background: var(--accent);
   color: var(--text-1);
   border: none;
-  font-size: 12px;
+  border-radius: var(--r-2);
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -1244,10 +1231,10 @@
   align-items: center;
   gap: 4px;
   max-width: 240px;
-  padding: 2px 6px;
+  padding: 3px 8px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .chat-file-chip-icon {
@@ -1293,7 +1280,7 @@
   background: var(--bg-1);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -1333,7 +1320,7 @@
   background: transparent;
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -1383,7 +1370,7 @@
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
   color: var(--text-2);
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 14px;
   white-space: nowrap;
 }
@@ -1398,7 +1385,7 @@
   border-top: 1px solid var(--line-1);
   background: var(--warn-weak);
   color: var(--warn);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .chat-slash-back {
@@ -1410,7 +1397,7 @@
   background: var(--bg-0);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -1422,13 +1409,13 @@
 .chat-slash-head {
   padding: 5px 8px 2px;
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 
 .chat-slash-empty {
   padding: 8px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* ---------- 文件标签栏（多文件同时打开） ---------- */
@@ -1437,7 +1424,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
+  height: 36px;
   padding: 0 8px;
   background: var(--bg-1);
   border-bottom: 1px solid var(--line-1);
@@ -1461,14 +1448,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 200px;
-  height: 24px;
-  padding: 0 6px 0 10px;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 7px 0 11px;
   border: 1px solid transparent;
   border-radius: 6px;
   color: var(--text-2);
-  font-size: 12px;
-  line-height: 22px;
+  font-size: var(--fs-sm);
+  line-height: 26px;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
@@ -1495,7 +1482,7 @@
 /* 未保存：文件名后面一个小圆点（关闭时会先确认） */
 .file-tab-dirty {
   flex: 0 0 auto;
-  font-size: 9px;
+  font-size: 10px;
   color: var(--accent-line);
 }
 
@@ -1532,7 +1519,7 @@
   background: transparent;
   color: var(--text-3);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 20px;
   cursor: pointer;
 }
@@ -1577,7 +1564,7 @@
   border-left: 3px solid var(--accent-line);
   background: var(--info-weak);
   color: var(--info-ink);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
@@ -1645,7 +1632,7 @@
   margin: 0;
   padding: 8px 12px;
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 18px;
   color: var(--text-1);
 }
@@ -1664,7 +1651,7 @@
   background: var(--bg-0);
   border: 1px solid var(--line-2);
   color: var(--text-1);
-  font-size: 11px;
+  font-size: 12px;
   outline: none;
 }
 
@@ -1682,7 +1669,7 @@
 .editor-jump-btn {
   height: 18px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
@@ -1698,7 +1685,7 @@
 .editor-wrap-toggle {
   height: 18px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
   background: transparent;
   border: 1px solid var(--line-2);
@@ -1757,7 +1744,7 @@
   background: var(--bg-0);
   border: 1px solid var(--line-2);
   color: var(--text-1);
-  font-size: 11px;
+  font-size: 12px;
   outline: none;
 }
 
@@ -1767,7 +1754,7 @@
 
 .editor-search-count {
   color: var(--text-2);
-  font-size: 11px;
+  font-size: 12px;
   min-width: 64px;
 }
 
@@ -1784,7 +1771,7 @@
   height: 20px;
   padding: 0;
   line-height: 18px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
@@ -1843,13 +1830,13 @@
   background: var(--bg-3);
   border-bottom: 1px solid var(--line-2);
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   white-space: nowrap;
 }
 
 .code-complete-hint {
   color: var(--text-4);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .code-complete-list {
@@ -1866,7 +1853,7 @@
   border-radius: var(--r-2);
   color: var(--text-1);
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 18px;
   cursor: pointer;
 }
@@ -1883,7 +1870,7 @@
 .code-complete-kind {
   flex: 0 0 22px;
   text-align: center;
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 14px;
   border-radius: var(--r-1);
   color: var(--text-1);
@@ -1925,7 +1912,7 @@
   white-space: nowrap;
   text-align: right;
   color: var(--text-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 
 .code-complete-item.active .code-complete-detail {
@@ -1948,7 +1935,7 @@
   height: 19px;
   line-height: 19px;
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-4);
 }
 
@@ -1965,7 +1952,7 @@
   color: var(--text-1);
   caret-color: var(--accent);
   font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 19px;
   tab-size: 2;
   white-space: pre;
@@ -1979,16 +1966,15 @@
 }
 
 .editor-action {
-  height: 20px;
-  padding: 0 10px;
-  font-size: 11px;
+  height: 22px;
+  padding: 0 11px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
   cursor: pointer;
 }
-
 .editor-action:hover:not(:disabled) {
   background: var(--bg-control-hover);
   color: var(--text-1);
@@ -2011,14 +1997,14 @@
 
 .editor-dirty {
   color: var(--warn);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* 保存成功的短提示（2 秒后消失） */
 .editor-save-note {
   flex: 0 0 auto;
   padding: 4px 12px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--success);
   background: var(--success-weak);
   border-bottom: 1px solid var(--success-line);
@@ -2037,7 +2023,7 @@
 .editor-enc {
   height: 20px;
   padding: 0 4px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-1);
   background: var(--bg-hover);
   border: 1px solid var(--line-2);
@@ -2046,7 +2032,7 @@
 
 /* 只读/可编辑提示（双击进入编辑） */
 .editor-edit-hint {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
   user-select: none;
 }
@@ -2070,9 +2056,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
-  padding: 0 8px;
-  font-size: 11px;
+  height: 28px;
+  padding: 0 9px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-2);
   background: var(--bg-control);
@@ -2097,13 +2083,13 @@
 }
 
 .purge-caret {
-  height: 22px;
-  width: 18px;
+  height: 28px;
+  width: 20px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: 11px;
   color: var(--text-3);
   background: var(--bg-control);
   border: 1px solid var(--line-1);
@@ -2173,14 +2159,14 @@
 }
 
 .purge-menu-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-1);
 }
 
 .purge-menu-sub {
   margin-top: 2px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-3);
 }
 
@@ -2227,7 +2213,7 @@
   margin-top: 8px;
   padding: 6px 8px;
   border-radius: var(--r-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   background: var(--bg-2);
   color: var(--text-2);
@@ -2250,7 +2236,7 @@
   margin-top: 6px;
   padding: 6px 8px;
   border-radius: var(--r-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--danger-soft);
   background: var(--danger-weak);
@@ -2269,7 +2255,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-2);
 }
 
@@ -2285,7 +2271,7 @@
 
 .purge-models-title {
   margin-top: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
 }
 
@@ -2308,7 +2294,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 4px 6px;
-  font-size: 11px;
+  font-size: 12px;
   border-bottom: 1px solid var(--line-1);
 }
 
@@ -2336,13 +2322,13 @@
 
 .purge-model-empty {
   padding: 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-3);
 }
 
 .purge-menu-foot {
   margin-top: 8px;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--text-4);
 }
@@ -2422,7 +2408,7 @@
 }
 
 .chat-stat-pop-mcp {
-  width: min(400px, 90vw);
+  width: min(420px, 100%);
 }
 
 .chat-stat-mcp-list {
@@ -2438,9 +2424,9 @@
 .chat-stat-mcp-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1.3fr);
-  gap: 6px;
+  gap: 7px;
   align-items: center;
-  padding: 2px 4px;
+  padding: 4px 6px;
   border-radius: var(--r-1);
 }
 
@@ -2453,12 +2439,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 
 .chat-stat-mcp-state {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
@@ -2480,7 +2466,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
@@ -2495,9 +2481,10 @@
 
 .chat-stat-refresh {
   flex: 0 0 auto;
-  padding: 2px 8px;
+  height: var(--ctl-sm);
+  padding: 0 10px;
   font-family: inherit;
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   background: var(--bg-control);
   border: 1px solid var(--line-1);

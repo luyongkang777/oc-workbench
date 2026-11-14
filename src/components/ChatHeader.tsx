@@ -356,7 +356,8 @@ export default function ChatHeader({
             disabled={!active || variantList.length === 0}
           >
             <span className="variant-toggle-text">
-              思考：{variantId ? variantLabel(variantId) : '默认'}
+              <span className="variant-toggle-prefix">思考：</span>
+              {variantId ? variantLabel(variantId) : '默认'}
             </span>
             <span className="model-toggle-caret">▾</span>
           </button>
@@ -397,7 +398,8 @@ export default function ChatHeader({
         {purge ? <PurgeToggle controller={purge} currentModel={currentModel} /> : null}
 
         <button type="button" className="chat-new" onClick={onNewSession} disabled={!connected}>
-          + 新会话
+          <span className="chat-new-plus" aria-hidden="true">＋</span>
+          <span className="chat-new-text">新会话</span>
         </button>
 
       </div>
