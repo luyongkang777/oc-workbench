@@ -800,7 +800,131 @@ fn port_of(url: &str) -> Option<String> {
 
 pub fn discover() -> Result<Backend, String> {
     // 所有错误串统一过一遍：配对链接（等同一次性凭据）不能进日志或界面。
-    discover_inner().map_err(|err| redact(&err))
+    let backend = discover_inner().map_err(|err| redact(&err))?;
+    if !needs_server_shell_probe() {
+        return Ok(backend);
+    }
+    // 外壳能跑 pwsh 不代表服务端能跑：Store/MSIX 版 pwsh 在服务进程里会解析成
+    // `C:\Program Files\WindowsApps\<包>\pwsh.EXE` 并 spawn 失败（实测 500）。
+    // 这里向服务端实测一次，失败就把 SHELL 换成系统自带的 Windows PowerShell。
+    static PROBED: std::sync::OnceLock<ServerShell> = std::sync::OnceLock::new();
+    let state = *PROBED.get_or_init(|| server_shell_state(&backend));
+    if state != ServerShell::Broken {
+        return Ok(backend);
+    }
+    if apply_server_shell_fallback() {
+        crate::append_log("[auth] 服务端起不了 store 版 pwsh，已改用 Windows PowerShell，重新连接\n");
+        return discover_inner().map_err(|err| redact(&err));
+    }
+    crate::append_log("[auth] 服务端起不了 shell，且兜底失败，按原配置继续\n");
+    Ok(backend)
+}
+
+/// 需不需要向服务端实测 shell。
+///
+/// 两个条件同时成立才探测：
+///   1. 服务配置里**没有**显式 SHELL —— 有就不动，那可能是用户自己选的
+///      cmd / bash / 便携版 pwsh，覆盖它就是违背用户意图；
+///   2. PATH 里的 pwsh 来自 WindowsApps —— 外壳能跑、服务端可能跑不了。
+///
+/// 「已经显式配了」这条同时挡住了重复重启：兜底写完 SHELL 后，下一轮
+/// discover 会直接跳过探测，不会每 5 秒再 start 一次服务。
+fn needs_server_shell_probe() -> bool {
+    if read_service_shell().is_some_and(|current| !current.trim().is_empty()) {
+        return false;
+    }
+    crate::shellprobe::pwsh_from_windows_store()
+}
+
+/// 服务端 shell 的三态判定：只有明确的「坏」才去改配置并重启服务。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ServerShell {
+    /// 服务端真能跑。
+    Ok,
+    /// 服务端明确起不来（HTTP 500，或命令 exit != 0）。
+    Broken,
+    /// 探测本身没成（网络/超时/格式变化）：保守不动。
+    Unknown,
+}
+
+/// 让服务端真跑一条 `exit 0`，看它到底能不能起 shell。
+///
+/// 起不来时 `/api/shell` 直接回 500（实测 `failed to spawn ... pwsh.EXE`）；
+/// 网络抖动、超时、响应格式变化都归 Unknown，避免误改配置把服务重启一遍。
+fn server_shell_state(backend: &Backend) -> ServerShell {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(10))
+        .build();
+    let body = serde_json::json!({
+        "command": "exit 0",
+        "cwd": std::env::temp_dir().to_string_lossy(),
+    })
+    .to_string();
+    let resp = match agent
+        .post(&format!("{}/api/shell", backend.base))
+        .set("cookie", &backend.cookie)
+        .set("content-type", "application/json")
+        .send_string(&body)
+    {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(code, _)) if code >= 500 => return ServerShell::Broken,
+        Err(_) => return ServerShell::Unknown,
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&resp.into_string().unwrap_or_default())
+    else {
+        return ServerShell::Unknown;
+    };
+    let Some(id) = value["data"]["id"].as_str().map(str::to_string) else {
+        return ServerShell::Unknown;
+    };
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        thread::sleep(Duration::from_millis(150));
+        let url = format!("{}/api/shell/{id}", backend.base);
+        let Ok(resp) = agent.get(&url).set("cookie", &backend.cookie).call() else {
+            return ServerShell::Unknown;
+        };
+        let text = resp.into_string().unwrap_or_default();
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            let status = value["data"]["status"].as_str().unwrap_or_default();
+            if !status.is_empty() && status != "running" {
+                return if value["data"]["exit"].as_i64() == Some(0) {
+                    ServerShell::Ok
+                } else {
+                    ServerShell::Broken
+                };
+            }
+        }
+        if Instant::now() >= deadline {
+            return ServerShell::Unknown;
+        }
+    }
+}
+
+/// 把 SHELL 写进服务配置并重启；成功返回 true。
+///
+/// `service set env` 自己会先停服务，所以写完必须重新 start 一次。
+fn apply_server_shell_fallback() -> bool {
+    let Some(powershell) = crate::shellprobe::powershell_path() else {
+        return false;
+    };
+    let value = powershell.to_string_lossy().into_owned();
+    let Some(_guard) = RestartClaim::acquire() else {
+        crate::append_log("[auth] 另一个实例正在调整服务配置，跳过本次兜底\n");
+        return false;
+    };
+    crate::append_log(&format!("[auth] 服务端起不了 store 版 pwsh，改用：{value}\n"));
+    if run_inner(
+        &["service", "set", "env", "SHELL", &value],
+        SERVICE_CONFIG_TIMEOUT,
+    )
+    .is_err()
+    {
+        return false;
+    }
+    let _ = write_shell_marker(&value);
+    let _ = run_start(&["service", "start"], SERVICE_START_TIMEOUT);
+    true
 }
 
 /// opencode 服务的 `SHELL` 现状与目标：`Some(要设的值)` / `None(该清掉)`。
@@ -1236,6 +1360,78 @@ mod restart_tests {
 }
 
 
+
+#[cfg(test)]
+mod server_shell_probe_tests {
+    use super::*;
+
+    /// 起一个只会按固定脚本应答的假服务端，模拟 /api/shell。
+    fn fake_server(
+        post_status: u16,
+        post_body: &'static str,
+        get_body: &'static str,
+    ) -> String {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("起假服务");
+        let port = server.server_addr().to_ip().expect("拿到端口").port();
+        std::thread::spawn(move || {
+            for _ in 0..6 {
+                let Ok(request) = server.recv() else { break };
+                let is_post = request.url() == "/api/shell";
+                let (status, body) = if is_post {
+                    (post_status, post_body)
+                } else {
+                    (200, get_body)
+                };
+                let response = tiny_http::Response::from_string(body).with_status_code(status);
+                let _ = request.respond(response);
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    fn backend(base: String) -> Backend {
+        Backend {
+            base,
+            cookie: "opencode_session_1=x".to_string(),
+        }
+    }
+
+    /// 服务端 500（实测 failed to spawn pwsh.EXE 就是这条）必须判坏。
+    #[test]
+    fn http_500_is_broken() {
+        let base = fake_server(500, "boom", "{}");
+        assert_eq!(server_shell_state(&backend(base)), ServerShell::Broken);
+    }
+
+    /// 正常返回 + 最终 exit 0：判好，不应该去改配置。
+    #[test]
+    fn exit_zero_is_healthy() {
+        let base = fake_server(
+            200,
+            r#"{"data":{"id":"sh_1","status":"running"}}"#,
+            r#"{"data":{"id":"sh_1","status":"exited","exit":0}}"#,
+        );
+        assert_eq!(server_shell_state(&backend(base)), ServerShell::Ok);
+    }
+
+    /// 能起来但命令失败（exit != 0）：同样算坏，要走兜底。
+    #[test]
+    fn non_zero_exit_is_broken() {
+        let base = fake_server(
+            200,
+            r#"{"data":{"id":"sh_1","status":"running"}}"#,
+            r#"{"data":{"id":"sh_1","status":"exited","exit":1}}"#,
+        );
+        assert_eq!(server_shell_state(&backend(base)), ServerShell::Broken);
+    }
+
+    /// 响应里没有 id（格式变了/被中间件拦了）：保守判 Unknown，不乱动。
+    #[test]
+    fn missing_id_is_unknown() {
+        let base = fake_server(200, "not json", "{}");
+        assert_eq!(server_shell_state(&backend(base)), ServerShell::Unknown);
+    }
+}
 
 #[cfg(test)]
 mod shell_plan_tests {

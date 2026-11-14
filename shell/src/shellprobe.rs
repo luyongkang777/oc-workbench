@@ -71,7 +71,7 @@ fn decide(
 }
 
 /// `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`，存在才返回。
-fn powershell_path() -> Option<PathBuf> {
+pub(crate) fn powershell_path() -> Option<PathBuf> {
     let root = std::env::var_os("SystemRoot")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
@@ -84,6 +84,25 @@ fn powershell_path() -> Option<PathBuf> {
     exe.is_file().then_some(exe)
 }
 
+
+/// 路径是否落在 WindowsApps 下（Store/MSIX 安装的应用）。
+fn is_store_path(path: &Path) -> bool {
+    path.to_string_lossy()
+        .to_ascii_lowercase()
+        .contains("\\windowsapps\\")
+}
+
+/// PATH 里的 pwsh 是否来自 WindowsApps（Store/MSIX 安装）。
+///
+/// 这类 pwsh 在**外壳进程**里用短别名能跑，但 opencode 服务进程会把它解析成
+/// `C:\Program Files\WindowsApps\<包名>\pwsh.EXE` 再 spawn，实测直接失败：
+/// `failed to spawn ... pwsh.EXE: OS Error -1073283067` —— 包目录 ACL 只放
+/// 交互式登录用户，后台服务进程没有这个身份。
+///
+/// 所以「外壳探针跑通」不等于「服务端能用」，需要再实测一次（见 auth::discover）。
+pub fn pwsh_from_windows_store() -> bool {
+    find_pwsh().is_some_and(|path| is_store_path(&path))
+}
 
 /// 按 PATH 找 `pwsh.exe`。
 fn find_pwsh() -> Option<PathBuf> {
@@ -218,6 +237,19 @@ mod tests {
         assert!(!probe_runs(&as_dir), "同名目录必须判死");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// WindowsApps 判定只看路径片段，不受大小写影响。
+    #[test]
+    fn store_path_detection() {
+        assert!(is_store_path(&p(
+            r"C:\Users\a\AppData\Local\Microsoft\WindowsApps\pwsh.exe"
+        )));
+        assert!(is_store_path(&p(
+            r"C:\Program Files\WindowsApps\Microsoft.PowerShell_7.7.0.0_x64__8wekyb3d8bbwe\pwsh.EXE"
+        )));
+        assert!(!is_store_path(&p(r"C:\Program Files\PowerShell\7\pwsh.exe")));
+        assert!(!is_store_path(&p(r"C:\Windows\System32\cmd.exe")));
     }
 
     /// 探针必须能正确判活真实的 powershell.exe（证明确实是「实测」而不是总判死）。
