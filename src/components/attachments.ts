@@ -255,3 +255,52 @@ export function messageFilePreview(file: MessageFile): string | null {
 export function releaseAttachment(attachment: ChatAttachment): void {
   if (attachment.previewUrl.startsWith('blob:')) URL.revokeObjectURL(attachment.previewUrl)
 }
+
+/** base64 → 独立的 blob URL（输入框预览用；别复用消息里那份缓存，卸载时会互相 revoke）。 */
+function blobUrlFromBase64(data: string, mime: string): string {
+  try {
+    const binary = atob(data)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+    return URL.createObjectURL(new Blob([bytes], { type: mime }))
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 服务端消息里的附件 → 可再次发送的输入框附件。
+ *
+ * 回撤一条带图片的提问时，把附件一起放回输入框，用户改完文字直接重发即可，
+ * 不用再去磁盘上找一遍原图。超过上限的附件跳过（输入框本来也不收）。
+ */
+export function messageFilesToAttachments(files: MessageFile[]): ChatAttachment[] {
+  const out: ChatAttachment[] = []
+  files.forEach((file, index) => {
+    if (out.length >= MAX_ATTACHMENTS) return
+    const mime = file.mime || guessMime(file.name ?? '')
+    const fromUri = file.uri ?? file.source?.uri ?? ''
+    const dataUrl = file.data
+      ? `data:${mime};base64,${file.data}`
+      : /^data:/i.test(fromUri)
+        ? fromUri
+        : ''
+    if (!dataUrl) return
+    const bytes = dataUrlBytes(dataUrl)
+    if (bytes <= 0 || bytes > MAX_SINGLE_BYTES) return
+  out.push({
+    // 带上模块级序号：同一毫秒回撤两次不会撞 key（撞了会漏 release 前一批 blob）
+    id: `att-revert-${Date.now()}-${++attachmentSeq}`,
+    name: file.name || `附件${index + 1}`,
+    mime,
+    dataUrl,
+    bytes,
+    // 图片优先用独立的 blob URL；建不出来（或服务端只回了 uri）就用 data URL，
+    // 否则 <img src=""> 会留一张空缩略图。
+    previewUrl: isImageMime(mime)
+      ? (file.data ? blobUrlFromBase64(file.data, mime) : '') || dataUrl
+      : '',
+  })
+  })
+  return out
+}

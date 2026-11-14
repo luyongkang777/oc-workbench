@@ -32,6 +32,7 @@ import { useChatRunning } from '../hooks/useChatRunning'
 import { useMcpServers } from '../hooks/useMcpServers'
 import {
   filesToAttachments,
+  messageFilesToAttachments,
   planAttachments,
   releaseAttachment,
   MAX_RAW_BYTES,
@@ -51,6 +52,8 @@ import { clearDraft, loadDraft, saveDraft, type StoredDraft } from '../api/draft
 import { pageVisible } from '../api/visibility'
 import {
   cancelForm,
+  clearRevert,
+  commitRevert,
   compactSession,
   createSession,
   firstUserText,
@@ -71,16 +74,20 @@ import {
   replyForm,
   runSessionCommand,
   sendPrompt,
+  stageRevert,
   switchAgent,
   titleFromText,
   type AgentInfo,
   type ChatMessage,
   type CommandInfo,
   type FormInfo,
+  type MessageFile,
   type ModelInfo,
   type PromptFile,
   type SessionInfo,
+  type SessionRevert,
 } from '../api/chat'
+import { joinRevertedDraft, revertNoticeText, sliceAtRevert } from './revert'
 
 type Props = {
   root: string
@@ -130,6 +137,8 @@ type ChatNotice = {
   tone: 'info' | 'ok' | 'fail'
   text: string
   detail?: string
+  /** 提示条上的操作按钮（回撤后的「取消回撤」用它） */
+  action?: { label: string; onClick: () => void }
 }
 
 /** 首次进入会话先拉几页（每页 200 条），剩下的往上滚时续拉。 */
@@ -185,6 +194,13 @@ export default function Chat({
   const [notice, setNotice] = useState<ChatNotice | null>(null)
   // 本会话历次压缩（本地留存）：压缩重写历史后，这是唯一能回看「压过几次」的东西
   const [compactLog, setCompactLog] = useState<CompactRecord[]>([])
+  /**
+   * 当前会话暂存的回撤边界（服务端 session.revert）。
+   *
+   * stage 只做标记、消息还在库里，所以这里一旦有值，渲染时要从 messageID 处截断，
+   * 否则点了「回撤」界面上看不出任何变化。清空（clear）就恢复全部消息。
+   */
+  const [revert, setRevert] = useState<SessionRevert | null>(null)
 
   const currentRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -714,6 +730,127 @@ export default function Chat({
 
   useChatEvents(connected, currentID, refreshSession, applyStream)
 
+  const busyRef = useRef(busy)
+  busyRef.current = busy
+  const runningRef = useRef(runningApi.running)
+  runningRef.current = runningApi.running
+  const revertRef = useRef<SessionRevert | null>(revert)
+  revertRef.current = revert
+
+  /** 回撤期间显示的消息：把边界及其之后的内容藏起来（服务端 stage 不删消息）。 */
+  const shownMessages = useMemo(
+    () => sliceAtRevert(messages, revert?.messageID),
+    [messages, revert],
+  )
+
+  /** 取消回撤：服务端什么都不删，消息恢复显示。 */
+  const cancelRevert = useCallback(async () => {
+    const sessionID = currentRef.current
+    if (!sessionID || !revertRef.current) return
+    try {
+      await clearRevert(sessionID)
+      if (currentRef.current !== sessionID) return
+      setRevert(null)
+      setNotice(null)
+      await reloadMessages(sessionID)
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }, [reloadMessages])
+
+  /**
+   * 切换会话时把服务端的回撤边界读回来。
+   *
+   * 回撤后关掉工作台、或切到别的会话再切回来，服务端还留着一个没落地的 revert：
+   * 界面必须继续按边界截断，并给出「取消回撤」的提示，否则用户会以为消息凭空丢了；
+   * 更糟的是下一条消息一发，服务端会静默提交这次回撤。
+   */
+  useEffect(() => {
+    if (!connected || !currentID) {
+      setRevert(null)
+      return
+    }
+    // 请求回来之前先清掉旧会话的边界，免得拿上一条会话的状态去裁剪新会话
+    setRevert(null)
+    let alive = true
+    void getSession(currentID)
+      .then((session) => {
+        if (!alive || currentRef.current !== currentID) return
+        const value = session.revert
+        if (value?.messageID) {
+          setRevert(value)
+          setNotice({
+            tone: 'info',
+            text: revertNoticeText(),
+            detail: '上次的回撤还没发送；点「取消回撤」可以恢复这些消息',
+            action: { label: '取消回撤', onClick: () => void cancelRevert() },
+          })
+        } else {
+          setRevert(null)
+          // 上一条会话的回撤提示别跟过来；压缩提示（没有 action）保留
+          setNotice((prev) => (prev?.action ? null : prev))
+        }
+      })
+      .catch((err) => {
+        // 读不到不能当成「没有回撤」：服务端可能还留着边界，发下一条消息时会被
+        // 静默提交。这里至少让用户看到这次读取失败了。
+        if (alive && currentRef.current === currentID) {
+          setError(`读取会话状态失败（可能还有没发送的回撤）：${(err as Error).message}`)
+        }
+      })
+    return () => {
+      alive = false
+    }
+  }, [connected, currentID, cancelRevert])
+
+
+  /**
+   * 回撤到某条用户消息：stage 一个可撤销的边界，原文和附件放回输入框。
+   *
+   * 真正删除发生在下一次发送（send() 里先 commit），所以这一步怎么点都能反悔。
+   * withFiles=true 时连这条消息之后的文件改动一起还原（服务端快照）。
+   */
+  const revertTo = useCallback(
+    async (messageID: string, text: string, files: MessageFile[], withFiles: boolean) => {
+      const sessionID = currentRef.current
+      if (!sessionID) return
+      if (busyRef.current || runningRef.current) {
+        setError('正在生成回复，先停止再回撤')
+        return
+      }
+      try {
+        const staged = await stageRevert(sessionID, messageID, withFiles)
+        if (currentRef.current !== sessionID) return
+        setRevert(staged)
+        setError(null)
+        setDraft((prev) => joinRevertedDraft(text, prev))
+        const restored = messageFilesToAttachments(files)
+        // 输入框已经有附件时不硬塞（会超上限），这一次只回填文字。
+        // 释放 blob 是副作用，必须写在 updater 外面：StrictMode 会把 updater 跑两遍，
+        // 而且 updater 可能被并发渲染丢弃，提前 revoke 会把还在用的预览图弄坏。
+        if (restored.length > 0) {
+          if (attachmentsRef.current.length > 0) {
+            restored.forEach(releaseAttachment)
+          } else {
+            setAttachments((prev) => (prev.length > 0 ? prev : restored))
+          }
+        }
+        setNotice({
+          tone: 'info',
+          text: revertNoticeText(),
+          detail: withFiles
+            ? '这条消息之后的文件改动也还原了；发送后才会真正删掉这些消息'
+            : '文件没有改动；发送后才会真正删掉这些消息',
+          action: { label: '取消回撤', onClick: () => void cancelRevert() },
+        })
+      } catch (err) {
+        setError((err as Error).message)
+      }
+    },
+    [cancelRevert],
+  )
+
+
   /**
    * 距底部多少像素以内算「贴底」。
    *
@@ -1066,6 +1203,24 @@ export default function Chat({
     setAttachments((prev) => prev.filter((item) => item.id !== id))
   }
 
+  /**
+   * 发送前把暂存的回撤落地。
+   *
+   * 服务端收到新消息时也会自动 commit，这里显式做一次：提交完立刻整包重拉，
+   * 界面变干净；commit 失败（例如会话忙）就直接报错、不发这条消息。
+   *
+   * 重拉必须在这里做、不能指望「发送成功之后的 reloadMessages」：
+   * 那条路径只拉最新一页（200 条），发送失败时更是连一次都不会跑 ——
+   * 旧实现先把 messages 清空，一失败聊天区就永久空白，连往上翻都翻不回来。
+   */
+  async function applyPendingRevert(sessionID: string) {
+    if (!revertRef.current) return
+    await commitRevert(sessionID)
+    if (currentRef.current !== sessionID) return
+    setRevert(null)
+    await loadSession(sessionID)
+  }
+
   async function send() {
     const text = draft.trim()
     const files = attachments
@@ -1103,6 +1258,7 @@ export default function Chat({
         setDraft('')
         setBusy(true)
         try {
+          await applyPendingRevert(sessionID)
           await runSessionCommand(sessionID, command.name, parsed.args)
           runningApi.start(sessionID)
           await reloadMessages(sessionID)
@@ -1119,6 +1275,7 @@ export default function Chat({
     if (!sessionID) return
     setBusy(true)
     try {
+      await applyPendingRevert(sessionID)
       // 只发 uri：source 里再带一份同样的 data URL 会把请求体翻倍，
       // 外壳 10MB 上限下 4MB 以上的非图片附件必被 413 拒
       const promptFiles: PromptFile[] = files.map((file) => ({
@@ -1384,17 +1541,23 @@ export default function Chat({
 
       <div className="chat-body-wrap">
         <div className="chat-body" ref={scrollRef} onScroll={onBodyScroll}>
-          {messages.length === 0 ? (
+          {shownMessages.length === 0 ? (
             <div className="chat-placeholder">
-              {connected ? '还没有消息，直接在下面输入' : '等待后端连接…'}
+              {!connected
+                ? '等待后端连接…'
+                : revert
+                  ? '已回撤到这条消息，改完在下面重新发送'
+                  : '还没有消息，直接在下面输入'}
             </div>
           ) : (
             <MessageList
-              messages={messages}
+              messages={shownMessages}
               running={runningApi.running}
               root={root}
               onOpenFile={onOpenFile}
               scrollRef={scrollRef}
+              onRevert={revertTo}
+              revertDisabled={Boolean(revert)}
             />
           )}
           {/* 压缩记录放在消息流末尾：历史被重写之后，这里还能看到压过几次、各是多大 */}
@@ -1408,7 +1571,7 @@ export default function Chat({
             }}
           />
         </div>
-        {messages.length > 0 && !atBottom ? (
+        {shownMessages.length > 0 && !atBottom ? (
           <button type="button" className="chat-jump" onClick={jumpToBottom} title="跳到最新一条">
             ↓ 回到最新
           </button>
@@ -1417,9 +1580,16 @@ export default function Chat({
 
       {notice ? (
         <div className={`chat-notice ${notice.tone}`} role="status" aria-live="polite">
-          {notice.tone === 'info' ? <span className="chat-notice-spin" aria-hidden /> : null}
+          {notice.tone === 'info' && !notice.action ? (
+            <span className="chat-notice-spin" aria-hidden />
+          ) : null}
           <span className="chat-notice-text">{notice.text}</span>
           {notice.detail ? <span className="chat-notice-detail">{notice.detail}</span> : null}
+          {notice.action ? (
+            <button type="button" className="chat-notice-action" onClick={notice.action.onClick}>
+              {notice.action.label}
+            </button>
+          ) : null}
           <button
             type="button"
             className="chat-notice-close"

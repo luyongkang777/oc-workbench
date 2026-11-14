@@ -1,5 +1,20 @@
 /** 会话与事件流（T5）。认证 token 从 window.__OC_TOKEN 读，和 client.ts 一致。 */
 
+/**
+ * 会话上暂存的回滚边界（服务端 session.revert）。
+ *
+ * stage 只是「标记从哪条消息开始回撤」，消息还在库里、可以 clear 取消；
+ * commit 才真正删掉这条及其之后的消息。工作台用 stage 做「回撤预览」，
+ * 用户改完重新发送时由服务端（或我们显式 commit）落地。
+ */
+export type SessionRevert = {
+  messageID: string
+  partID?: string
+  snapshot?: string
+  /** 回滚涉及的文件差异（stage 时传 files=true 才有） */
+  files?: { path?: string; status?: string }[]
+}
+
 export type SessionInfo = {
   id: string
   title?: string
@@ -16,6 +31,8 @@ export type SessionInfo = {
   cost?: number
   /** 上一轮结束时的结局；还在跑时没有 */
   outcome?: 'succeeded' | 'failed' | 'interrupted'
+  /** 有值说明这个会话暂存了一次回撤（消息列表应从 messageID 处截断显示） */
+  revert?: SessionRevert
 }
 
 /**
@@ -571,6 +588,44 @@ export async function compactSession(sessionID: string): Promise<void> {
     method: 'POST',
     body: JSON.stringify({}),
   })
+}
+
+/**
+ * 暂存一次回撤：把 messageID 这条消息（含它之后的所有消息）标成「待回滚」。
+ *
+ * 只标记、不删除——服务端保留原消息，可以 clear 取消，适合做「回撤预览」。
+ * 返回内容里的 messageID / files 说明边界落在哪、动到了哪些文件。
+ *
+ * files 传 true 时连这条消息之后产生的文件改动一起还原（快照回滚）；
+ * 不传或 false 只回撤消息，不动磁盘上的文件。
+ */
+export async function stageRevert(
+  sessionID: string,
+  messageID: string,
+  files?: boolean,
+): Promise<SessionRevert> {
+  const body: { messageID: string; files?: boolean } = { messageID }
+  if (files !== undefined) body.files = files
+  const data = await call<{ data?: SessionRevert }>(
+    `/api/session/${encodeURIComponent(sessionID)}/revert/stage`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+  const revert = data?.data
+  if (!revert?.messageID) throw new Error('回撤失败：响应里没有边界消息')
+  return revert
+}
+
+/** 提交暂存的回撤：真正删掉边界消息及其之后的内容。不可恢复。 */
+export async function commitRevert(sessionID: string): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}/revert/commit`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
+/** 取消暂存的回撤：消息恢复显示，什么都没删。 */
+export async function clearRevert(sessionID: string): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}/revert`, { method: 'DELETE' })
 }
 
 /** 发一条用户消息；返回后内容会通过 SSE 陆续推过来。files 是图片/文件附件。 */

@@ -963,7 +963,18 @@ fn shell_plan() -> Option<ShellPlan> {
         }
     }
 
-    plan_shell(marker.as_deref(), current.as_deref(), desired.as_deref())
+    let plan = plan_shell(marker.as_deref(), current.as_deref(), desired.as_deref());
+
+    // Store/MSIX 版 pwsh：外壳进程用短别名能跑（所以 desired 是 None），但服务进程
+    // 解析成 WindowsApps 包目录里的 exe 会 spawn 失败（见 auth::discover 的服务端实测）。
+    // 这种情况不能按「pwsh 好了」把兜底撤掉：撤了服务端立刻又坏，下一轮 discover
+    // 再设回来，等于每次启动白停两次服务。等用户换掉这份 pwsh 再恢复。
+    if matches!(plan, Some(ShellPlan::Clear)) && crate::shellprobe::pwsh_from_windows_store() {
+        crate::append_log("[auth] PATH 里的 pwsh 来自 WindowsApps，保留上一轮的 shell 兜底\n");
+        return None;
+    }
+
+    plan
 }
 
 /// 纯决策：`marker` 是我们上次写进服务配置的值，`current` 是现在的值，`desired` 是探针结论。

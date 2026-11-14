@@ -231,12 +231,23 @@ const TurnView = memo(
     onOpenFile,
     onOpenMenu,
     onOpenImage,
+    onRevert,
+    revertDisabled,
+    confirmOpen,
+    onToggleConfirm,
   }: {
     turn: Turn
     root?: string
     onOpenFile?: OpenFile
     onOpenMenu: (e: ReactMouseEvent, text: string) => void
     onOpenImage: (image: { url: string; name: string }) => void
+    /** 回撤这一轮的用户提问；withFiles=true 时连文件改动一起还原 */
+    onRevert?: (messageID: string, text: string, files: MessageFile[], withFiles: boolean) => void
+    /** 生成中 / 已经在回撤状态：按钮不可用 */
+    revertDisabled?: boolean
+    /** 这条的二次确认是否展开（由列表统一管，保证同一时间只开一个） */
+    confirmOpen?: boolean
+    onToggleConfirm?: (messageID: string) => void
   }) {
     const stamp = turnTimeLabel(turn)
     const startTitle = turn.startedAt === undefined ? '' : `提问时间 ${formatDateTime(turn.startedAt)}`
@@ -252,10 +263,50 @@ const TurnView = memo(
               </div>
               {turn.user ? <CopyButton text={turn.user} title="复制这条提问" /> : null}
             </div>
-            {stamp?.start ? (
-              <span className="chat-stamp" title={startTitle}>
-                {stamp.start} 提问
-              </span>
+            <div className="chat-msg-meta">
+              {onRevert ? (
+                <button
+                  type="button"
+                  className="chat-revert"
+                  disabled={revertDisabled}
+                  title={revertDisabled ? '正在生成或已回撤，暂时不能操作' : '回撤到这条消息，改完再发'}
+                  onClick={() => onToggleConfirm?.(turn.id)}
+                >
+                  回撤
+                </button>
+              ) : null}
+            </div>
+            {confirmOpen && onRevert ? (
+              <div className="chat-revert-confirm">
+                <span className="chat-revert-ask">回撤到这条？</span>
+                <button
+                  type="button"
+                  className="chat-revert-do"
+                  onClick={() => {
+                    onToggleConfirm?.(turn.id)
+                    onRevert(turn.id, turn.user ?? '', turn.files, true)
+                  }}
+                >
+                  消息和文件
+                </button>
+                <button
+                  type="button"
+                  className="chat-revert-do"
+                  onClick={() => {
+                    onToggleConfirm?.(turn.id)
+                    onRevert(turn.id, turn.user ?? '', turn.files, false)
+                  }}
+                >
+                  只回撤消息
+                </button>
+                <button
+                  type="button"
+                  className="chat-revert-cancel"
+                  onClick={() => onToggleConfirm?.(turn.id)}
+                >
+                  取消
+                </button>
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -305,6 +356,10 @@ const TurnView = memo(
     a.onOpenFile === b.onOpenFile &&
     a.onOpenMenu === b.onOpenMenu &&
     a.onOpenImage === b.onOpenImage &&
+    a.onRevert === b.onRevert &&
+    a.revertDisabled === b.revertDisabled &&
+    a.confirmOpen === b.confirmOpen &&
+    a.onToggleConfirm === b.onToggleConfirm &&
     sameTurn(a.turn, b.turn),
 )
 
@@ -424,6 +479,8 @@ export default memo(function MessageList({
   root,
   onOpenFile,
   scrollRef,
+  onRevert,
+  revertDisabled,
 }: {
   messages: ChatMessage[]
   running?: boolean
@@ -433,6 +490,10 @@ export default memo(function MessageList({
   onOpenFile?: OpenFile
   /** 外层滚动容器：窗口化要靠它读视口位置 */
   scrollRef?: RefObject<HTMLDivElement | null>
+  /** 回撤某条用户消息（不传就不显示回撤按钮） */
+  onRevert?: (messageID: string, text: string, files: MessageFile[], withFiles: boolean) => void
+  /** 生成中 / 已处于回撤状态：回撤按钮禁用 */
+  revertDisabled?: boolean
 }) {
   // 增量重算：流式时只有最后那一轮会重建，历史几百轮的 Turn 对象直接复用。
   // 心跳等「messages 引用没变」的重渲染连这一步都跳过。
@@ -494,6 +555,13 @@ export default memo(function MessageList({
     })
   }, [])
 
+  // 二次确认同一时间只开一个：先点 A 的「回撤」再点 B 的，A 自动收起。
+  // 否则两个确认都能展开、先后各点一次会把边界 stage 两次，原文也会重复追加进输入框。
+  const [confirmID, setConfirmID] = useState<string | null>(null)
+  const toggleConfirm = useCallback((messageID: string) => {
+    setConfirmID((prev) => (prev === messageID ? null : messageID))
+  }, [])
+
   async function copyFromMenu() {
     if (!menu) return
     const ok = await copyText(menu.text)
@@ -523,6 +591,10 @@ export default memo(function MessageList({
             onOpenFile={onOpenFile}
             onOpenMenu={openMenu}
             onOpenImage={setLightbox}
+            onRevert={onRevert}
+            revertDisabled={revertDisabled || running}
+            confirmOpen={confirmID === turn.id}
+            onToggleConfirm={toggleConfirm}
           />
         ))}
         {win.bottomPad > 0 ? (

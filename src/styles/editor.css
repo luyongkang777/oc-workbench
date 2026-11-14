@@ -646,6 +646,26 @@
   opacity: 1;
   background: var(--bg-hover);
 }
+/* 状态条上的操作按钮（回撤后的「取消回撤」） */
+.chat-notice-action {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-2);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.chat-notice-action:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+}
 
 /* 压缩记录：历史被重写之后，唯一还能说明「这里发生过什么」的东西。默认收起。 */
 .chat-compact-log {
