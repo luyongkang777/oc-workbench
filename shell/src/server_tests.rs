@@ -23,6 +23,7 @@ fn start_test_server(base: Option<String>, token: &str) -> u16 {
         backend: Arc::new(RwLock::new(backend)),
         token: token.to_string(),
         port: 0,
+        base: String::new(),
         last_error: Arc::new(Mutex::new(None)),
     })
     .expect("本地服务应能启动")
@@ -34,6 +35,7 @@ fn start_test_server_with_error(token: &str, error: Option<&str>) -> u16 {
         backend: Arc::new(RwLock::new(None)),
         token: token.to_string(),
         port: 0,
+        base: String::new(),
         last_error: Arc::new(Mutex::new(error.map(|text| text.to_string()))),
     })
     .expect("本地服务应能启动")
@@ -457,4 +459,192 @@ fn upstream_alive_distinguishes_dead_port_from_live_one() {
     // 没有连接时谈不到探活：直接判死（调用方会去重新 discover）
     let empty: Arc<RwLock<Option<Backend>>> = Arc::new(RwLock::new(None));
     assert!(!super::upstream_alive(&base, &empty), "没有 cookie 时判死");
+}
+
+/// T2：`Ctx.port` 非 0 时必须沿用该端口，隧道目标才不会漂移。
+#[test]
+fn fixed_port_is_used_when_free() {
+    // 先探测一个空闲端口，再释放给 start 用（探测与绑定之间有小竞态，概率可接受）。
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("探测空闲端口");
+    let port = probe.local_addr().expect("取端口").port();
+    drop(probe);
+
+    let actual = start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: "t".to_string(),
+        port,
+        base: String::new(),
+        last_error: Arc::new(Mutex::new(None)),
+    })
+    .expect("固定端口应能启动");
+    assert_eq!(actual, port, "固定端口必须被沿用");
+}
+
+/// T2：端口被占时必须报错退出，不能静默换端口——隧道会指向没人监听的地址，
+/// 排查时只剩「502」这一个线索。
+#[test]
+fn fixed_port_in_use_reports_error() {
+    let holder = std::net::TcpListener::bind("127.0.0.1:0").expect("占住端口");
+    let port = holder.local_addr().expect("取端口").port();
+
+    let result = start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: "t".to_string(),
+        port,
+        base: String::new(),
+        last_error: Arc::new(Mutex::new(None)),
+    });
+    assert!(result.is_err(), "端口被占时必须报错，不能静默换端口");
+    drop(holder);
+}
+
+/// T3：设了前缀后，根路径不许暴露界面，也不能误匹配同前缀的其它实例。
+#[test]
+fn base_prefix_filters_paths() {
+    let port = start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: "unit-test-token".to_string(),
+        port: 0,
+        base: "/u/abc".to_string(),
+        last_error: Arc::new(Mutex::new(None)),
+    })
+    .expect("本地服务应能启动");
+    let host = format!("127.0.0.1:{port}");
+
+    let root = raw_get(port, &host, "/");
+    assert!(root.starts_with("HTTP/1.1 404"), "设了前缀时根路径必须 404: {root}");
+
+    let neighbour = raw_get(port, &host, "/u/abcd/");
+    assert!(
+        neighbour.starts_with("HTTP/1.1 404"),
+        "不能误匹配同前缀的其它实例: {neighbour}"
+    );
+
+    let bare = raw_get(port, &host, "/u/abc");
+    assert!(bare.starts_with("HTTP/1.1 302"), "不带尾斜杠应跳转一次: {bare}");
+
+    let index = raw_get(port, &host, "/u/abc/");
+    assert!(index.starts_with("HTTP/1.1 200"), "前缀下应能拿到页面: {index}");
+}
+
+/// T3：不设前缀时保持原行为（回归）。
+#[test]
+fn empty_base_keeps_old_behaviour() {
+    let port = start_test_server(None, "unit-test-token");
+    let host = format!("127.0.0.1:{port}");
+    let index = raw_get(port, &host, "/");
+    assert!(index.starts_with("HTTP/1.1 200"), "不设前缀时根路径应 200: {index}");
+}
+
+/// 从响应里取出 `oc_sess=...` 这一对，模拟浏览器保存 cookie。
+fn cookie_from_response(resp: &str) -> Option<String> {
+    for line in resp.lines() {
+        let lower = line.to_ascii_lowercase();
+        let Some(rest) = lower.strip_prefix("set-cookie:") else {
+            continue;
+        };
+        let value = line[line.len() - rest.len()..].trim();
+        let pair = value.split(';').next()?.trim();
+        if pair.starts_with("oc_sess=") {
+            return Some(pair.to_string());
+        }
+    }
+    None
+}
+
+/// T6：入口 `?t=` 换 cookie 的完整链路。
+#[test]
+fn entry_token_sets_cookie_and_cookie_works() {
+    let port = start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: "unit-test-token".to_string(),
+        port: 0,
+        base: "/u/abc".to_string(),
+        last_error: Arc::new(Mutex::new(None)),
+    })
+    .expect("本地服务应能启动");
+    let host = format!("127.0.0.1:{port}");
+    let token = crate::remote_auth::cached_token().to_string();
+
+    // 1) 入口换 cookie
+    let entry = raw_get(port, &host, &format!("/u/abc/?t={token}"));
+    assert!(entry.starts_with("HTTP/1.1 302"), "入口应 302: {entry}");
+    let cookie = cookie_from_response(&entry).expect("入口必须下发 oc_sess");
+
+    // 2) 只带 cookie（不带 x-oc-token）也能访问接口
+    let state = raw_request(
+        port,
+        "GET",
+        &host,
+        "/u/abc/api/state",
+        &[("Cookie", cookie.as_str())],
+    );
+    assert!(state.starts_with("HTTP/1.1 200"), "cookie 应能通过鉴权: {state}");
+
+    // 3) 什么凭据都不带 → 403
+    let denied = raw_get(port, &host, "/u/abc/api/state");
+    assert!(denied.starts_with("HTTP/1.1 403"), "无凭据必须 403: {denied}");
+
+    // 4) 错误的 token → 403（不能下发 cookie）
+    let bad = raw_get(port, &host, "/u/abc/?t=wrong-token");
+    assert!(bad.starts_with("HTTP/1.1 403"), "错误 token 必须 403: {bad}");
+
+    // 5) 伪造 cookie → 403
+    let forged = raw_request(
+        port,
+        "GET",
+        &host,
+        "/u/abc/api/state",
+        &[("Cookie", "oc_sess=9999999999.deadbeef")],
+    );
+    assert!(forged.starts_with("HTTP/1.1 403"), "伪造 cookie 必须 403: {forged}");
+}
+
+/// T3 回归：带路径前缀时，转发给上游的必须是**剥过前缀**的 `/api/...`。
+/// 用原始 `url` 会让 opencode 收到 `/u/<id>/api/...`，直接返回它的 SPA 页面 HTML，
+/// 前端解析 JSON 失败 → 界面一直显示「未连接」。
+#[test]
+fn proxy_strips_base_from_upstream_path() {
+    // 假上游：把收到的 url（含 query）原样回显。
+    let upstream = tiny_http::Server::http("127.0.0.1:0").expect("起假上游");
+    let upstream_port = upstream
+        .server_addr()
+        .to_ip()
+        .expect("取上游端口")
+        .port();
+    std::thread::spawn(move || {
+        for request in upstream.incoming_requests() {
+            let seen = request.url().to_string();
+            let _ = request.respond(tiny_http::Response::from_string(seen));
+        }
+    });
+
+    let port = start(Ctx {
+        backend: Arc::new(RwLock::new(Some(Backend {
+            base: format!("http://127.0.0.1:{upstream_port}"),
+            cookie: String::new(),
+        }))),
+        token: "unit-test-token".to_string(),
+        port: 0,
+        base: "/u/abc".to_string(),
+        last_error: Arc::new(Mutex::new(None)),
+    })
+    .expect("本地服务应能启动");
+    let host = format!("127.0.0.1:{port}");
+
+    let resp = raw_request(
+        port,
+        "GET",
+        &host,
+        "/u/abc/api/echo?x=1",
+        &[("x-oc-token", "unit-test-token")],
+    );
+    assert!(
+        resp.contains("/api/echo?x=1"),
+        "上游必须收到剥过前缀的路径（实际：{resp}）"
+    );
+    assert!(
+        !resp.contains("/u/abc/api"),
+        "不能把前缀透给上游（实际：{resp}）"
+    );
 }

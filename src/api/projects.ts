@@ -11,6 +11,7 @@
  */
 
 import { onIpcMessage } from './auth'
+import { withBase } from './base.ts'
 import { parseProjects, type Project } from '../components/projectList'
 
 const LS_KEY = 'oc-workbench:projects'
@@ -19,6 +20,33 @@ const RETRY_MS = 1500
 const FALLBACK_MS = 4000
 
 type WindowWithIpc = Window & { ipc?: { postMessage(message: string): void } }
+
+/** 浏览器/远程访问：走 HTTP（cookie 已在入口换过）。 */
+async function fetchProjectsHttp(): Promise<Project[] | null> {
+  try {
+    const res = await fetch(withBase('/local/projects'), {
+      headers: { accept: 'application/json' },
+    })
+    if (!res.ok) return null
+    return parseProjects(await res.json())
+  } catch {
+    return null
+  }
+}
+
+/** 浏览器/远程访问：写回清单。成功返回 true。 */
+async function saveProjectsHttp(list: Project[]): Promise<boolean> {
+  try {
+    const res = await fetch(withBase('/local/projects'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(list),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
 
 export function hasShellIpc(): boolean {
   return Boolean((window as WindowWithIpc).ipc?.postMessage)
@@ -46,7 +74,8 @@ export function startProjects(onReady: (list: Project[]) => void): () => void {
 
   const w = window as WindowWithIpc
   if (!w.ipc?.postMessage) {
-    finish(readLocal())
+    // 浏览器/远程访问：没有 IPC，改走 HTTP；失败再退 localStorage。
+    void fetchProjectsHttp().then((list) => finish(list ?? readLocal()))
     return () => {}
   }
 
@@ -95,9 +124,13 @@ export function persistProjects(list: Project[]): void {
       // 落到下面的 localStorage
     }
   }
-  try {
-    window.localStorage.setItem(LS_KEY, JSON.stringify(list))
-  } catch {
-    // 存储不可用只影响下次启动的恢复，不影响本次
-  }
+  // 没有外壳：先试 HTTP（远程访问），失败再退 localStorage（dev）。
+  void saveProjectsHttp(list).then((ok) => {
+    if (ok) return
+    try {
+      window.localStorage.setItem(LS_KEY, JSON.stringify(list))
+    } catch {
+      // 存储不可用只影响下次启动的恢复，不影响本次
+    }
+  })
 }

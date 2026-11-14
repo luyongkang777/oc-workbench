@@ -200,7 +200,7 @@ fn settings_path() -> Option<PathBuf> {
 }
 
 /// 读 settings.json；坏文件当空对象（不能因为一条配置写坏就起不来）。
-fn load_settings() -> serde_json::Map<String, serde_json::Value> {
+pub(crate) fn load_settings() -> serde_json::Map<String, serde_json::Value> {
     let Some(path) = settings_path() else {
         return serde_json::Map::new();
     };
@@ -214,7 +214,7 @@ fn load_settings() -> serde_json::Map<String, serde_json::Value> {
 }
 
 /// 落盘 settings.json（保留没见过的键）。
-fn save_settings(map: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+pub(crate) fn save_settings(map: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
     let path = settings_path().ok_or_else(|| "没有 LOCALAPPDATA".to_string())?;
     let text = serde_json::to_string_pretty(&serde_json::Value::Object(map))
         .map_err(|err| format!("序列化设置失败：{err}"))?;

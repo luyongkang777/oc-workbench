@@ -20,7 +20,14 @@ pub fn proxy(request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
     };
 
     let method = request.method().as_str().to_string();
-    let target = format!("{base}{url}");
+    // 注意：`url` 是**原始**请求地址，可能带路径前缀（远程访问时是 `/u/<id>/api/...`）。
+    // 上游 opencode 只认 `/api/...`，所以拼目标必须用剥过前缀的 `path`，
+    // 再把 query 原样接回去。用 `url` 会让上游收到不认识的路径、返回 SPA 页面。
+    let query = url
+        .split_once('?')
+        .map(|(_, rest)| format!("?{rest}"))
+        .unwrap_or_default();
+    let target = format!("{base}{path}{query}");
     let has_body = method != "GET" && method != "HEAD";
 
     let mut request = request;

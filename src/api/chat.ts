@@ -1,3 +1,4 @@
+import { withBase } from './base.ts'
 /** 会话与事件流（T5）。认证 token 从 window.__OC_TOKEN 读，和 client.ts 一致。 */
 
 /**
@@ -215,7 +216,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
-  const res = await fetch(path, { ...init, headers })
+  const res = await fetch(withBase(path), { ...init, headers })
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
   const text = await res.text()
   return (text ? JSON.parse(text) : undefined) as T
@@ -756,7 +757,7 @@ export async function subscribeEvents(
   const headers = new Headers()
   const current = token()
   if (current) headers.set('x-oc-token', current)
-  const res = await fetch('/api/event', { headers, signal })
+  const res = await fetch(withBase('/api/event'), { headers, signal })
   if (!res.ok || !res.body) throw new Error(`事件流连接失败：${res.status}`)
 
   const reader = res.body.getReader()
