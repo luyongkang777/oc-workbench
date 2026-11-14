@@ -1,4 +1,4 @@
-//! 单实例：同一 Windows 登录会话里只允许跑一个工作台。
+//! 单实例：同一 Windows 登录会话里只允许跑一个工作台，**不分版本**。
 //!
 //! **为什么必须有**：开两个实例时「在线升级」会坏。
 //!
@@ -7,10 +7,22 @@
 //! 覆盖就得一直重试到 120 次放弃；放弃分支还会照样 `start` 一次，
 //! 最后可能是「两个窗口、版本还不一致」。用户感知就是「升级了但没生效 / 越升越乱」。
 //!
-//! 实现分两层：
-//!   1. **窗口**：已经画出来的窗口最直观，先找它——双击两次时这一步立刻返回；
-//!   2. **命名互斥体**：窗口还没画出来（启动中 / 正在退出）时靠它挡。
-//!      `Local\` 前缀 = 按登录会话隔离，同一台机器不同用户互不干扰。
+//! ## 为什么不能只靠互斥体
+//!
+//! 互斥体只能挡住「也写了互斥体检查的版本」——我们自己。1.3.6 及更早的 exe 里
+//! 没有任何单实例代码，它们被启动时不会看互斥体。于是：
+//!
+//! * 老版本先开、新版本后开：新版本能挡住（它查得到老版本）；
+//! * **新版本先开、老版本后开：老版本照开，双开成立**。
+//!
+//! 所以「挡」不够，还要「清」：见 [`guard`] 起的守护线程，
+//! 进程识别与清理都在 [`crate::single_peer`]。
+//!
+//! ## 本模块负责什么
+//!
+//! * [`acquire`]：本次启动要不要继续（先看有没有别的实例，再抢互斥体）；
+//! * [`focus_existing`]：把已经开着的窗口切到前台（抢不到就闪任务栏）；
+//! * [`guard`]：起守护线程，清掉后启动的重复实例。
 //!
 //! 不用锁文件：进程被强杀时锁文件会残留、把以后所有启动都挡死；
 //! 互斥体是内核对象，最后一个句柄关闭就消失。
@@ -21,10 +33,10 @@
 mod plat {
     use std::time::{Duration, Instant};
 
+    use crate::win32::*;
+
     /// 互斥体名字。`Local\` 让不同登录用户各开一个，互不影响。
     const MUTEX_NAME: &str = "Local\\oc-workbench-single-instance";
-    /// 主窗口标题（main.rs 的 APP_TITLE 直接引用这个常量，别在两处各写一份）。
-    pub const WINDOW_TITLE: &str = "OpenCode 工作台";
 
     /// 重复启动时最多等这么久「让老实例把窗口摆出来 / 把互斥体放掉」。
     ///
@@ -33,47 +45,17 @@ mod plat {
     pub const DUPLICATE_WAIT: Duration = Duration::from_secs(4);
     /// 找窗口 / 等互斥体的轮询间隔。
     const POLL: Duration = Duration::from_millis(100);
-    /// 等窗口出现在前台的时间。
-    const FOCUS_WAIT: Duration = Duration::from_secs(2);
 
-    const ERROR_ALREADY_EXISTS: u32 = 183;
-    const SW_RESTORE: i32 = 9;
-    const SW_SHOW: i32 = 5;
-    /// MB_OK | MB_ICONINFORMATION
-    const MB_INFO: u32 = 0x40;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn CreateMutexW(
-            attrs: *const std::ffi::c_void,
-            owner: i32,
-            name: *const u16,
-        ) -> *mut std::ffi::c_void;
-        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
-        fn GetLastError() -> u32;
-    }
-
-    #[link(name = "user32")]
-    extern "system" {
-        fn FindWindowW(class: *const u16, title: *const u16) -> *mut std::ffi::c_void;
-        fn IsIconic(hwnd: *mut std::ffi::c_void) -> i32;
-        fn ShowWindow(hwnd: *mut std::ffi::c_void, cmd: i32) -> i32;
-        fn SetForegroundWindow(hwnd: *mut std::ffi::c_void) -> i32;
-        fn MessageBoxW(
-            hwnd: *mut std::ffi::c_void,
-            text: *const u16,
-            caption: *const u16,
-            utype: u32,
-        ) -> i32;
-    }
-
-    fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(std::iter::once(0)).collect()
-    }
+    /// 看到「别的实例」时最多等这么久，确认它是真的在跑而不是正在退出。
+    ///
+    /// 覆盖升级重启的竞态：脚本 `taskkill /F` 之后到窗口销毁之间有一个短窗口期。
+    /// 600ms 是两边的折中：实测杀掉之后窗口在 100ms 量级就消失，
+    /// 足够兜住；而「真的双开」时用户也只多等半秒多，不觉得卡。
+    const PEER_SETTLE: Duration = Duration::from_millis(600);
 
     /// 本进程持有的单实例凭证；进程退出时内核自动回收。
     pub struct Instance {
-        handle: *mut std::ffi::c_void,
+        handle: Handle,
     }
 
     impl Drop for Instance {
@@ -88,12 +70,19 @@ mod plat {
 
     /// 抢单实例。`Some` = 本次启动可以继续；`None` = 已经有实例在跑。
     ///
-    /// 顺序有讲究：**先看窗口，再看互斥体**。
+    /// 顺序有讲究：**先看已有实例，再看互斥体**。
     /// 双击两次时窗口早就画出来了，这一步立刻返回，不用等；
     /// 只有「互斥体还在、窗口还没出来」这种升级重启的空档才进 [`mutex_acquire`] 等。
     pub fn acquire() -> Option<Instance> {
-        if find_window().is_some() {
-            return None;
+        // 看到别的实例时不能立刻判死：升级脚本是「taskkill 旧进程 → 覆盖 exe →
+        // 立刻 start 新进程」。杀掉到窗口真正销毁之间有个很短的窗口期，
+        // 若此刻直接返回 None，新版本会自己退出，用户看到的是「升级后打不开」。
+        let deadline = Instant::now() + PEER_SETTLE;
+        while !crate::single_peer::peer_windows().is_empty() {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(POLL);
         }
         mutex_acquire(DUPLICATE_WAIT)
     }
@@ -107,7 +96,7 @@ mod plat {
     fn mutex_acquire_named(name: &str, wait: Duration) -> Option<Instance> {
         let deadline = Instant::now() + wait;
         loop {
-            let name = wide(name);
+            let name = name.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
             // 不要求所有权（bInitialOwner = 0）：只需要「这个对象只被一个人建出来」。
             let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
             if handle.is_null() {
@@ -131,43 +120,17 @@ mod plat {
 
     /// 把已经在跑的窗口切到前台；找不到返回 false。
     pub fn focus_existing() -> bool {
-        let deadline = Instant::now() + FOCUS_WAIT;
-        loop {
-            if let Some(hwnd) = find_window() {
-                unsafe {
-                    if IsIconic(hwnd) != 0 {
-                        ShowWindow(hwnd, SW_RESTORE);
-                    }
-                    ShowWindow(hwnd, SW_SHOW);
-                    SetForegroundWindow(hwnd);
-                }
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(POLL);
-        }
+        crate::single_guard::focus_existing()
     }
 
-    /// 找不到窗口时的兜底提示：至少让用户知道不是「双击没反应」。
-    pub fn warn_already_running() {
-        let text = wide(
-            "OpenCode 工作台已经在运行（可能被最小化或藏在其他窗口后面）。\n\n\
-             请到任务栏把它切出来，不要再开第二个：同时开两个会让在线升级换不成新版本。",
-        );
-        let caption = wide(WINDOW_TITLE);
-        unsafe {
-            MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), MB_INFO);
-        }
+    /// 起守护线程，清掉后启动的重复实例（跨版本有效）。
+    pub fn spawn_guard<F>(self_hwnd: isize, log: F)
+    where
+        F: Fn(&str) + Send + 'static,
+    {
+        crate::single_guard::spawn_guard(self_hwnd, log);
     }
 
-    /// 找主窗口。标题就是唯一标识（用户把 exe 改名也不影响）。
-    pub fn find_window() -> Option<*mut std::ffi::c_void> {
-        let title = wide(WINDOW_TITLE);
-        let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
-        (!hwnd.is_null()).then_some(hwnd)
-    }
 
     #[cfg(test)]
     mod tests {
@@ -194,7 +157,6 @@ mod plat {
 
 #[cfg(not(windows))]
 mod plat {
-    pub const WINDOW_TITLE: &str = "OpenCode 工作台";
     pub const DUPLICATE_WAIT: std::time::Duration = std::time::Duration::from_secs(0);
 
     pub struct Instance;
@@ -211,12 +173,28 @@ mod plat {
         false
     }
 
-    pub fn warn_already_running() {}
+
+    pub fn spawn_guard<F>(_self_hwnd: isize, _log: F)
+    where
+        F: Fn(&str) + Send + 'static,
+    {
+    }
 }
 
-pub use plat::{focus_existing, warn_already_running, Instance, WINDOW_TITLE};
+/// 主窗口标题。同时是「找已有窗口」的键之一，只在 single_peer 里使用。
+pub const WINDOW_TITLE: &str = "OpenCode 工作台";
+
+pub use plat::{focus_existing, Instance};
 
 /// 获取单实例凭证；`None` 表示已有实例，本次启动应当退出。
 pub fn acquire() -> Option<Instance> {
     plat::acquire()
+}
+
+/// 起守护线程，清掉后启动的重复实例（跨版本有效）。
+pub fn guard<F>(self_hwnd: isize, log: F)
+where
+    F: Fn(&str) + Send + 'static,
+{
+    plat::spawn_guard(self_hwnd, log)
 }

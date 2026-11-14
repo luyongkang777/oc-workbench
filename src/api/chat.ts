@@ -46,6 +46,8 @@ export type MessagePart = {
     status?: string
     /** 工具入参：toolDetail 从里面挑 command / path 之类的摘要 */
     input?: Record<string, unknown>
+    /** 工具执行结果（完成态才有）：每项是 { type: 'text', text } */
+    content?: Array<{ type?: string; text?: string }>
     /** 旧版本把执行区间放在这里；新版本在 part.time 上，两处都认 */
     time?: { start?: number; end?: number }
   }

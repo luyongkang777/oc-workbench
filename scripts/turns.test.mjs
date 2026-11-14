@@ -81,7 +81,62 @@ test('工具段提取名称、状态与详情', () => {
       },
     ]),
   ])
-  assert.deepEqual(turns[0].tools, [{ name: 'bash', status: 'completed', detail: 'npm run build' }])
+  assert.deepEqual(turns[0].tools, [
+    {
+      name: 'bash',
+      status: 'completed',
+      detail: 'npm run build',
+      args: '{\n  "command": "npm run build"\n}',
+      output: '',
+      outputTruncated: false,
+    },
+  ])
+})
+
+test('工具返回内容从 state.content 拼出来，参数保留缩进', () => {
+  const turns = groupTurns([
+    user('u1', '问题'),
+    assistant([
+      {
+        type: 'tool',
+        name: 'ida-226.ida_status',
+        state: {
+          status: 'completed',
+          input: { instance: '9544' },
+          content: [
+            { type: 'text', text: 'pid: 9544  端口: 4706' },
+            { type: 'text', text: '函数数: 468' },
+          ],
+        },
+      },
+    ]),
+  ])
+  const info = turns[0].tools[0]
+  assert.equal(info.name, 'ida-226.ida_status')
+  assert.equal(info.output, 'pid: 9544  端口: 4706\n函数数: 468')
+  assert.equal(info.outputTruncated, false)
+  assert.ok(info.args.includes('"instance": "9544"'))
+})
+
+test('超长入参与输出都会截断，输出带 truncated 标记', () => {
+  const turns = groupTurns([
+    user('u1', '问题'),
+    assistant([
+      {
+        type: 'tool',
+        name: 'read',
+        state: {
+          status: 'completed',
+          input: { content: 'y'.repeat(5000) },
+          content: [{ type: 'text', text: 'x'.repeat(30000) }],
+        },
+      },
+    ]),
+  ])
+  const info = turns[0].tools[0]
+  assert.equal(info.outputTruncated, true)
+  assert.ok(info.output.length < 12100)
+  assert.ok(info.args.length < 2100)
 })
 
 test('思考时长文案：进行中走秒，结束显示累计秒数', () => {

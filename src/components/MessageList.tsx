@@ -27,7 +27,15 @@ function summarize(tools: ToolInfo[]): string {
     .join(' · ')
 }
 
+/**
+ * 一条工具调用。
+ *
+ * 默认只占一行（名字 + 入参摘要 + 状态）；点名字展开，里面是完整入参和返回正文。
+ * MCP 工具的输出（例如 ida_status 的整段文本）就在 part.state.content 里，
+ * 以前只显示「使用了 N 个工具」看不到内容，现在点开就能看。
+ */
 function ToolRow({ tool, onOpenFile }: { tool: ToolInfo; onOpenFile?: OpenFile }) {
+  const [open, setOpen] = useState(false)
   const tone =
     tool.status === 'completed'
       ? 'done'
@@ -36,24 +44,58 @@ function ToolRow({ tool, onOpenFile }: { tool: ToolInfo; onOpenFile?: OpenFile }
         : 'fail'
   // 工具详情经常就是文件路径（read / edit 的入参），能认出来就点开
   const file = onOpenFile ? parseFilePath(tool.detail) : null
+  const hasBody = Boolean(tool.args || tool.output)
+
   return (
-    <div className={`chat-tool-row ${tone}`}>
-      <span className="chat-tool-name">{tool.name}</span>
-      {file && onOpenFile ? (
+    <div className={`chat-tool-entry ${tone}`}>
+      <div className="chat-tool-row">
         <button
           type="button"
-          className="chat-tool-detail chat-tool-file"
-          title={`在编辑器打开 ${file.path}${file.line ? ` 第 ${file.line} 行` : ''}`}
-          onClick={() => onOpenFile(file.path, file.line)}
+          className="chat-tool-toggle"
+          title={hasBody ? '查看调用参数与返回内容' : '这条调用没有留下内容'}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          disabled={!hasBody}
         >
-          {tool.detail}
+          <span className="chat-tool-caret">{hasBody ? (open ? '▾' : '▸') : '·'}</span>
+          <span className="chat-tool-name">{tool.name}</span>
         </button>
-      ) : (
-        <span className="chat-tool-detail" title={tool.detail}>
-          {tool.detail}
-        </span>
-      )}
-      <span className="chat-tool-status">{tool.status}</span>
+        {file && onOpenFile ? (
+          <button
+            type="button"
+            className="chat-tool-detail chat-tool-file"
+            title={`在编辑器打开 ${file.path}${file.line ? ` 第 ${file.line} 行` : ''}`}
+            onClick={() => onOpenFile(file.path, file.line)}
+          >
+            {tool.detail}
+          </button>
+        ) : (
+          <span className="chat-tool-detail" title={tool.detail}>
+            {tool.detail}
+          </span>
+        )}
+        <span className="chat-tool-status">{tool.status}</span>
+      </div>
+
+      {open ? (
+        <div className="chat-tool-body">
+          {tool.args ? (
+            <>
+              <div className="chat-tool-label">调用参数</div>
+              <pre className="chat-tool-pre">{tool.args}</pre>
+            </>
+          ) : null}
+          {tool.output ? (
+            <>
+              <div className="chat-tool-label">返回内容</div>
+              <pre className="chat-tool-pre">{tool.output}</pre>
+              {tool.outputTruncated ? <div className="chat-tool-more">内容过长，已截断</div> : null}
+            </>
+          ) : (
+            <div className="chat-tool-more">这次调用没有返回内容</div>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

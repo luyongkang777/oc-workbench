@@ -32,6 +32,9 @@ mod winenc;
 mod shellprobe;
 mod server;
 mod single;
+mod single_peer;
+mod single_guard;
+mod win32;
 mod proxy;
 mod static_files;
 
@@ -77,8 +80,11 @@ fn main() {
             append_log(&format!(
                 "[boot] 已有实例在运行，本次启动退出（切到前台：{focused}）\n"
             ));
+            // 抢不到前台时**不要弹模态提示框**：那是一问一答，
+            // 用户不点确定，这个进程就一直挂着不退出（实测会卡十几秒以上）。
+            // 已经在跑的窗口会自己闪任务栏，够提示了。
             if !focused {
-                single::warn_already_running();
+                append_log("[boot] 未能把已有窗口切到前台（前台锁），本次启动仍退出\n");
             }
             return;
         }
@@ -194,6 +200,11 @@ fn run() -> Result<(), String> {
     let window = window_builder
         .build(&event_loop)
         .map_err(|e| format!("创建窗口失败：{e}"))?;
+    // 跨版本单实例守护：老版本自己没有互斥体检查，只能由已经在跑的这一份盯着。
+    // 一旦出现第二个工作台窗口，就把它请走并把本窗口拉到前台——
+    // 用户看到的效果是「双击老图标，还是原来那个窗口」。
+    #[cfg(windows)]
+    single::guard(window.hwnd() as isize, |line| append_log(line));
     // 无边框窗口补一层系统阴影，不然和桌面糊在一起，看着像没有窗口边界。
     #[cfg(windows)]
     window.set_undecorated_shadow(true);

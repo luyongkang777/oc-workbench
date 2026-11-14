@@ -10,6 +10,12 @@ export type ToolInfo = {
   name: string
   status: string
   detail: string
+  /** 调用参数的格式化 JSON（可能为空） */
+  args: string
+  /** 返回正文：MCP 工具的输出就在 part.state.content[].text */
+  output: string
+  /** 输出被截断过（原文更长） */
+  outputTruncated: boolean
 }
 
 /**
@@ -61,10 +67,44 @@ export type Turn = {
 }
 
 const DETAIL_LIMIT = 90
+/** 参数和输出的展示上限：write/read 的入参和返回可能是几 MB 的文件内容。 */
+const ARGS_LIMIT = 2000
+const OUTPUT_LIMIT = 12000
 
 function clip(text: string): string {
   const one = text.replace(/\s+/g, ' ').trim()
   return one.length > DETAIL_LIMIT ? `${one.slice(0, DETAIL_LIMIT)}…` : one
+}
+
+/** 把工具入参美化成多行 JSON；没有入参返回空串。 */
+export function toolArgs(part: MessagePart): string {
+  const input = part.state?.input
+  if (!input || typeof input !== 'object') return ''
+  const keys = Object.keys(input)
+  if (keys.length === 0) return ''
+  let text = ''
+  try {
+    text = JSON.stringify(input, null, 2)
+  } catch {
+    return ''
+  }
+  return text.length > ARGS_LIMIT ? `${text.slice(0, ARGS_LIMIT)}\n…` : text
+}
+
+/** 工具返回正文：把 content 里所有 text 段拼起来。 */
+export function toolOutput(part: MessagePart): { text: string; truncated: boolean } {
+  const content = part.state?.content
+  if (!Array.isArray(content)) return { text: '', truncated: false }
+  const pieces: string[] = []
+  for (const item of content) {
+    if (item && typeof item.text === 'string' && item.text) pieces.push(item.text)
+  }
+  if (pieces.length === 0) return { text: '', truncated: false }
+  const joined = pieces.join('\n')
+  if (joined.length > OUTPUT_LIMIT) {
+    return { text: `${joined.slice(0, OUTPUT_LIMIT)}\n…`, truncated: true }
+  }
+  return { text: joined, truncated: false }
 }
 
 export function toolDetail(part: MessagePart): string {
@@ -219,10 +259,14 @@ function buildTurns(ordered: ChatMessage[]): TurnGroup {
           turn.blocks.push({ kind: 'reasoning', text, active, ms, startedAt, key: nextKey() })
         }
       } else if (part.type === 'tool') {
+        const output = toolOutput(part)
         const info = {
           name: part.name ?? '工具',
           status: part.state?.status ?? 'unknown',
           detail: toolDetail(part),
+          args: toolArgs(part),
+          output: output.text,
+          outputTruncated: output.truncated,
         }
         turn.tools.push(info)
         // 连着调的工具收成一组，前面是思考或说话就另起一组
@@ -433,7 +477,15 @@ export function sameTurn(a: Turn, b: Turn): boolean {
       for (let j = 0; j < x.tools.length; j++) {
         const tx = x.tools[j]
         const ty = y.tools[j]
-        if (tx.name !== ty.name || tx.status !== ty.status || tx.detail !== ty.detail) return false
+        if (
+          tx.name !== ty.name ||
+          tx.status !== ty.status ||
+          tx.detail !== ty.detail ||
+          tx.output !== ty.output ||
+          tx.outputTruncated !== ty.outputTruncated
+        ) {
+          return false
+        }
       }
     }
   }
