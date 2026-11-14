@@ -48,15 +48,6 @@ pub fn shell_override() -> Option<String> {
         .clone()
 }
 
-/// 坏 pwsh 的「指纹」：路径 + 0 字节别名特征。用来记录「已经为它重启过服务」，
-/// 避免每次打开工作台都重启一次服务、打断正在跑的任务。
-pub fn broken_fingerprint() -> Option<String> {
-    if shell_override().is_none() {
-        return None;
-    }
-    let exe = find_pwsh()?;
-    Some(exe.to_string_lossy().into_owned())
-}
 
 /// 纯决策：输入全部可注入，方便单测覆盖每一条分支。
 fn decide(
@@ -92,6 +83,7 @@ fn powershell_path() -> Option<PathBuf> {
         .join("powershell.exe");
     exe.is_file().then_some(exe)
 }
+
 
 /// 按 PATH 找 `pwsh.exe`。
 fn find_pwsh() -> Option<PathBuf> {

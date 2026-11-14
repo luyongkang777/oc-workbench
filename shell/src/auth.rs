@@ -441,12 +441,6 @@ fn build_command(target: &Target, args: &[&str]) -> Command {
     for arg in args {
         cmd.arg(arg);
     }
-    // pwsh 存在却起不来时（典型是 Store/MSIX 版的应用执行别名），
-    // opencode 的 shell 工具会把它当第一个候选直接使用、失败也不回退。
-    // 这里注入 SHELL 让 opencode 改选 Windows PowerShell，见 crate::shellprobe。
-    if let Some(shell) = crate::shellprobe::shell_override() {
-        cmd.env("SHELL", shell);
-    }
     cmd
 }
 
@@ -809,39 +803,179 @@ pub fn discover() -> Result<Backend, String> {
     discover_inner().map_err(|err| redact(&err))
 }
 
-/// 要不要因为「pwsh 坏了」重启服务：返回需要重启时的指纹。
+/// opencode 服务的 `SHELL` 现状与目标：`Some(要设的值)` / `None(该清掉)`。
 ///
-/// 只在「这台机器的坏 pwsh 换了或第一次遇到」时返回 Some：指纹记在
-/// `%LOCALAPPDATA%\\oc-workbench\\shell-fallback.txt`，同一个坏 pwsh 只重启一次，
-/// 否则每次打开工作台都会重启服务、把正在跑的任务打断。
+/// **为什么必须写进服务配置而不是给 CLI 塞环境变量**：实测 `opencode service
+/// start/restart` **不继承调用方的环境变量**（它只从 service.json 的 `env` 读），
+/// 塞 `SHELL` 给 CLI 对守护进程毫无作用。`service set env SHELL <路径>` 才是
+/// 官方支持的做法，写完持久生效，重启服务也不会丢。
+enum ShellPlan {
+    /// 把 SHELL 设成这个值（pwsh 坏了，改走 Windows PowerShell）。
+    Set(String),
+    /// 把 SHELL 清掉（pwsh 已经好了，别一直压着它）。
+    Clear,
+}
+
+/// 需要改动服务配置时返回计划；配置已经正确就返回 None（不发任何命令）。
+fn shell_plan() -> Option<ShellPlan> {
+    let desired = crate::shellprobe::shell_override();
+    let current = read_service_shell();
+    match (desired, current) {
+        (Some(want), Some(have)) if paths_equal(&want, &have) => None,
+        (Some(want), _) => Some(ShellPlan::Set(want)),
+        // 只清我们自己设过的那种值：用户手设别的 shell 时不动。
+        (None, Some(have)) if is_powershell(&have) => Some(ShellPlan::Clear),
+        _ => None,
+    }
+}
+
+/// 读 `opencode service get env SHELL`；没设过或命令失败都是 None。
+fn read_service_shell() -> Option<String> {
+    let text = run(&["service", "get", "env", "SHELL"]).ok()?;
+    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    // 输出里夹着 CLI 自己的日志行时就当没设过，别拿日志当路径。
+    (line.contains('\\') || line.contains('/')).then(|| line.to_string())
+}
+
+fn paths_equal(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
+/// 这个值是不是我们写进去的 Windows PowerShell。
+fn is_powershell(value: &str) -> bool {
+    value.to_ascii_lowercase().ends_with("windowspowershell\\v1.0\\powershell.exe")
+}
+
+/// 改服务配置用的超时。
 ///
-/// **重启成功（[`remember_restart`]）之后才落盘**：重启失败时要留给下一次再试。
-fn shell_restart_pending() -> Option<String> {
-    let fingerprint = crate::shellprobe::broken_fingerprint()?;
-    let marker = shell_fallback_marker();
-    if let Ok(prev) = std::fs::read_to_string(&marker) {
-        if prev.trim() == fingerprint {
-            return None;
+/// `service set env` 内部会先 stop 服务再写盘，实测单次要 3~4 秒；默认的
+/// [`CMD_TIMEOUT`]（5 秒）余量太薄，慢机器/杀软环境会超时误判成失败。
+const SERVICE_CONFIG_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 占位文件超过这个时间还留着，说明认领它的进程已经死了，可以接管。
+const CLAIM_STALE: Duration = Duration::from_secs(300);
+
+/// 把计划写进服务配置；失败时返回原因（含 stderr 片段）。
+///
+/// `service set env` 自己会先 stop 服务（opencode 侧实现），调用方随后要重新 start。
+fn apply_shell_plan(plan: &ShellPlan) -> Result<(), String> {
+    let args: &[&str] = match plan {
+        ShellPlan::Set(value) => &["service", "set", "env", "SHELL", value],
+        ShellPlan::Clear => &["service", "unset", "env", "SHELL"],
+    };
+    run_inner(args, SERVICE_CONFIG_TIMEOUT).map(|_| ())
+}
+
+/// 「我正在改配置并重启服务」的认领凭证。
+///
+/// 两个作用：
+///   1. 并发互斥——同时开多个工作台时，只让一个去改配置/重启服务；
+///   2. **进程被服务重启连带杀掉时自动失效**：认领文件里写了持有者的 PID，
+///      下一个实例看到 PID 已经不存在就直接接管，不必干等 [`CLAIM_STALE`]。
+///
+/// 这一条是压测挖出来的真 bug：原来的实现只在成功路径删认领，进程在
+/// `service set env` 停掉服务的那一刻被杀，认领就永久残留，之后所有实例都被挡在
+/// 「别人正在处理」的判断上，坏 pwsh 再也修不了。
+struct RestartClaim {
+    path: PathBuf,
+}
+
+impl RestartClaim {
+    /// 尝试认领；拿不到（别人正在处理且还活着）返回 None。
+    fn acquire(fingerprint: &str) -> Option<RestartClaim> {
+        let path = shell_claim_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Some(token) = read_trimmed(&path) {
+            if !claim_is_expired(&token, &path) {
+                return None;
+            }
+            // 持有者已经死了（或超时）：清掉重新认领。
+            let _ = std::fs::remove_file(&path);
+        }
+        use std::io::Write;
+        let token = format!("{}\n{}", std::process::id(), fingerprint);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let _ = file.write_all(token.as_bytes());
+                Some(RestartClaim { path })
+            }
+            // 别人抢先创建了：让给它。
+            Err(_) => None,
         }
     }
-    Some(fingerprint)
 }
 
-/// 记下「已经为这个坏 pwsh 重启过服务」，下次不再重复重启。
-fn remember_restart(fingerprint: &str) {
-    let marker = shell_fallback_marker();
-    if let Some(dir) = marker.parent() {
-        let _ = std::fs::create_dir_all(dir);
+impl Drop for RestartClaim {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
-    let _ = std::fs::write(marker, fingerprint);
 }
 
-/// 记录「已经为哪个坏 pwsh 重启过服务」。
-fn shell_fallback_marker() -> PathBuf {
+/// 认领是否已失效：持有者进程没了，或文件超过 [`CLAIM_STALE`]。
+fn claim_is_expired(token: &str, path: &Path) -> bool {
+    let alive = token
+        .lines()
+        .next()
+        .and_then(|line| line.trim().parse::<u32>().ok())
+        .map(|pid| pid == std::process::id() || pid_is_running(pid))
+        .unwrap_or(false);
+    if !alive {
+        return true;
+    }
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .map(|at| at.elapsed().map(|age| age > CLAIM_STALE).unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// 进程是否还活着（Windows：能拿到进程句柄就是在跑）。
+///
+/// 只做一次 `OpenProcess` + `CloseHandle`，不读目标进程内存。
+fn pid_is_running(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        // PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        // SAFETY: 仅查询句柄，失败返回 null（进程已退出或无权限）。
+        let handle = unsafe { OpenProcess(0x1000, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        unsafe { CloseHandle(handle) };
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+}
+
+fn read_trimmed(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+/// 「正在重启」的占位文件，`create_new` 做并发互斥。
+fn shell_claim_path() -> PathBuf {
+    workbench_local_dir().join("shell-fallback.claim")
+}
+
+fn workbench_local_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    base.join("oc-workbench").join("shell-fallback.txt")
+    base.join("oc-workbench")
 }
 
 fn discover_inner() -> Result<Backend, String> {
@@ -857,19 +991,23 @@ fn discover_inner() -> Result<Backend, String> {
         Err(err) => return Err(format!("`opencode service status` 执行失败：{err}")),
     };
     let mut auto_started = false;
-    // 服务已经在跑，但它可能是「pwsh 还坏着的时候」起来的：那时 opencode 的
-    // shell 工具会一直选中坏 pwsh。SHELL 只在启动时读取，所以必须重启一次服务
-    // 才能让注入生效。同一个坏 pwsh 只重启一次，避免每次开窗都打断任务。
-    if find_base(&status).is_some() {
-        if let Some(fingerprint) = shell_restart_pending() {
-            crate::append_log(
-                "[auth] 检测到 pwsh 不可用，重启 opencode 服务以改用 Windows PowerShell\n",
-            );
-            match run_start(&["service", "restart"], SERVICE_START_TIMEOUT) {
+    // pwsh 坏了就把它从 opencode 的 shell 候选里顶掉。opencode 的 ShellSelect 顺序是
+    // pwsh → powershell → git bash → cmd，取第一个就直接用、不验证能否启动；而
+    // Store/MSIX 版的 pwsh 别名起不来时它也不回退，整条 shell 工具直接报错。
+    // 这里写服务配置而不是给 CLI 塞环境变量：实测 `service start/restart` 不继承
+    // 调用方环境，塞 SHELL 对守护进程无效。
+    if let Some(plan) = shell_plan() {
+        let key = match &plan {
+            ShellPlan::Set(value) => value.clone(),
+            ShellPlan::Clear => "clear".to_string(),
+        };
+        if let Some(_guard) = RestartClaim::acquire(&key) {
+            crate::append_log(&format!("[auth] 调整 opencode 的 shell 配置：{key}\n"));
+            match apply_shell_plan(&plan) {
                 Ok(()) => {
-                    // 重启成功才记账；失败要留给下一次启动再试。
-                    remember_restart(&fingerprint);
+                    // service set/unset env 会先停服务，这里重新拉起并等就绪。
                     let deadline = Instant::now() + SERVICE_START_TIMEOUT;
+                    let _ = run_start(&["service", "start"], SERVICE_START_TIMEOUT);
                     status = run(&["service", "status"]).unwrap_or_default();
                     while find_base(&status).is_none() && Instant::now() < deadline {
                         thread::sleep(START_POLL);
@@ -878,8 +1016,8 @@ fn discover_inner() -> Result<Backend, String> {
                     auto_started = true;
                 }
                 Err(err) => {
-                    // 重启失败不强求：服务可能还在跑，按原样继续连。
-                    crate::append_log(&format!("[auth] 重启服务失败，继续沿用原服务：{err}\n"));
+                    // 改配置失败不强求：服务可能还在跑，按原样继续连。
+                    crate::append_log(&format!("[auth] 设置 SHELL 失败，继续沿用原配置：{err}\n"));
                     status = run(&["service", "status"]).unwrap_or_default();
                 }
             }
@@ -968,62 +1106,74 @@ fn discover_inner() -> Result<Backend, String> {
 mod restart_tests {
     use super::*;
 
-    fn marker(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ocwb-marker-{tag}-{}", std::process::id()));
+    #[test]
+    fn paths_compare_case_insensitively_with_trim() {
+        assert!(paths_equal(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            r"  c:\windows\system32\windowspowershell\v1.0\powershell.exe  "
+        ));
+        assert!(!paths_equal(r"C:\a\pwsh.exe", r"C:\b\pwsh.exe"));
+    }
+
+    #[test]
+    fn recognizes_our_powershell() {
+        assert!(is_powershell(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        ));
+        assert!(!is_powershell(r"C:\Program Files\PowerShell\7\pwsh.exe"));
+        assert!(!is_powershell(r"C:\Windows\System32\cmd.exe"));
+    }
+
+    /// 本机 PID 一定存活。
+    #[test]
+    fn own_pid_is_alive() {
+        assert!(pid_is_running(std::process::id()), "自己的 PID 必须判活");
+    }
+
+    fn claim_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ocwb-claim-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        dir.join("shell-fallback.txt")
+        std::fs::create_dir_all(&dir).expect("建目录");
+        dir
     }
 
-    /// 读完标记判断「要不要重启」：返回需重启时的指纹。
-    fn pending(fingerprint: Option<&str>, marker: &Path) -> Option<String> {
-        let fingerprint = fingerprint?;
-        if let Ok(prev) = std::fs::read_to_string(marker) {
-            if prev.trim() == fingerprint {
-                return None;
-            }
-        }
-        Some(fingerprint.to_string())
-    }
-
-    /// 没有坏 pwsh：永远不重启。
+    /// 认领过期判定：NaN 之类的坏 token 一律按过期处理（宁可重试）。
     #[test]
-    fn no_fingerprint_never_restarts() {
-        assert_eq!(pending(None, &marker("none")), None);
+    fn malformed_token_is_expired() {
+        let dir = claim_dir("bad");
+        let path = dir.join("a.claim");
+        std::fs::write(&path, "not-a-pid").expect("写占位");
+        assert!(claim_is_expired("not-a-pid", &path));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 第一次遇到坏 pwsh：需要重启一次。
+    /// 认领过期判定：自己持有的 token 必须判活（除非超时）。
     #[test]
-    fn first_sighting_needs_restart() {
-        let m = marker("first");
-        assert_eq!(pending(Some(r"C:\ps\pwsh.exe"), &m), Some(r"C:\ps\pwsh.exe".to_string()));
+    fn own_token_is_not_expired() {
+        let dir = claim_dir("own");
+        let path = dir.join("b.claim");
+        let token = format!("{}\nC:\\x\\pwsh.exe", std::process::id());
+        std::fs::write(&path, &token).expect("写占位");
+        assert!(!claim_is_expired(&token, &path), "自己的认领不该判过期");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 记过账之后，同一个坏 pwsh 不再触发重启。
+    /// 死进程留下的认领必须立刻可被接管（压测挖出的真 bug 的回归）。
+    ///
+    /// 场景：上一个工作台在 `service set env` 停服务时被连带杀掉，认领残留；
+    /// 旧实现要干等 5 分钟才接管，用户在这期间「坏 pwsh 一直修不了」。
     #[test]
-    fn same_fingerprint_is_not_restarted_again() {
-        let m = marker("same");
-        let fp = r"C:\ps\pwsh.exe";
-        assert!(pending(Some(fp), &m).is_some());
-        remember_restart_at(fp, &m);
-        assert_eq!(pending(Some(fp), &m), None);
-    }
-
-    /// 换了一个坏 pwsh（例如又装了一个新的 Store 版）：重新重启一次。
-    #[test]
-    fn different_fingerprint_restarts_again() {
-        let m = marker("diff");
-        remember_restart_at(r"C:\a\pwsh.exe", &m);
-        assert!(pending(Some(r"C:\b\pwsh.exe"), &m).is_some());
-    }
-
-    /// [`remember_restart`] 的可注入版本（真实实现固定用 [`shell_fallback_marker`]）。
-    fn remember_restart_at(fingerprint: &str, marker: &Path) {
-        if let Some(dir) = marker.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        std::fs::write(marker, fingerprint).expect("写标记");
+    fn claim_from_dead_process_is_taken_over() {
+        let dir = claim_dir("dead");
+        let path = dir.join("c.claim");
+        let token = "999999\nC:\\x\\pwsh.exe";
+        std::fs::write(&path, token).expect("写死进程认领");
+        assert!(claim_is_expired(token, &path), "死进程的认领必须立刻可被接管");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+
 
 #[cfg(test)]
 mod tests {
