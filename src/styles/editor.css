@@ -13,7 +13,13 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* 关键：不加 min-width 会被工具栏 nowrap 内容的 min-content 撑成固定宽度，
+     窗格一变窄就横向溢出去盖住右边聊天面板（穿模）。 */
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+  /* 兜底：任何子元素都不许画出自己的边界 */
+  overflow: hidden;
 }
 
 .editor-path {
@@ -106,6 +112,9 @@
   position: relative;
   /* 右侧给缩放控件留固定位置：它是「被裁掉就没法用」的入口，不能被别的信息挤掉 */
   padding-right: 152px;
+  /* 同 .editor：允许被父容器压缩，否则 padding-right 会变成 164px 的硬最小宽度，
+     窗格比它窄时工具栏就画到窗格外（穿到聊天面板上）。 */
+  min-width: 0;
 }
 
 /* 查看区缩放：− 100% + 适应。只影响中栏，不动整块界面（整块缩放见 useUiLayout）。 */
@@ -1520,6 +1529,7 @@
 /* 多标签容器：激活的那个撑满，非激活的是 display:none（不占位、状态保留） */
 .editor-stack {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
 }
@@ -1553,6 +1563,16 @@
   color: var(--info-ink);
   font-size: 12px;
   line-height: 1.6;
+}
+
+/* HTML 预览的说明条：贴在 iframe 上方，不参与 flex 撑高 */
+.editor-html {
+  flex-direction: column;
+}
+
+.editor-html-note {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
 }
 
 /* HTML 预览：iframe 铺满查看区；沙盒里跑脚本但拿不到父页面 token，

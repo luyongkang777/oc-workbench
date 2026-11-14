@@ -240,7 +240,8 @@ export default function CodeView({
   searchOpenRef.current = searchOpen
   statRef.current = stat
   const previewState = useFilePreview(root, path, stat, encodingOverride)
-  const { mode, setMode, preview, previewError, hex, hexError, imageUrl, imageError } = previewState
+  const { mode, setMode, preview, previewError, htmlNote, hex, hexError, imageUrl, imageError } =
+    previewState
 
   // 换编码也算「要保存的改动」：允许不改文本、只把文件转成另一种编码
   const encodingChanged = editing && !!stat && stat.encoding !== saveEncoding
@@ -1118,15 +1119,19 @@ export default function CodeView({
             ) : preview === null ? (
               <div className="editor-empty">渲染中…</div>
             ) : (
-              <iframe
-                className="editor-frame"
-                title={path}
-                // 沙盒不给 allow-same-origin：脚本照常执行，但拿不到父页面的 token
-                // 与 localStorage，避免「打开一个 HTML 就能调本地服务」。
-                // 代价是页面里的相对资源（外部 css/图片）加载不出来，切「源码」可看原文。
-                sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
-                srcDoc={preview}
-              />
+              <>
+                {htmlNote ? <div className="editor-note editor-html-note">{htmlNote}</div> : null}
+                <iframe
+                  className="editor-frame"
+                  title={path}
+                  // 沙盒不给 allow-same-origin：脚本照常执行，但拿不到父页面的 token
+                  // 与 localStorage，避免「打开一个 HTML 就能调本地服务」。
+                  // 页面里的相对资源（css/js/图片）已经在读取阶段内联成 data URL，
+                  // 所以静态页面照样有样式、有图；实在内联不了的会在上面挂说明。
+                  sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+                  srcDoc={preview}
+                />
+              </>
             )}
           </div>
         ) : (
