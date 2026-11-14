@@ -39,10 +39,9 @@
   white-space: nowrap;
 }
 
-/* 路径栏最右的关闭按钮：把当前文件关掉，回到空视图 */
+/* 路径栏的关闭按钮：紧跟在文件名后面（不推到最右，离文件名太远不好找） */
 .editor-close {
   flex: 0 0 auto;
-  margin-left: auto;
   width: 22px;
   height: 22px;
   padding: 0;
