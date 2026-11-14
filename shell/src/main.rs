@@ -31,6 +31,7 @@ mod update;
 mod winenc;
 mod shellprobe;
 mod server;
+mod single;
 mod proxy;
 mod static_files;
 
@@ -54,12 +55,35 @@ use wry::{Rect, WebViewBuilder};
 #[cfg(debug_assertions)]
 use wry::WebViewBuilderExtWindows;
 
-const APP_TITLE: &str = "OpenCode 工作台";
+// 窗口标题同时是「找已有实例」的键，定义在 single.rs 里，这里只做别名。
+const APP_TITLE: &str = single::WINDOW_TITLE;
 const URL_ENV: &str = "OC_WORKBENCH_URL";
 const LOG_NAME: &str = "gui-error.log";
 
 fn main() {
     install_panic_hook();
+
+    // 同一台机器只允许一个工作台在跑。开两个会让在线升级换不成新版本：
+    // 升级脚本只重试覆盖一个 exe，另一个实例仍占着旧文件，重试到上限后会照样 start，
+    // 结果就是「版本没变 / 两个窗口版本不一致」。
+    // 重复启动不算错误：把已经开着的窗口切到前台就退出。
+    let _instance = match single::acquire() {
+        Some(guard) => {
+            append_log("[boot] 单实例凭证已获取\n");
+            guard
+        }
+        None => {
+            let focused = single::focus_existing();
+            append_log(&format!(
+                "[boot] 已有实例在运行，本次启动退出（切到前台：{focused}）\n"
+            ));
+            if !focused {
+                single::warn_already_running();
+            }
+            return;
+        }
+    };
+
     init_com_sta();
     adopt_launch_arg();
 

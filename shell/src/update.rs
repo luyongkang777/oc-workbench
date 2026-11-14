@@ -604,6 +604,8 @@ pub fn download(manifest: &Manifest, dir: &Path) -> Result<PathBuf, String> {
 const ENV_TARGET: &str = "OCWB_TARGET";
 const ENV_SOURCE: &str = "OCWB_SOURCE";
 const ENV_LOG: &str = "OCWB_LOG";
+/// 目标 exe 的文件名（不含目录）。只用来 `taskkill /IM`，避免把路径写进脚本。
+const ENV_NAME: &str = "OCWB_NAME";
 
 /// 生成替换脚本。**整段必须是纯 ASCII——任何路径都不能写进脚本。**
 ///
@@ -620,6 +622,10 @@ const ENV_LOG: &str = "OCWB_LOG";
 /// `WaitForExit` 实测会在目标进程已经退出后继续挂着（更新就这么卡住），
 /// `tasklist` 的输出又被本地化文案干扰，没法可靠判断。换成最直接的办法：
 /// **反复重试覆盖**。能写进去就说明旧进程已释放文件；写不进去就等一秒再来。
+///
+/// 顺序是：等一拍（让调用方的 HTTP 响应先出去）→ taskkill /IM 清掉**所有**同名实例 →
+/// 备份 → 重试覆盖 → start。只重试覆盖一个 exe 是不够的：用户开着两个窗口时，
+/// 另一个实例一直占着旧文件，覆盖会重试到上限后放弃，结果就是「版本没变」。
 pub fn build_script(pid: u32) -> String {
     let retries = COPY_RETRIES;
 
@@ -630,6 +636,14 @@ pub fn build_script(pid: u32) -> String {
         format!("if not defined {ENV_SOURCE} exit /b 2"),
         format!("if not defined {ENV_LOG} exit /b 2"),
         format!("echo [%DATE% %TIME%] update start (old pid {pid}) >>\"%{ENV_LOG}%\""),
+        // 先等一拍再动手。调用方（本进程）要在 `/local/update/apply` 的响应发出去之后才该被杀，
+        // 否则界面只会看到「请求失败」——响应还没写到 socket 里，进程已经被 taskkill 掉了。
+        "ping -n 2 127.0.0.1 >nul 2>&1".to_string(),
+        // 按文件名结束所有同名实例（含本进程）。见 build_script 上半部分的说明。
+        format!("if defined {ENV_NAME} taskkill /F /IM \"%{ENV_NAME}%\" >nul 2>&1"),
+        format!("if defined {ENV_NAME} echo [%DATE% %TIME%] taskkill by name %{ENV_NAME}% >>\"%{ENV_LOG}%\""),
+        // 给进程退出留一点时间，然后再备份、覆盖（备份要读旧 exe，进程还活着会占用）。
+        "ping -n 2 127.0.0.1 >nul 2>&1".to_string(),
         format!("if exist \"%{ENV_TARGET}%.bak\" del /f /q \"%{ENV_TARGET}%.bak\" >nul 2>&1"),
         format!("copy /Y \"%{ENV_TARGET}%\" \"%{ENV_TARGET}%.bak\" >nul 2>&1"),
         "set /a TRIES=0".to_string(),
@@ -704,6 +718,13 @@ fn script_command(prepared: &Prepared, target_exe: &Path) -> Command {
         .env(ENV_TARGET, target_exe)
         .env(ENV_SOURCE, &prepared.source)
         .env(ENV_LOG, &prepared.log)
+        .env(
+            ENV_NAME,
+            target_exe
+                .file_name()
+                .map(|name| name.to_os_string())
+                .unwrap_or_default(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -1245,6 +1266,28 @@ mod tests {
         assert!(!script.contains("/dev/null"), "这是 Windows 批处理");
         assert!(script.is_ascii(), "脚本必须纯 ASCII");
         assert!(script.contains("\r\n"), "批处理要 CRLF");
+    }
+
+    #[test]
+    fn script_kills_leftover_instances_before_replacing() {
+        let script = build_script(99);
+        assert!(
+            script.contains("if defined OCWB_NAME taskkill /F /IM \"%OCWB_NAME%\" >nul 2>&1"),
+            "必须按文件名结束残留实例，否则覆盖会一直失败：{script}"
+        );
+        // 文件名也得走环境变量：exe 可能放在中文目录，但名字本身不能拼进脚本
+        assert!(
+            !script.contains("oc-workbench.exe"),
+            "脚本里不该出现具体文件名：{script}"
+        );
+        // 顺序：先等一拍让响应出去，再杀，再备份/覆盖
+        let flush = script.find("ping -n 2 127.0.0.1").expect("要有等待");
+        let backup = script.find(".bak\" >nul").expect("要有备份");
+        assert!(flush < backup, "等待要在备份之前：{script}");
+        // 必须在 copy 重试之前
+        let kill = script.find("taskkill").expect("要有 taskkill");
+        let copy = script.find("goto wait").expect("要有重试循环");
+        assert!(kill < copy, "先杀残留再进重试循环：{script}");
     }
 
     #[test]

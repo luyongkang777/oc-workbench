@@ -809,6 +809,7 @@ pub fn discover() -> Result<Backend, String> {
 /// start/restart` **不继承调用方的环境变量**（它只从 service.json 的 `env` 读），
 /// 塞 `SHELL` 给 CLI 对守护进程毫无作用。`service set env SHELL <路径>` 才是
 /// 官方支持的做法，写完持久生效，重启服务也不会丢。
+#[derive(Debug, PartialEq)]
 enum ShellPlan {
     /// 把 SHELL 设成这个值（pwsh 坏了，改走 Windows PowerShell）。
     Set(String),
@@ -818,27 +819,57 @@ enum ShellPlan {
 
 /// 需要改动服务配置时返回计划；配置已经正确就返回 None（不发任何命令）。
 ///
-/// 三条原则：
-///   1. pwsh 探针判定「不需要兜底」时，只清理我们自己写进去的 powershell.exe；
-///   2. 用户手工把 SHELL 设成别的东西（cmd / bash / 自己的 pwsh）时**绝不覆盖**；
-///   3. 配置已经对得上就不发任何命令（不白停一次服务）。
+/// 四条原则：
+///   1. 用户手工把 SHELL 设成别的东西（cmd / bash / 自己装的 pwsh / 便携版 powershell）
+///      时**既不覆盖、也不清理**——判据是标记文件记录的「我们写过的值」，不是路径长得像；
+///   2. 我们写过的那份，在 pwsh 恢复健康后要撤掉，别让用户永远被钉在 5.1；
+///   3. 配置已经对得上就不发任何命令（不白停一次服务）；
+///   4. 1.3.6 及更早版本没有标记文件：只有「当前值 == 这次要兜底写入的值」时才认领——
+///      此时 pwsh 正坏着，那份配置只可能是旧版兜底写的。
 fn shell_plan() -> Option<ShellPlan> {
     let desired = crate::shellprobe::shell_override();
     let current = read_service_shell();
-    if let Some(have) = current.as_deref() {
-        // 值不是我们写的那种：视为用户自己的选择，一个字节都不动。
-        if !is_powershell(have) {
-            return None;
+    let mut marker = read_shell_marker();
+
+    if marker.is_none() {
+        if let (Some(have), Some(want)) = (current.as_deref(), desired.as_deref()) {
+            if paths_equal(have, want) && write_shell_marker(have).is_ok() {
+                marker = Some(have.to_string());
+            }
         }
     }
-    match (desired, current) {
-        (Some(want), Some(have)) if paths_equal(&want, &have) => None,
-        (Some(want), _) => Some(ShellPlan::Set(want)),
-        // pwsh 已经好了：把自己之前压上去的 powershell.exe 撤掉。
-        (None, Some(_)) => Some(ShellPlan::Clear),
-        (None, None) => None,
+
+    plan_shell(marker.as_deref(), current.as_deref(), desired.as_deref())
+}
+
+/// 纯决策：`marker` 是我们上次写进服务配置的值，`current` 是现在的值，`desired` 是探针结论。
+fn plan_shell(
+    marker: Option<&str>,
+    current: Option<&str>,
+    desired: Option<&str>,
+) -> Option<ShellPlan> {
+    let ours = |value: &str| marker.is_some_and(|saved| paths_equal(saved, value));
+    match desired {
+        // pwsh 坏了，需要兜底。
+        Some(want) => {
+            if let Some(have) = current {
+                if paths_equal(have, want) {
+                    return None; // 已经是我们要的值
+                }
+                if !ours(have) {
+                    return None; // 用户自己的选择，一个字节都别动
+                }
+            }
+            Some(ShellPlan::Set(want.to_string()))
+        }
+        // pwsh 好了：只撤掉自己写过的那一份。
+        None => match current {
+            Some(have) if ours(have) => Some(ShellPlan::Clear),
+            _ => None,
+        },
     }
 }
+
 
 /// 读 `opencode service get env SHELL`；没设过或命令失败都是 None。
 fn read_service_shell() -> Option<String> {
@@ -852,10 +883,31 @@ fn paths_equal(a: &str, b: &str) -> bool {
     a.trim().eq_ignore_ascii_case(b.trim())
 }
 
-/// 这个值是不是我们写进去的 Windows PowerShell。
-fn is_powershell(value: &str) -> bool {
-    value.to_ascii_lowercase().ends_with("windowspowershell\\v1.0\\powershell.exe")
+/// 记录「服务配置里的 SHELL 是我们自己写的」。
+///
+/// 为什么不能只看路径：用户完全可以把 SHELL 设成自己的一份
+/// `D:\tools\WindowsPowerShell\v1.0\powershell.exe`（便携版），
+/// 旧实现按路径后缀判断，会把这份配置当成自己的、pwsh 一好就删掉。
+fn shell_marker_path() -> PathBuf {
+    workbench_local_dir().join("shell-fallback.marker")
 }
+
+fn read_shell_marker() -> Option<String> {
+    read_trimmed(&shell_marker_path())
+}
+
+fn write_shell_marker(value: &str) -> std::io::Result<()> {
+    let path = shell_marker_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(path, value)
+}
+
+fn clear_shell_marker() {
+    let _ = std::fs::remove_file(shell_marker_path());
+}
+
 
 /// 改服务配置用的超时。
 ///
@@ -893,7 +945,7 @@ struct RestartClaim {
 
 impl RestartClaim {
     /// 尝试认领；拿不到（别人正在处理且还活着）返回 None。
-    fn acquire(fingerprint: &str) -> Option<RestartClaim> {
+    fn acquire() -> Option<RestartClaim> {
         let path = shell_claim_path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -906,7 +958,7 @@ impl RestartClaim {
             let _ = std::fs::remove_file(&path);
         }
         use std::io::Write;
-        let token = format!("{}\n{}", std::process::id(), fingerprint);
+        let token = std::process::id().to_string();
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
                 let _ = file.write_all(token.as_bytes());
@@ -1012,10 +1064,17 @@ fn discover_inner() -> Result<Backend, String> {
             ShellPlan::Set(value) => value.clone(),
             ShellPlan::Clear => "clear".to_string(),
         };
-        if let Some(_guard) = RestartClaim::acquire(&key) {
+        if let Some(_guard) = RestartClaim::acquire() {
             crate::append_log(&format!("[auth] 调整 opencode 的 shell 配置：{key}\n"));
             match apply_shell_plan(&plan) {
                 Ok(()) => {
+                    // 记下「这份配置是我们写的」，下次 pwsh 好了才敢清理。
+                    match &plan {
+                        ShellPlan::Set(value) => {
+                            let _ = write_shell_marker(value);
+                        }
+                        ShellPlan::Clear => clear_shell_marker(),
+                    }
                     // service set/unset env 会先停服务，这里重新拉起并等就绪。
                     let deadline = Instant::now() + SERVICE_START_TIMEOUT;
                     let _ = run_start(&["service", "start"], SERVICE_START_TIMEOUT);
@@ -1126,28 +1185,6 @@ mod restart_tests {
         assert!(!paths_equal(r"C:\a\pwsh.exe", r"C:\b\pwsh.exe"));
     }
 
-    #[test]
-    fn recognizes_our_powershell() {
-        assert!(is_powershell(
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-        ));
-        assert!(!is_powershell(r"C:\Program Files\PowerShell\7\pwsh.exe"));
-        assert!(!is_powershell(r"C:\Windows\System32\cmd.exe"));
-    }
-
-    /// 用户手工设了别的 SHELL（cmd/bash/自己的 pwsh）：即使 pwsh 坏了也不该覆盖。
-    ///
-    /// 判据是「值是不是我们写的那种 powershell」；不是就当用户自己的选择。
-    #[test]
-    fn user_shell_is_never_overwritten() {
-        assert!(!is_powershell(r"C:\Windows\System32\cmd.exe"));
-        assert!(!is_powershell(r"C:\Program Files\Git\bin\bash.exe"));
-        assert!(!is_powershell(r"C:\Program Files\PowerShell\7\pwsh.exe"));
-        assert!(is_powershell(
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-        ));
-    }
-
 
     /// 本机 PID 一定存活。
     #[test]
@@ -1199,6 +1236,78 @@ mod restart_tests {
 }
 
 
+
+#[cfg(test)]
+mod shell_plan_tests {
+    use super::*;
+
+    const PS: &str = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+
+    fn set(value: &str) -> Option<ShellPlan> {
+        Some(ShellPlan::Set(value.to_string()))
+    }
+
+    /// 什么都没配、pwsh 又坏了：写入兜底。
+    #[test]
+    fn sets_fallback_when_nothing_configured() {
+        assert_eq!(plan_shell(None, None, Some(PS)), set(PS));
+    }
+
+    /// 配置已经就是我们要的值：不发任何命令（不白停一次服务）。
+    #[test]
+    fn keeps_config_that_already_matches() {
+        assert_eq!(plan_shell(Some(PS), Some(PS), Some(PS)), None);
+    }
+
+    /// 用户自己设的 SHELL 一律不覆盖、也不清理。
+    ///
+    /// 最后一条是回归：旧实现按「路径后缀」判断，会把用户自己放的便携版
+    /// `WindowsPowerShell\v1.0\powershell.exe` 当成我们写的，pwsh 一好就删掉。
+    #[test]
+    fn never_touches_user_values() {
+        let users = [
+            r"C:\Windows\System32\cmd.exe",
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            r"D:\tools\WindowsPowerShell\v1.0\powershell.exe",
+        ];
+        for user in users {
+            assert_eq!(
+                plan_shell(None, Some(user), Some(PS)),
+                None,
+                "{user} 不该被覆盖"
+            );
+            assert_eq!(plan_shell(None, Some(user), None), None, "{user} 不该被清理");
+        }
+    }
+
+    /// pwsh 恢复健康：只撤掉自己写过的那一份。
+    #[test]
+    fn clears_only_our_own_value() {
+        assert_eq!(plan_shell(Some(PS), Some(PS), None), Some(ShellPlan::Clear));
+        // 用户后来又手工改成别人的：不认，别删
+        assert_eq!(
+            plan_shell(Some(PS), Some(r"C:\Windows\System32\cmd.exe"), None),
+            None
+        );
+    }
+
+    /// 兜底目标变了（不同安装位置）：替换成新值，而不是干脆不管。
+    #[test]
+    fn replaces_our_fallback_when_target_changes() {
+        let old = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+        let new = r"C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe";
+        assert_eq!(plan_shell(Some(old), Some(old), Some(new)), set(new));
+    }
+
+    /// 路径比较不区分大小写：Windows 上同一个文件可能大小写不同。
+    #[test]
+    fn treats_case_variants_as_the_same_path() {
+        let upper = r"C:\WINDOWS\SYSTEM32\WINDOWSPOWERSHELL\V1.0\POWERSHELL.EXE";
+        assert_eq!(plan_shell(Some(upper), Some(PS), None), Some(ShellPlan::Clear));
+        assert_eq!(plan_shell(Some(PS), Some(upper), Some(PS)), None);
+    }
+}
 
 #[cfg(test)]
 mod tests {
