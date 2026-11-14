@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { readHex, readRaw, readText, type FileStat } from '../api/localfs'
-import { formatBytes, isImagePath, isMarkdownPath } from '../components/codeWindow'
+import { formatBytes, isHtmlPath, isImagePath, isMarkdownPath } from '../components/codeWindow'
 
-/** Markdown 全文预览上限：再大 react-markdown 自己就会卡。 */
+/** Markdown / HTML 全文预览上限：再大 react-markdown 或 iframe 自己就会卡。 */
 const PREVIEW_MAX_BYTES = 1024 * 1024
 /** 图片预览上限：超过就不加载，避免把内存吃光。 */
 const IMAGE_MAX_BYTES = 64 * 1024 * 1024
@@ -20,8 +20,13 @@ export type FilePreview = {
   imageError: string | null
 }
 
+/** Markdown 用 react-markdown 渲染、HTML 用 iframe 渲染，两者共用同一份「读全文」逻辑。 */
+function isTextPreviewPath(path: string): boolean {
+  return isMarkdownPath(path) || isHtmlPath(path)
+}
+
 /**
- * Markdown 预览 / 图片 blob / 二进制 hex 三种「整份内容」视图。
+ * Markdown/HTML 预览 / 图片 blob / 二进制 hex 三种「整份内容」视图。
  *
  * 它们和分页源码互斥，拆成 hook 后 CodeView 只负责 stat + 页缓存 + 虚拟列表；
  * 每个 effect 都自带 abort 与 alive 标记，切文件/卸载不会把旧结果写回来。
@@ -56,13 +61,13 @@ export function useFilePreview(
   // Markdown 默认预览，但「1 MB 以上停在源码分页」是硬规格（product.md:28）：
   // stat 未到先保持源码，超过上限也保持源码；用户手动点「预览」才切过去。
   useEffect(() => {
-    if (!path || !isMarkdownPath(path) || manualMode.current) return
+    if (!path || !isTextPreviewPath(path) || manualMode.current) return
     if (!stat) return
     setModeState(stat.binary || stat.size > PREVIEW_MAX_BYTES ? 'source' : 'preview')
   }, [path, stat])
 
   useEffect(() => {
-    if (!path || !stat || stat.binary || mode !== 'preview' || !isMarkdownPath(path)) return
+    if (!path || !stat || stat.binary || mode !== 'preview' || !isTextPreviewPath(path)) return
     if (stat.size > PREVIEW_MAX_BYTES) {
       setPreviewError(
         `文件 ${formatBytes(stat.size)}，超过 1 MB，预览已关闭；点「源码」可按页读全文`,

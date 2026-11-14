@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::fsindex::{detect_encoding, Enc};
+use crate::fsindex::{detect_bytes_encoding, Enc};
 
 /// 读整份文本用于 Markdown 预览：超过 `max_bytes` 返回 `None`（由调用方报 413）。
 #[allow(dead_code)] // 单测用；线上统一走 read_whole_with（带编码覆盖）
@@ -27,11 +27,12 @@ pub fn read_whole_with(
     if bytes.len() as u64 > max_bytes {
         return Ok(None);
     }
-    let enc_start = detect_encoding(&bytes[..bytes.len().min(4)]);
+    // 只按 BOM 判会把无 BOM 的 GBK 文件当成 UTF-8 解成乱码，要和索引层用同一套探测。
+    let (enc_start, start) = detect_bytes_encoding(&bytes, bytes.len() as u64);
     let (enc, data_start) = match forced {
-        Some(enc) if enc == enc_start.0 => (enc, enc_start.1),
+        Some(enc) if enc == enc_start => (enc, start),
         Some(enc) => (enc, 0),
-        None => enc_start,
+        None => (enc_start, start),
     };
     let body = &bytes[(data_start as usize).min(bytes.len())..];
     let text = match enc {
@@ -101,4 +102,32 @@ pub fn hex_dump(path: &Path, offset: u64, len: usize) -> io::Result<String> {
         out.push_str("|\n");
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gbk_whole_text_decodes_without_mojibake() {
+        let dir = std::env::temp_dir().join(format!("ocwb-gbk-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("gbk.txt");
+        // 「这是中文」的 GBK 字节：无 BOM，前 8KB 也不是合法 UTF-8
+        std::fs::write(&file, [0xd5, 0xe2, 0xca, 0xc7, 0xd6, 0xd0, 0xce, 0xc4]).unwrap();
+        let text = read_whole_with(&file, 1 << 20, None).unwrap().unwrap();
+        assert_eq!(text, "这是中文");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn utf8_whole_text_still_decodes() {
+        let dir = std::env::temp_dir().join(format!("ocwb-utf8-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("utf8.txt");
+        std::fs::write(&file, "这是 UTF-8 中文".as_bytes()).unwrap();
+        let text = read_whole_with(&file, 1 << 20, None).unwrap().unwrap();
+        assert_eq!(text, "这是 UTF-8 中文");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

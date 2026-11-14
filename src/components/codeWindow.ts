@@ -21,6 +21,8 @@ export const MAX_SCROLL_PX = 16_000_000
 
 const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdown', 'mkd'])
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'svg'])
+/** 能直接渲染成页面的格式：默认走「预览」，可切回源码。 */
+const HTML_EXT = new Set(['html', 'htm', 'xhtml', 'shtml'])
 
 export function extOf(path: string): string {
   const name = path.split(/[\\/]/).pop() ?? ''
@@ -34,6 +36,11 @@ export function isMarkdownPath(path: string): boolean {
 
 export function isImagePath(path: string): boolean {
   return IMAGE_EXT.has(extOf(path))
+}
+
+/** HTML 类文件：用 iframe 渲染预览（Markdown 走 react-markdown，两者互斥）。 */
+export function isHtmlPath(path: string): boolean {
+  return HTML_EXT.has(extOf(path))
 }
 
 /** 总高度与「像素 → 行」的比例；行数特别多时 scale < 1。 */

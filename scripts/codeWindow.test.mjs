@@ -7,6 +7,7 @@ import {
   MAX_SCROLL_PX,
   formatBytes,
   cycleIndex,
+  isHtmlPath,
   isImagePath,
   isMarkdownPath,
   lineAtScrollTop,
@@ -58,6 +59,11 @@ test('扩展名判断', () => {
   assert.equal(isImagePath('x\\pic.PNG'), true)
   assert.equal(isImagePath('x\\pic.webp'), true)
   assert.equal(isImagePath('x\\pic.gif5'), false)
+  assert.equal(isHtmlPath('src/index.html'), true)
+  assert.equal(isHtmlPath('legacy\\PAGE.HTM'), true)
+  assert.equal(isHtmlPath('xhtml/page.xhtml'), true)
+  assert.equal(isHtmlPath('a.txt'), false)
+  assert.equal(isHtmlPath('page.html5'), false)
 })
 
 test('scrollTopForLine: 首行是 0，越界行夹到可滚动底部', () => {

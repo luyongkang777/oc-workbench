@@ -18,6 +18,7 @@ import {
   MAX_PAGES,
   WINDOW_LINES,
   cycleIndex,
+  isHtmlPath,
   isImagePath,
   isMarkdownPath,
   lineAtScrollTop,
@@ -77,6 +78,8 @@ type Props = {
   onUseExternalRoot?: (root: string) => void
   /** 打开失败（常见于文件树里的旧条目已被删/改名）：外层可据此提示并刷新文件树。 */
   onOpenFailed?: (path: string, message: string) => void
+  /** 点路径栏的 × 关掉当前文件（外层把 file 置空，回到「选择左侧文件查看」）。 */
+  onClose?: () => void
 }
 
 /**
@@ -87,10 +90,12 @@ function PathBar({
   path,
   externalRoot,
   onUseExternalRoot,
+  onClose,
 }: {
   path: string | null
   externalRoot?: string | null
   onUseExternalRoot?: (root: string) => void
+  onClose?: () => void
 }) {
   return (
     <div className="editor-path" title={path ?? ''}>
@@ -104,6 +109,15 @@ function PathBar({
         >
           外部文件 · {externalRoot}
         </button>
+      ) : null}
+      {onClose ? (
+        <button
+          type="button"
+          className="editor-close"
+          title="关闭当前文件"
+          aria-label="关闭当前文件"
+          onClick={onClose}
+        />
       ) : null}
     </div>
   )
@@ -131,6 +145,7 @@ export default function CodeView({
   externalRoot = null,
   onUseExternalRoot,
   onOpenFailed,
+  onClose,
 }: Props) {
   const [stat, setStat] = useState<FileStat | null>(null)
   const [statPath, setStatPath] = useState<string | null>(null)
@@ -980,7 +995,7 @@ export default function CodeView({
   if (statError) {
     return (
       <div className="editor">
-        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
+        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} onClose={onClose} />
         <div className="editor-error">
           <div>{statError}</div>
           <button type="button" className="editor-retry" onClick={() => setReload((v) => v + 1)}>
@@ -994,7 +1009,7 @@ export default function CodeView({
   if (loading || !stat || statPath !== path) {
     return (
       <div className="editor">
-        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
+        <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} onClose={onClose} />
         <div className="editor-empty">读取中…</div>
       </div>
     )
@@ -1002,13 +1017,16 @@ export default function CodeView({
 
   const image = isImagePath(path)
   const markdown = isMarkdownPath(path) && !stat.binary
+  const html = isHtmlPath(path) && !stat.binary
+  // Markdown 用 react-markdown，HTML 用 iframe：两者共用「预览/源码」切换。
+  const previewable = markdown || html
 
   return (
     <div className="editor" ref={zoomHostRef}>
-      <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} />
+      <PathBar path={path} externalRoot={externalRoot} onUseExternalRoot={onUseExternalRoot} onClose={onClose} />
       <CodeToolbar
         stat={stat}
-        markdown={markdown}
+        previewable={previewable}
         mode={mode}
         onMode={setMode}
         onJump={jumpToLine}
@@ -1089,21 +1107,44 @@ export default function CodeView({
           <div className="editor-note">二进制文件，显示前 4 KB 的十六进制内容。</div>
           <pre className="hex-dump">{hexError ?? hex ?? '读取中…'}</pre>
         </div>
-      ) : markdown && mode === 'preview' ? (
-        <div
-          className="editor-preview"
-          onDoubleClick={startEdit}
-          title="双击编辑"
-          style={viewZoom.zoom !== 1 ? { zoom: viewZoom.zoom } : undefined}
-        >
-          {previewError ? (
-            <div className="editor-note">{previewError}</div>
-          ) : preview === null ? (
-            <div className="editor-empty">渲染中…</div>
-          ) : (
-            <MarkdownText text={preview} onOpenFile={onOpenFile} />
-          )}
-        </div>
+      ) : stat.size === 0 ? (
+        // 空文件统一给一句提示：空 HTML/Markdown 走预览只会是一片空白，看不出是没内容还是没加载。
+        <div className="editor-empty">空文件</div>
+      ) : previewable && mode === 'preview' ? (
+        html ? (
+          <div className="editor-html" style={viewZoom.zoom !== 1 ? { zoom: viewZoom.zoom } : undefined}>
+            {previewError ? (
+              <div className="editor-note">{previewError}</div>
+            ) : preview === null ? (
+              <div className="editor-empty">渲染中…</div>
+            ) : (
+              <iframe
+                className="editor-frame"
+                title={path}
+                // 沙盒不给 allow-same-origin：脚本照常执行，但拿不到父页面的 token
+                // 与 localStorage，避免「打开一个 HTML 就能调本地服务」。
+                // 代价是页面里的相对资源（外部 css/图片）加载不出来，切「源码」可看原文。
+                sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+                srcDoc={preview}
+              />
+            )}
+          </div>
+        ) : (
+          <div
+            className="editor-preview"
+            onDoubleClick={startEdit}
+            title="双击编辑"
+            style={viewZoom.zoom !== 1 ? { zoom: viewZoom.zoom } : undefined}
+          >
+            {previewError ? (
+              <div className="editor-note">{previewError}</div>
+            ) : preview === null ? (
+              <div className="editor-empty">渲染中…</div>
+            ) : (
+              <MarkdownText text={preview} onOpenFile={onOpenFile} />
+            )}
+          </div>
+        )
       ) : stat.lineCount === 0 ? (
         <div className="editor-empty">空文件</div>
       ) : (

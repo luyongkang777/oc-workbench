@@ -5,7 +5,8 @@ import ViewZoomBar from './ViewZoomBar'
 
 type Props = {
   stat: FileStat
-  markdown: boolean
+  /** 有「预览」视图的格式（Markdown / HTML）：显示预览/源码切换。 */
+  previewable: boolean
   mode: 'source' | 'preview'
   onMode: (mode: 'source' | 'preview') => void
   /** 源码模式下跳转到 1 基行号。 */
@@ -43,7 +44,7 @@ type Props = {
 /** 编辑器顶部的文件信息条：大小 / 行数 / 编码 / 跳转 / 双击编辑 / 保存编码。 */
 export default function CodeToolbar({
   stat,
-  markdown,
+  previewable,
   mode,
   onMode,
   onJump,
@@ -181,7 +182,7 @@ export default function CodeToolbar({
           {canEdit ? '双击编辑' : '只读'}
         </span>
       )}
-      {markdown && !editing ? (
+      {previewable && !editing ? (
         <span className="editor-modes">
           <button
             type="button"

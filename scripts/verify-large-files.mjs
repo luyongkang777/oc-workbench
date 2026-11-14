@@ -138,7 +138,7 @@ window.__ocw = {
   async waitPath(name, timeout = 15000) {
     const started = performance.now()
     while (performance.now() - started < timeout) {
-      const shown = document.querySelector('.editor-path')?.textContent || ''
+      const shown = document.querySelector('.editor-path-text')?.textContent || ''
       if (shown.split(/[\\\\/]/).pop() === name) return true
       await new Promise((resolve) => setTimeout(resolve, 20))
     }
@@ -155,7 +155,7 @@ window.__ocw = {
     const first = rows[0]
     const last = rows[rows.length - 1]
     return {
-      path: document.querySelector('.editor-path')?.textContent || '',
+      path: document.querySelector('.editor-path-text')?.textContent || '',
       toolbar: document.querySelector('.editor-toolbar')?.textContent?.replace(/\\s+/g, ' ').trim() || '',
       lineRows: rows.length,
       firstNo: first?.querySelector('.line-no')?.textContent ?? null,
@@ -213,7 +213,7 @@ window.__ocw = {
       clicked: Math.round(clicked),
       frames,
       maxGap: Math.round(maxGap),
-      finalPath: document.querySelector('.editor-path')?.textContent || '',
+      finalPath: document.querySelector('.editor-path-text')?.textContent || '',
       lineRows: document.querySelectorAll('.code-line').length,
     }
   },

@@ -638,6 +638,17 @@ export default function App() {
     editorDirty.current = dirty
   }, [])
 
+  /**
+   * 关掉当前查看的文件（路径栏的 ×）：回到「选择左侧文件查看」。
+   * 和切文件一样先拦未保存改动，避免点一下 × 就把编辑内容丢了。
+   */
+  const closeFile = useCallback(() => {
+    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，确定关闭？')) return
+    setFile(null)
+    setFileLine(null)
+    // fileRoot 由「file 为空」的 effect 一并清掉
+  }, [])
+
   // 文件树删除/重命名前用来判断「当前文件是否有未保存改动」
   const isEditorDirty = useCallback(() => editorDirty.current, [])
 
@@ -881,6 +892,7 @@ export default function App() {
               externalRoot={fileRoot}
               onUseExternalRoot={useExternalRoot}
               onOpenFailed={handleOpenFailed}
+              onClose={closeFile}
             />
           )}
         </section>
