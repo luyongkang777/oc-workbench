@@ -1406,6 +1406,131 @@
   font-size: 12px;
 }
 
+/* ---------- 文件标签栏（多文件同时打开） ---------- */
+.file-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
+  min-width: 0;
+}
+
+/* 标签多了横向滚动，不换行把查看区顶下去 */
+.file-tabs-track {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.file-tab {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  height: 24px;
+  padding: 0 6px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 22px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.file-tab:hover {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+
+.file-tab.active {
+  background: var(--bg-2);
+  border-color: var(--line-2);
+  color: var(--text-1);
+}
+
+.file-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 未保存：文件名后面一个小圆点（关闭时会先确认） */
+.file-tab-dirty {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--accent-line);
+}
+
+.file-tab-close {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.file-tab-close::before {
+  content: '×';
+  font-size: 14px;
+}
+
+.file-tab-close:hover {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.file-tabs-close-all {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.file-tabs-close-all:hover {
+  color: var(--text-1);
+  border-color: var(--text-2);
+}
+
+/* 多标签容器：激活的那个撑满，非激活的是 display:none（不占位、状态保留） */
+.editor-stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.editor-slot {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
 /* ---------- Markdown 预览 / 图片 / 十六进制 ---------- */
 .editor-preview {
   flex: 1;

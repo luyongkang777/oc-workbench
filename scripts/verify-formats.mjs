@@ -163,8 +163,9 @@ window.__ocf = {
   async waitPath(name, timeout = 15000) {
     const started = performance.now()
     while (performance.now() - started < timeout) {
-      const shown = document.querySelector('.editor-path-text')?.textContent || ''
-      if (shown.split(/[\\\\/]/).pop() === name) return true
+      // 多标签后路径栏有好几份，看标签栏里哪个是激活的
+      const label = document.querySelector('.file-tab.active .file-tab-name')?.textContent || ''
+      if (label === name) return true
       await new Promise((resolve) => setTimeout(resolve, 30))
     }
     return false
@@ -218,15 +219,20 @@ window.__ocf = {
     // 等「读取中…」消失，最多再等 2 秒
     const waitDone = Date.now() + 2000
     while (Date.now() < waitDone) {
-      const body = document.querySelector('.editor')?.textContent || ''
+      const body = this.activeSlot().querySelector('.editor')?.textContent || ''
       if (!body.includes('读取中…')) break
       await new Promise((resolve) => setTimeout(resolve, 30))
     }
     return { ok, elapsed: Math.round(performance.now() - started) }
   },
+  /** 多标签后页面上同时有多个编辑器：统计只能落在当前激活的那个上。 */
+  activeSlot() {
+    return document.querySelector('.editor-slot:not([style*="display: none"])') ?? document.body
+  },
   state() {
-    const rows = [...document.querySelectorAll('.code-line')]
-    const frame = document.querySelector('iframe.editor-frame')
+    const scope = this.activeSlot()
+    const rows = [...scope.querySelectorAll('.code-line')]
+    const frame = scope.querySelector('iframe.editor-frame')
     let frameText = null
     let frameTitle = null
     try {
@@ -236,29 +242,31 @@ window.__ocf = {
       frameText = 'cross-origin-blocked'
     }
     return {
-      path: document.querySelector('.editor-path-text')?.textContent || '',
-      text: (document.querySelector('.editor')?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 260),
+      path: scope.querySelector('.editor-path-text')?.textContent || '',
+      text: (scope.querySelector('.editor')?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 260),
       lineRows: rows.length,
       firstText: rows[0]?.querySelector('.code-text')?.textContent?.slice(0, 80) ?? null,
-      preview: !!document.querySelector('.editor-preview'),
+      preview: !!scope.querySelector('.editor-preview'),
       previewText:
-        document.querySelector('.editor-preview')?.innerText?.replace(/\\s+/g, ' ').trim().slice(0, 160) ??
+        scope.querySelector('.editor-preview')?.innerText?.replace(/\\s+/g, ' ').trim().slice(0, 160) ??
         null,
-      image: !!document.querySelector('.editor-image img'),
-      imageWidth: document.querySelector('.editor-image img')?.naturalWidth ?? 0,
-      hex: document.querySelector('.hex-dump')?.textContent?.slice(0, 60) ?? null,
+      image: !!scope.querySelector('.editor-image img'),
+      imageWidth: scope.querySelector('.editor-image img')?.naturalWidth ?? 0,
+      hex: scope.querySelector('.hex-dump')?.textContent?.slice(0, 60) ?? null,
       frame: !!frame,
       frameTitle,
       frameText,
-      error: document.querySelector('.editor-error')?.innerText?.slice(0, 160) ?? null,
-      empty: document.querySelector('.editor-empty')?.innerText?.slice(0, 80) ?? null,
-      note: document.querySelector('.editor-note')?.innerText?.slice(0, 160) ?? null,
-      modes: [...document.querySelectorAll('.editor-modes button')].map((b) => b.textContent),
-      canClose: !!document.querySelector('.editor-close'),
+      error: scope.querySelector('.editor-error')?.innerText?.slice(0, 160) ?? null,
+      empty: scope.querySelector('.editor-empty')?.innerText?.slice(0, 80) ?? null,
+      note: scope.querySelector('.editor-note')?.innerText?.slice(0, 160) ?? null,
+      modes: [...scope.querySelectorAll('.editor-modes button')].map((b) => b.textContent),
+      canClose: !!scope.querySelector('.editor-close'),
+      tabCount: document.querySelectorAll('.file-tab').length,
     }
   },
   clickMode(label) {
-    const button = [...document.querySelectorAll('.editor-modes button')].find(
+    const scope = this.activeSlot()
+    const button = [...scope.querySelectorAll('.editor-modes button')].find(
       (item) => item.textContent === label,
     )
     if (!button) return false
@@ -266,7 +274,7 @@ window.__ocf = {
     return true
   },
   clickClose() {
-    const button = document.querySelector('.editor-close')
+    const button = this.activeSlot().querySelector('.editor-close')
     if (!button) return false
     button.click()
     return true
@@ -500,28 +508,54 @@ async function main() {
     }
     checks.gbkHtml = { ...openGbk, frame: gbkState.frame, frameText: gbkText }
 
-    // 关闭按钮：点 × 后回到空视图；再打开一个文件、再关闭
+    // 关闭按钮：多标签下点 × 只关当前这个，标签数要减一（不是把整个查看区清空）
+    const tabsBefore = await cdp.eval(`document.querySelectorAll('.file-tab').length`)
     const closeOne = await cdp.eval('window.__ocf.clickClose()')
     await sleep(400)
     const afterClose = await cdp.eval(`({
-      hasPath: !!document.querySelector('.editor-path'),
-      empty: document.querySelector('.editor-empty')?.innerText ?? null,
+      tabCount: document.querySelectorAll('.file-tab').length,
+      active: document.querySelector('.file-tab.active .file-tab-name')?.textContent ?? null,
     })`)
     const openAgain = await cdp.eval("window.__ocf.open('data.json')")
     await sleep(300)
+    const tabsBefore2 = await cdp.eval(`document.querySelectorAll('.file-tab').length`)
     const closeTwo = await cdp.eval('window.__ocf.clickClose()')
     await sleep(400)
     const afterClose2 = await cdp.eval(`({
-      hasPath: !!document.querySelector('.editor-path'),
-      empty: document.querySelector('.editor-empty')?.innerText ?? null,
+      tabCount: document.querySelectorAll('.file-tab').length,
+      active: document.querySelector('.file-tab.active .file-tab-name')?.textContent ?? null,
     })`)
-    checks.close = { closeOne, afterClose, openAgain: openAgain.ok, closeTwo, afterClose2 }
+    checks.close = {
+      tabsBefore,
+      closeOne,
+      afterClose,
+      closedOne: afterClose.tabCount === tabsBefore - 1,
+      openAgain: openAgain.ok,
+      tabsBefore2,
+      closeTwo,
+      afterClose2,
+      closedTwo: afterClose2.tabCount === tabsBefore2 - 1,
+    }
+
+    // 收尾：把这一轮开的标签全关掉，别把界面留在十几个标签的状态里
+    const closeAll = await cdp.eval(`(() => {
+      const button = document.querySelector('.file-tabs-close-all')
+      if (!button) return 'no-button'
+      button.click()
+      return 'clicked'
+    })()`)
+    await sleep(500)
+    checks.closeAll = {
+      clicked: closeAll,
+      tabs: await cdp.eval(`document.querySelectorAll('.file-tab').length`),
+      empty: await cdp.eval(`document.querySelector('.editor-empty')?.innerText ?? null`),
+    }
 
     // × 的可见性：尺寸、颜色、伪元素内容（按钮本身没有文本节点）
     const openHtmlAgain = await cdp.eval("window.__ocf.open('index.html')")
     await sleep(500)
     checks.closeButton = await cdp.eval(`(() => {
-      const button = document.querySelector('.editor-close')
+      const button = window.__ocf.activeSlot().querySelector('.editor-close')
       if (!button) return { exists: false }
       const rect = button.getBoundingClientRect()
       const style = getComputedStyle(button)

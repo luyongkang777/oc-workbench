@@ -138,8 +138,8 @@ window.__ocw = {
   async waitPath(name, timeout = 15000) {
     const started = performance.now()
     while (performance.now() - started < timeout) {
-      const shown = document.querySelector('.editor-path-text')?.textContent || ''
-      if (shown.split(/[\\\\/]/).pop() === name) return true
+      const label = document.querySelector('.file-tab.active .file-tab-name')?.textContent || ''
+      if (label === name) return true
       await new Promise((resolve) => setTimeout(resolve, 20))
     }
     return false
@@ -150,38 +150,44 @@ window.__ocw = {
     const ok = await this.waitPath(name, timeout)
     return { ok, elapsed: Math.round(performance.now() - started) }
   },
+  /** 多标签后页面上同时有多个编辑器：统计只落在当前激活的那个上。 */
+  activeSlot() {
+    return document.querySelector('.editor-slot:not([style*="display: none"])') ?? document.body
+  },
   state() {
-    const rows = [...document.querySelectorAll('.code-line')]
+    const scope = this.activeSlot()
+    const rows = [...scope.querySelectorAll('.code-line')]
     const first = rows[0]
     const last = rows[rows.length - 1]
     return {
-      path: document.querySelector('.editor-path-text')?.textContent || '',
-      toolbar: document.querySelector('.editor-toolbar')?.textContent?.replace(/\\s+/g, ' ').trim() || '',
+      path: scope.querySelector('.editor-path-text')?.textContent || '',
+      toolbar: scope.querySelector('.editor-toolbar')?.textContent?.replace(/\\s+/g, ' ').trim() || '',
       lineRows: rows.length,
       firstNo: first?.querySelector('.line-no')?.textContent ?? null,
       firstText: first?.querySelector('.code-text')?.textContent ?? null,
       lastNo: last?.querySelector('.line-no')?.textContent ?? null,
       lastText: last?.querySelector('.code-text')?.textContent ?? null,
-      scrollHeight: document.querySelector('.code-scroll')?.scrollHeight ?? 0,
+      scrollHeight: scope.querySelector('.code-scroll')?.scrollHeight ?? 0,
       treeRows: document.querySelectorAll('.tree-row').length,
       domNodes: document.querySelectorAll('*').length,
-      note: document.querySelector('.editor-note')?.textContent ?? null,
-      hex: document.querySelector('.hex-dump')?.textContent?.slice(0, 80) ?? null,
-      image: document.querySelector('.editor-image img')?.src?.startsWith('blob:') ?? false,
-      imageWidth: document.querySelector('.editor-image img')?.naturalWidth ?? 0,
-      pendingRows: document.querySelectorAll('.code-text.pending').length,
-      flashRows: document.querySelectorAll('.code-line.flash').length,
-      currentLine: document.querySelector('.editor-current-line')?.textContent ?? null,
+      note: scope.querySelector('.editor-note')?.textContent ?? null,
+      hex: scope.querySelector('.hex-dump')?.textContent?.slice(0, 80) ?? null,
+      image: scope.querySelector('.editor-image img')?.src?.startsWith('blob:') ?? false,
+      imageWidth: scope.querySelector('.editor-image img')?.naturalWidth ?? 0,
+      pendingRows: scope.querySelectorAll('.code-text.pending').length,
+      flashRows: scope.querySelectorAll('.code-line.flash').length,
+      currentLine: scope.querySelector('.editor-current-line')?.textContent ?? null,
     }
   },
   scrollBottom() {
-    const el = document.querySelector('.code-scroll')
+    const el = this.activeSlot().querySelector('.code-scroll')
     if (!el) return false
     el.scrollTop = el.scrollHeight
     return true
   },
   clickMode(label) {
-    const button = [...document.querySelectorAll('.editor-modes button')].find(
+    const scope = this.activeSlot()
+    const button = [...scope.querySelectorAll('.editor-modes button')].find(
       (item) => item.textContent === label,
     )
     if (!button) return false

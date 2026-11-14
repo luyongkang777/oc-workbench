@@ -6,6 +6,7 @@ import ReviewPanel from './components/ReviewPanel'
 import Terminal from './components/Terminal'
 import GitPanel from './components/GitPanel'
 import CodeView from './components/CodeView'
+import FileTabs from './components/FileTabs'
 import FileTree from './components/FileTree'
 import ProjectTabs from './components/ProjectTabs'
 import WelcomePane from './components/WelcomePane'
@@ -64,6 +65,37 @@ const THEME_KEY = 'oc-workbench:theme'
 const PROBE_INTERVAL_MS = 10_000
 // 未连上时的快轮询间隔：后端 0.5 秒内就绪时用户感知不到等待。
 const FAST_PROBE_INTERVAL_MS = 1_000
+
+/**
+ * 查看区打开中的一个文件。
+ *
+ * `root` 是给「工作区外的文件」用的：它自己的目录当根，读写都落在那个目录下，
+ * 但不会把整个工作区切走（会话/文件树还在原处）。
+ */
+type FileTab = {
+  key: string
+  path: string
+  root: string | null
+  /** 每次打开/激活自增：同一个文件点两次也会重读 */
+  seq: number
+  /** 一次性跳转行号（1 基） */
+  line: number | null
+  /** 双击文件树：自增后目标编辑器打开完直接进编辑 */
+  editSeq: number
+}
+
+/** 标签的稳定 key：外部文件把 root 也算进去，不同目录的同名文件不会互相顶掉。 */
+function fileTabKey(root: string | null, path: string): string {
+  return root ? `${root}\u0000${path}` : path
+}
+
+/** 同时最多挂多少个编辑器：每个都带一份分页缓存，太多会白吃内存。 */
+const MAX_FILE_TABS = 12
+
+/** 标签上只显示文件名（路径太长会把标签挤爆）。 */
+function tabName(path: string): string {
+  return path.split(/[\\/]/).pop() || path
+}
 
 /** 系统是否深色。matchMedia 不存在（极老内核 / 测试环境）时按暗色处理。 */
 function prefersDarkScheme(): boolean {
@@ -141,16 +173,18 @@ export default function App() {
     }
   }, [theme, themePref])
   const [retryError, setRetryError] = useState<string | null>(null)
-  const [file, setFile] = useState<string | null>(null)
-  // 打开工作区外的文件时，它自己的 root（文件所在目录）；null 表示就在当前工作区里。
-  // 分开存是为了点一下聊天里的外部路径不会把整个工作区切走（会话/文件树都还在原处）。
-  const [fileRoot, setFileRoot] = useState<string | null>(null)
-  // 每次点文件自增：点同一个文件也能强制重读
-  const [fileSeq, setFileSeq] = useState(0)
-  // 打开时要跳到的行（1 基）；只在本次 openSeq 生效，跳完就不管了
-  const [fileLine, setFileLine] = useState<number | null>(null)
-  // 双击文件树时自增：CodeView 收到后打开完直接进编辑
-  const [autoEditSeq, setAutoEditSeq] = useState(0)
+  // 查看区打开中的文件（多标签）。点文件不再顶掉上一个，而是在标签栏里排开。
+  const [fileTabs, setFileTabs] = useState<FileTab[]>([])
+  const [activeFile, setActiveFile] = useState<string | null>(null)
+  const fileTabsRef = useRef(fileTabs)
+  fileTabsRef.current = fileTabs
+  const activeFileRef = useRef(activeFile)
+  activeFileRef.current = activeFile
+  // 当前激活标签（null 表示一个文件都没开）
+  const activeTab = fileTabs.find((tab) => tab.key === activeFile) ?? null
+  // 派生值：很多地方（文件树高亮、项目状态持久化）只关心「现在看的是哪个文件」
+  const file = activeTab?.path ?? null
+  const fileRoot = activeTab?.root ?? null
   // 文件树刷新信号：窗口重新获得焦点或点「刷新」时自增
   const [treeSeq, setTreeSeq] = useState(0)
   // 一次性提示（例如打开链接失败），4 秒后自动消失
@@ -178,8 +212,11 @@ export default function App() {
   const alive = useRef(true)
   // 探活请求是否在途：定时探活不叠加；finally 里保证复位
   const probing = useRef(false)
-  // 编辑器里有未保存的改动：切文件 / 切目录前拦一下
-  const editorDirty = useRef(false)
+  // 哪些标签里有未保存的改动：关标签 / 切项目前拦一下。
+  // 用 state 是为了让标签栏的圆点跟着刷新，ref 供事件回调同步读取。
+  const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(() => new Set())
+  const dirtyTabsRef = useRef(dirtyTabs)
+  dirtyTabsRef.current = dirtyTabs
 
   useEffect(() => {
     alive.current = true
@@ -407,6 +444,21 @@ export default function App() {
     w.ipc?.postMessage(`oc:save-root:${path}`)
   }
 
+  /**
+   * 换一组打开的文件（切项目 / 启动恢复）。
+   * 传 null 表示一个都不开；传路径时按「工作区内的相对路径」开成一个标签。
+   */
+  function resetTabs(path: string | null) {
+    if (!path) {
+      setFileTabs([])
+      setActiveFile(null)
+      return
+    }
+    const key = fileTabKey(null, path)
+    setFileTabs([{ key, path, root: null, seq: 1, line: null, editSeq: 0 }])
+    setActiveFile(key)
+  }
+
   /** 更新清单并立刻落盘（外壳写 projects.json）。 */
   function commitProjects(next: Project[]) {
     projectsRef.current = next
@@ -434,7 +486,7 @@ export default function App() {
       return
     }
 
-    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，切换项目会丢弃它，继续？')) {
+    if (dirtyTabsRef.current.size > 0 && !window.confirm('有文件还没保存，切换项目会丢弃修改，继续？')) {
       return
     }
 
@@ -456,10 +508,9 @@ export default function App() {
     // 旧项目里点过「开成标签」的请求必须清掉：ChatTabs 是按 root 重挂载的，
     // 留着它会在新项目里自动开出一个指向旧项目会话的标签，还去拉旧历史
     setTabRequest(null)
-    setFileRoot(null)
-    setFileLine(null)
-    setFile(state?.file ?? null)
-    setFileSeq((value) => value + 1)
+    // 换项目 = 换一整套打开的文件：旧项目的标签全部清掉，恢复这个项目自己上次看的文件
+    setDirtyTabs(new Set())
+    resetTabs(state?.file ?? null)
   }
 
   // 外壳消息：root:<path> 是启动时随令牌下发的上次根目录；
@@ -508,10 +559,7 @@ export default function App() {
       const state = findProject(withActive, current)?.state
       if (!state) return
       if (state.view) setView(state.view)
-      if (state.file) {
-        setFile(state.file)
-        setFileSeq((value) => value + 1)
-      }
+      if (state.file) resetTabs(state.file)
     })
     return stop
   }, [])
@@ -580,15 +628,59 @@ export default function App() {
       if (!target.path) return
 
       const open = (finalPath: string) => {
-        // 编辑中的未保存内容不能因为点了一下文件树就无声丢掉
-        if (editorDirty.current && !window.confirm('当前文件有未保存的修改，确定离开？')) return
         const sameRoot = normPath(target.root) === normPath(rootRef.current)
-        setFileRoot(sameRoot ? null : target.root)
-        setFile(finalPath)
-        setFileLine(typeof line === 'number' && Number.isFinite(line) ? line : null)
-        setFileSeq((value) => value + 1)
-        // 双击文件树：打开后直接进编辑
-        if (edit) setAutoEditSeq((value) => value + 1)
+        const tabRoot = sameRoot ? null : target.root
+        const key = fileTabKey(tabRoot, finalPath)
+        const jumpLine = typeof line === 'number' && Number.isFinite(line) ? line : null
+        // 用 ref 当快照：连续点两个文件时 setState 还没落地，靠 state 会丢掉前一个标签。
+        const tabs = fileTabsRef.current
+        const hit = tabs.find((tab) => tab.key === key)
+        let next: FileTab[]
+        if (hit) {
+          // 已经开着：切过去并按这次点击重读（同一个文件点两次也要刷新）
+          next = tabs.map((tab) =>
+            tab.key === key
+              ? {
+                  ...tab,
+                  seq: tab.seq + 1,
+                  line: jumpLine,
+                  editSeq: edit ? tab.editSeq + 1 : tab.editSeq,
+                }
+              : tab,
+          )
+        } else {
+          next = [
+            ...tabs,
+            { key, path: finalPath, root: tabRoot, seq: 1, line: jumpLine, editSeq: edit ? 1 : 0 },
+          ]
+          if (next.length > MAX_FILE_TABS) {
+            // 太多标签了：从最左边淘汰「不是当前、没有未保存」的，免得白占内存
+            const overflow = next.length - MAX_FILE_TABS
+            const kept: FileTab[] = []
+            let removed = 0
+            for (const tab of next) {
+              if (
+                removed < overflow &&
+                tab.key !== key &&
+                tab.key !== activeFileRef.current &&
+                !dirtyTabsRef.current.has(tab.key)
+              ) {
+                removed += 1
+                continue
+              }
+              kept.push(tab)
+            }
+            next = kept
+            if (removed < overflow) {
+              noticeRef.current(`最多同时打开 ${MAX_FILE_TABS} 个文件，先关掉几个`)
+            }
+          }
+        }
+        // 先同步 ref 再 setState：同一帧里再点别的文件也不会基于旧列表算
+        fileTabsRef.current = next
+        activeFileRef.current = key
+        setFileTabs(next)
+        setActiveFile(key)
         // 停在「审查」面板时点路径/文件树也要有反应：切回代码视图
         setView('code')
       }
@@ -620,37 +712,87 @@ export default function App() {
   )
 
   // 点路径栏的「外部文件」标记：把这个目录正式变成工作区，正在看的文件保持不变。
-  const useExternalRoot = useCallback((targetRoot: string) => {
-    if (!file) return
-    const target = file
-    applyRoot(targetRoot)
-    // applyRoot 会清掉 file，这里补回来（同一个事件里批处理，最终是新文件）
-    setFile(target)
-  }, [file, fileRoot])
+  const useExternalRoot = useCallback(
+    (targetRoot: string) => {
+      const tab = activeTab
+      if (!tab) return
+      applyRoot(targetRoot)
+      // applyRoot 会清空标签；这个文件现在相对新工作区就是它自己的相对路径，补开回来。
+      const key = fileTabKey(null, tab.path)
+      setDirtyTabs(new Set())
+      fileTabsRef.current = [
+        { key, path: tab.path, root: null, seq: tab.seq + 1, line: tab.line, editSeq: tab.editSeq },
+      ]
+      activeFileRef.current = key
+      setFileTabs(fileTabsRef.current)
+      setActiveFile(key)
+    },
+    [activeTab, applyRoot],
+  )
 
-  // 文件被关掉（删除/切换工作区）时把它的专属 root 一并清掉，
-  // 否则下次点工作区内的相对路径还会沿用上一个外部目录。
-  useEffect(() => {
-    if (!file) setFileRoot(null)
-  }, [file])
-
-  const handleEditorDirty = useCallback((dirty: boolean) => {
-    editorDirty.current = dirty
+  /** 某个标签的未保存状态变了：更新集合（标签栏的圆点靠它刷新）。 */
+  const handleTabDirty = useCallback((key: string, dirty: boolean) => {
+    setDirtyTabs((prev) => {
+      if (prev.has(key) === dirty) return prev
+      const next = new Set(prev)
+      if (dirty) next.add(key)
+      else next.delete(key)
+      return next
+    })
   }, [])
 
-  /**
-   * 关掉当前查看的文件（路径栏的 ×）：回到「选择左侧文件查看」。
-   * 和切文件一样先拦未保存改动，避免点一下 × 就把编辑内容丢了。
-   */
-  const closeFile = useCallback(() => {
-    if (editorDirty.current && !window.confirm('当前文件有未保存的修改，确定关闭？')) return
-    setFile(null)
-    setFileLine(null)
-    // fileRoot 由「file 为空」的 effect 一并清掉
+  /** 点标签栏切到某个文件：不重读，保留那个标签自己的滚动位置和编辑草稿。 */
+  const selectTab = useCallback((key: string) => {
+    if (key === activeFileRef.current) return
+    activeFileRef.current = key
+    setActiveFile(key)
+    setView('code')
   }, [])
 
-  // 文件树删除/重命名前用来判断「当前文件是否有未保存改动」
-  const isEditorDirty = useCallback(() => editorDirty.current, [])
+  /** 某个标签是否有未保存改动（标签栏画圆点用；依赖 state 才会跟着刷新）。 */
+  const isTabDirty = useCallback((key: string) => dirtyTabs.has(key), [dirtyTabs])
+
+  /** 关掉一个标签（标签栏的 × / 中键 / 路径栏的 × 都走这里）。 */
+  const closeTab = useCallback((key: string) => {
+    const tabs = fileTabsRef.current
+    const index = tabs.findIndex((tab) => tab.key === key)
+    if (index < 0) return
+    const tab = tabs[index]
+    if (
+      dirtyTabsRef.current.has(key) &&
+      !window.confirm(`「${tabName(tab.path)}」有未保存的修改，确定关闭？`)
+    ) {
+      return
+    }
+    const next = tabs.filter((item) => item.key !== key)
+    fileTabsRef.current = next
+    setFileTabs(next)
+    if (activeFileRef.current === key) {
+      // 关的是当前标签：激活右边那个，没有就左边
+      const fallback = next[Math.min(index, next.length - 1)]
+      const nextKey = fallback ? fallback.key : null
+      activeFileRef.current = nextKey
+      setActiveFile(nextKey)
+    }
+  }, [])
+
+  /** 关掉全部标签（有未保存改动先问一句）。 */
+  const closeAllTabs = useCallback(() => {
+    if (
+      dirtyTabsRef.current.size > 0 &&
+      !window.confirm('有文件还没保存，确定全部关闭？')
+    ) {
+      return
+    }
+    fileTabsRef.current = []
+    activeFileRef.current = null
+    setFileTabs([])
+    setActiveFile(null)
+    setDirtyTabs(new Set())
+  }, [])
+
+  // 文件树删除/重命名前用来判断「有没有未保存的改动」
+  const isEditorDirty = useCallback(() => dirtyTabsRef.current.size > 0, [])
 
   // 保存后文件大小/行数变了，让文件树重拉一次
   const handleEditorSaved = useCallback(() => setTreeSeq((value) => value + 1), [])
@@ -664,30 +806,50 @@ export default function App() {
     setTreeSeq((value) => value + 1)
   }, [])
 
-  /** 文件树里删掉了东西：正在看的是它（或它的子文件）就关掉编辑器。 */
+  /** 文件树里删掉了东西：打开着的它（或它的子文件）对应的标签一起关掉。 */
   const handlePathRemoved = useCallback((removed: string) => {
     const target = removed.replace(/[\\/]+$/, '')
     if (!target) return
-    setFile((prev) => {
-      if (!prev) return prev
+    const tabs = fileTabsRef.current
+    const next = tabs.filter((tab) => {
       const hit =
-        prev === target || prev.startsWith(`${target}\\`) || prev.startsWith(`${target}/`)
-      return hit ? null : prev
+        tab.path === target ||
+        tab.path.startsWith(`${target}\\`) ||
+        tab.path.startsWith(`${target}/`)
+      return !hit
     })
+    if (next.length === tabs.length) return
+    fileTabsRef.current = next
+    setFileTabs(next)
+    if (!next.some((tab) => tab.key === activeFileRef.current)) {
+      const nextKey = next[next.length - 1]?.key ?? null
+      activeFileRef.current = nextKey
+      setActiveFile(nextKey)
+    }
   }, [])
 
-  /** 重命名：把打开中的文件路径一起换到新名字。 */
+  /**
+   * 重命名：只改标签里的 path，key 保持不变。
+   * key 变了会让 React 卸载重挂 CodeView，正在编辑的草稿和滚动位置就跟着丢了。
+   */
   const handlePathRenamed = useCallback((from: string, to: string) => {
     const source = from.replace(/[\\/]+$/, '')
     if (!source) return
-    setFile((prev) => {
-      if (!prev) return prev
-      if (prev === source) return to
-      if (prev.startsWith(`${source}\\`) || prev.startsWith(`${source}/`)) {
-        return `${to}${prev.slice(source.length)}`
+    const tabs = fileTabsRef.current
+    let changed = false
+    const next = tabs.map((tab) => {
+      let path = tab.path
+      if (tab.path === source) path = to
+      else if (tab.path.startsWith(`${source}\\`) || tab.path.startsWith(`${source}/`)) {
+        path = `${to}${tab.path.slice(source.length)}`
       }
-      return prev
+      if (path === tab.path) return tab
+      changed = true
+      return { ...tab, path }
     })
+    if (!changed) return
+    fileTabsRef.current = next
+    setFileTabs(next)
   }, [])
 
   /** 手动重试：没令牌时先重新走 IPC 握手，已有令牌时让外壳重新配对并立刻探活。 */
@@ -879,21 +1041,48 @@ export default function App() {
           {view === 'diff' ? (
             <ReviewPanel root={root} connected={connected} />
           ) : (
-            <CodeView
-              // 外部文件用它自己的目录当 root，读写/搜索都落在同一个工作目录下
-              root={fileRoot ?? root}
-              path={file}
-              openSeq={fileSeq}
-              openLine={fileLine}
-              onOpenFile={openFile}
-              onDirtyChange={handleEditorDirty}
-              onSaved={handleEditorSaved}
-              autoEditSeq={autoEditSeq}
-              externalRoot={fileRoot}
-              onUseExternalRoot={useExternalRoot}
-              onOpenFailed={handleOpenFailed}
-              onClose={closeFile}
-            />
+            <>
+              <FileTabs
+                tabs={fileTabs}
+                activeKey={activeFile}
+                dirtyOf={isTabDirty}
+                onSelect={selectTab}
+                onClose={closeTab}
+                onCloseAll={closeAllTabs}
+              />
+              <div className="editor-stack">
+                {fileTabs.length === 0 ? (
+                  <div className="editor-empty">
+                    <div className="editor-empty-icon">⌘</div>
+                    <div>选择左侧文件查看</div>
+                  </div>
+                ) : null}
+                {fileTabs.map((tab) => (
+                  <div
+                    key={tab.key}
+                    className="editor-slot"
+                    // 非激活标签只藏起来、不卸载：滚动位置、编辑草稿、预览状态全部保留。
+                    style={tab.key === activeFile ? undefined : { display: 'none' }}
+                  >
+                    <CodeView
+                      // 外部文件用它自己的目录当 root，读写/搜索都落在同一个工作目录下
+                      root={tab.root ?? root}
+                      path={tab.path}
+                      openSeq={tab.seq}
+                      openLine={tab.line}
+                      onOpenFile={openFile}
+                      onDirtyChange={(dirty) => handleTabDirty(tab.key, dirty)}
+                      onSaved={handleEditorSaved}
+                      autoEditSeq={tab.editSeq}
+                      externalRoot={tab.root}
+                      onUseExternalRoot={useExternalRoot}
+                      onOpenFailed={handleOpenFailed}
+                      onClose={() => closeTab(tab.key)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </section>
 
