@@ -4,6 +4,9 @@
  * 两个读数，形态对齐 DeepSeek Harness 的 composer dock：
  *   ⊙ 1 轮 4 步 · 218 tok/s      ⛁ 38.3K tok · 缓存命中 67%
  *
+ * 有 MCP 数据时再接一个读数：
+ *   ⚡ MCP 8/30   ← 已连接/总数，悬停或点击展开看每个服务器的状态
+ *
  * 悬停展开明细，点击钉住（点外面或 Esc 收起）。没有数据的段直接省略，
  * 不显示「— tok/s」这种占位——空读数比不显示更像坏了。
  */
@@ -19,12 +22,88 @@ import {
   usageSummary,
   type SessionStats,
 } from './sessionStats'
+import {
+  mcpChipLabel,
+  mcpChipTitle,
+  mcpErrorHint,
+  mcpStatusText,
+  mcpTone,
+  sortMcpServers,
+  summarizeMcp,
+  type McpServerInfo,
+} from './mcpStatus'
+import type { McpServersState } from '../hooks/useMcpServers'
 
-type Props = { stats: SessionStats }
+type Props = {
+  stats: SessionStats
+  /** MCP 服务器状态；不传就不显示这个读数（终端等场景用不到） */
+  mcp?: McpServersState
+}
 
-type Which = 'activity' | 'usage'
+type Which = 'activity' | 'usage' | 'mcp'
 
-export default function SessionStatsBar({ stats }: Props) {
+/** MCP 明细：异常排前面，每条一行；失败原因压成一行，全文进 title。 */
+function McpPanel({ state }: { state: McpServersState }) {
+  const summary = summarizeMcp(state.servers)
+  const list = sortMcpServers(state.servers)
+
+  return (
+    <div className="chat-stat-pop chat-stat-pop-mcp" role="dialog" aria-label="MCP 服务器">
+      <div className="chat-stat-head">
+        <span className="chat-stat-head-title">MCP 服务器</span>
+        <span className="chat-stat-head-counts">
+          已连接 {summary.connected}/{summary.total}
+          {summary.broken > 0 ? ` · ${summary.broken} 个异常` : ''}
+          {summary.pending > 0 ? ` · ${summary.pending} 个连接中` : ''}
+        </span>
+      </div>
+
+      {state.error ? <div className="chat-stat-note chat-stat-mcp-error">{state.error}</div> : null}
+
+      <div className="chat-stat-mcp-list">
+        {list.length === 0 ? (
+          <div className="chat-stat-note">
+            {state.loading ? '正在检测…' : '没有配置 MCP 服务器'}
+          </div>
+        ) : (
+          list.map((server) => <McpRow key={server.name} server={server} />)
+        )}
+      </div>
+
+      <div className="chat-stat-foot chat-stat-mcp-foot">
+        <span>{state.loading ? '检测中…' : '状态来自服务端最近一次连接结果'}</span>
+        <button
+          type="button"
+          className="chat-stat-refresh"
+          onClick={state.refresh}
+          disabled={state.loading}
+        >
+          重新检测
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function McpRow({ server }: { server: McpServerInfo }) {
+  const tone = mcpTone(server.status)
+  const label = server.title?.trim() || server.name
+  const error = mcpErrorHint(server.error)
+
+  return (
+    <div
+      className={`chat-stat-mcp-item ${tone}`}
+      title={server.error ? `${label}\n${server.error}` : `${label}：${mcpStatusText(server.status)}`}
+    >
+      <span className={`status-dot ${tone}`} aria-hidden="true" />
+      <span className="chat-stat-mcp-name">{label}</span>
+      <span className="chat-stat-mcp-state">{mcpStatusText(server.status)}</span>
+      {error ? <span className="chat-stat-mcp-err">{error}</span> : null}
+    </div>
+  )
+}
+
+export default function SessionStatsBar({ stats, mcp }: Props) {
   const [open, setOpen] = useState<null | { which: Which; pinned: boolean }>(null)
   const box = useRef<HTMLDivElement | null>(null)
 
@@ -45,7 +124,11 @@ export default function SessionStatsBar({ stats }: Props) {
     }
   }, [open])
 
-  if (!stats.known && stats.turns === 0 && stats.steps === 0) return null
+  const mcpSummary = mcp ? summarizeMcp(mcp.servers) : null
+  const mcpReady = mcpSummary !== null && mcpSummary.total > 0
+
+  // 三个读数都没东西可显示时整条不渲染
+  if (!mcpReady && !stats.known && stats.turns === 0 && stats.steps === 0) return null
 
   const activity = activitySummary(stats)
   const tokens = formatTokenTotal(stats.total)
@@ -57,6 +140,10 @@ export default function SessionStatsBar({ stats }: Props) {
   }
 
   function toggle(which: Which) {
+    // 点开 MCP 就是想知道现在连上没有：顺手重新检测一次。
+    // 悬停不刷（鼠标划过就发请求太吵），点开才刷。
+    const stayingOpen = open?.pinned && open.which === which
+    if (which === 'mcp' && mcp && !stayingOpen) mcp.refresh()
     setOpen((current) =>
       current?.pinned && current.which === which ? null : { which, pinned: true },
     )
@@ -98,7 +185,27 @@ export default function SessionStatsBar({ stats }: Props) {
         <span className="chat-stat-text">{usage}</span>
       </button>
 
-      {shown ? (
+      {mcp && mcpSummary && mcpReady ? (
+        <button
+          type="button"
+          className={`chat-stat-chip${shown === 'mcp' ? ' open' : ''}${
+            mcpSummary.broken > 0 ? ' bad' : ''
+          }`}
+          data-composer-stat="mcp"
+          title={mcpChipTitle(mcpSummary)}
+          aria-label={mcpChipTitle(mcpSummary)}
+          aria-expanded={shown === 'mcp'}
+          onMouseEnter={() => hover('mcp')}
+          onClick={() => toggle('mcp')}
+        >
+          <Icon name="plug" size={13} />
+          <span className="chat-stat-text">{mcpChipLabel(mcpSummary)}</span>
+        </button>
+      ) : null}
+
+      {shown === 'mcp' && mcp ? <McpPanel state={mcp} /> : null}
+
+      {shown && shown !== 'mcp' ? (
         <div className="chat-stat-pop" role="dialog" aria-label="会话统计">
           <div className="chat-stat-head">
             <span className="chat-stat-head-title">会话统计</span>

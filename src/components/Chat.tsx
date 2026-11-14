@@ -29,6 +29,7 @@ import { useChatForms } from '../hooks/useChatForms'
 import { useChatModels } from '../hooks/useChatModels'
 import { usePurge } from '../hooks/usePurge'
 import { useChatRunning } from '../hooks/useChatRunning'
+import { useMcpServers } from '../hooks/useMcpServers'
 import {
   filesToAttachments,
   planAttachments,
@@ -395,6 +396,7 @@ export default function Chat({
   const modelsApi = useChatModels(root, connected)
   const purgeApi = usePurge(connected)
   const runningApi = useChatRunning(connected, currentID)
+  const mcpApi = useMcpServers(root, connected)
   const formsApi = useChatForms(connected, currentID)
   const reloadForms = formsApi.reload
 
@@ -1468,7 +1470,7 @@ export default function Chat({
           userTouchedRef.current = true
           removeAttachment(id)
         }}
-        footer={<SessionStatsBar stats={stats} />}
+        footer={<SessionStatsBar stats={stats} mcp={mcpApi} />}
       />
     </div>
   )

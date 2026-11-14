@@ -2414,3 +2414,103 @@
     width: 56px;
   }
 }
+
+/* ---------- MCP 读数与面板（输入框统计条第三段） ---------- */
+/* 有异常时读数图标转红：正常状态保持低调，坏掉才抢注意力 */
+.chat-stat-chip.bad svg {
+  color: var(--danger);
+}
+
+.chat-stat-pop-mcp {
+  width: min(400px, 90vw);
+}
+
+.chat-stat-mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-top: 6px;
+  padding-right: 2px;
+}
+
+.chat-stat-mcp-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1.3fr);
+  gap: 6px;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: var(--r-1);
+}
+
+.chat-stat-mcp-item:hover {
+  background: var(--bg-control);
+}
+
+.chat-stat-mcp-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-1);
+}
+
+.chat-stat-mcp-state {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.chat-stat-mcp-item.bad .chat-stat-mcp-state {
+  color: var(--danger);
+}
+
+.chat-stat-mcp-item.pending .chat-stat-mcp-state {
+  color: var(--warn-ink);
+}
+
+/* 未知状态没有现成的灯色，这里补一个灰的，别让它显示成空心圆 */
+.chat-stat-mcp-item .status-dot.muted {
+  background: var(--line-2);
+}
+
+.chat-stat-mcp-err {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.chat-stat-mcp-foot {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-stat-mcp-error {
+  color: var(--danger);
+}
+
+.chat-stat-refresh {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+
+.chat-stat-refresh:hover:not(:disabled) {
+  border-color: var(--line-2);
+  color: var(--text-1);
+}
+
+.chat-stat-refresh:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
