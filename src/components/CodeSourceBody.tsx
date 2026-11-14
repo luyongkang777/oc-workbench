@@ -38,6 +38,14 @@ type Props = {
   onDoubleClick?: () => void
   /** 查看区缩放：整块按此比例渲染。zoom 在滚动容器上时布局像素不变，虚拟滚动不用改。 */
   zoom?: number
+  /**
+   * 页缓存版本号。
+   *
+   * 只用来打破 memo：一页数据到了，cache 还是同一个 Map、first/last 也没变，
+   * memo 会认为 props 全等而跳过渲染 —— 表现就是「打开文件只看到行号，
+   * 滚一下才出文字」。版本号一变，这里必须重新渲染。
+   */
+  version: number
 }
 
 /** 单次渲染最多实测多少行：滚动时新露头的行是有限的，别对整屏反复量。 */
@@ -69,6 +77,8 @@ function CodeSourceBody({
   matchLine = null,
   onDoubleClick,
   zoom = 1,
+  // 只参与 memo 比较，渲染逻辑里不用
+  version: _version,
 }: Props) {
   const rows: ReactElement[] = []
   const preRef = useRef<HTMLPreElement | null>(null)

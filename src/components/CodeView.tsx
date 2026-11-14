@@ -1167,6 +1167,8 @@ export default function CodeView({
           onRetryPage={retryPage}
           onDoubleClick={startEdit}
           zoom={viewZoom.zoom}
+          // 页数据到了要让这些行走一次渲染（memo 只看 props）
+          version={version}
         />
       )}
     </div>

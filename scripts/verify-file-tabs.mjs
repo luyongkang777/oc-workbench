@@ -316,6 +316,19 @@ async function main() {
 
     const result = { checks: {} }
 
+    // 0. 清掉上一次运行留下的标签，避免顺序断言被上一轮影响。
+    //    只有一个标签时没有「全部关闭」按钮，所以逐个点 × 关。
+    result.checks.tabsBeforeStart = await cdp.eval(`(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+      for (let i = 0; i < 20; i += 1) {
+        const close = document.querySelector('.file-tab .file-tab-close')
+        if (!close) break
+        close.click()
+        await sleep(150)
+      }
+      return document.querySelectorAll('.file-tab').length
+    })()`)
+
     // 1. 依次打开 3 个文件：标签应累加，不是互相顶掉
     const openA = await cdp.eval(`window.__oct.open('index.html')`)
     const openB = await cdp.eval(`window.__oct.open('data.json')`)

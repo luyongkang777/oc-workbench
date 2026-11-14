@@ -408,6 +408,11 @@ async function main() {
     // ---- HTML 专项：预览是否真的渲染、能否切源码、能否关闭 ----
     const checks = {}
 
+    // ---- 打开即显示：源码视图不能停在 pending（只看到行号、要滚一下才出字） ----
+    checks.pendingOnOpen = Object.entries(result.files)
+      .filter(([, value]) => value.lineRows > 0 && value.firstText === ' ')
+      .map(([name]) => name)
+
     const openHtml = await cdp.eval("window.__ocf.open('index.html')")
     await sleep(700)
     const htmlPreview = await cdp.eval('window.__ocf.state()')
