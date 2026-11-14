@@ -79,11 +79,11 @@ export default function CodeToolbar({
 
   return (
     <div className="editor-toolbar">
-      <span>{formatBytes(stat.size)}</span>
-      <span>
+      <span className="editor-meta">{formatBytes(stat.size)}</span>
+      <span className="editor-meta">
         {stat.lineCount > 0 ? `${stat.lineCount.toLocaleString('en-US')} 行` : '无文本行'}
       </span>
-      <span>{stat.encoding.toUpperCase()}</span>
+      <span className="editor-meta">{stat.encoding.toUpperCase()}</span>
       {stat.binary ? <span>二进制</span> : null}
       {currentLine !== null ? (
         <span className="editor-current-line">第 {currentLine.toLocaleString('en-US')} 行</span>

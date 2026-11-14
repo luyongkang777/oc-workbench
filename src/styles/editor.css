@@ -7,6 +7,9 @@
   background: var(--bg-0);
   display: flex;
   flex-direction: column;
+  /* 最终裁剪边界：中栏被拖到极窄时（工具栏 padding 的 24px 物理下限），
+     多出的几像素在这里被裁掉，绝不画到右侧聊天面板上。 */
+  overflow: hidden;
 }
 
 .editor {
@@ -20,6 +23,10 @@
   min-height: 0;
   /* 兜底：任何子元素都不许画出自己的边界 */
   overflow: hidden;
+  /* 容器查询的锚点：中栏宽度由分隔条拖出来，跟视口宽度没有对应关系，
+     用媒体查询对不上；命名是为了将来中间插入别的容器时不会静默切错。 */
+  container-type: inline-size;
+  container-name: editor-box;
 }
 
 .editor-path {
@@ -36,6 +43,10 @@
   align-items: center;
   gap: 8px;
   overflow: hidden;
+  /* 同 .editor-toolbar：长路径不能把盒子撑出窗外，且要压住内容 */
+  position: relative;
+  z-index: 2;
+  max-width: 100%;
 }
 
 .editor-path-text {
@@ -115,6 +126,11 @@
   /* 同 .editor：允许被父容器压缩，否则 padding-right 会变成 164px 的硬最小宽度，
      窗格比它窄时工具栏就画到窗格外（穿到聊天面板上）。 */
   min-width: 0;
+  /* flex 是 0 0 auto（不收缩），min-width:0 对它无效，只能靠 max-width
+     把盒子钉在父容器宽度内，多出的内容交给 overflow:hidden 裁掉。 */
+  max-width: 100%;
+  /* 兜底：无论内容因何种原因溢出，工具栏都必须画在内容之上，不能出现两层文字叠在同一行 */
+  z-index: 2;
 }
 
 /* 查看区缩放：− 100% + 适应。只影响中栏，不动整块界面（整块缩放见 useUiLayout）。 */
@@ -2329,4 +2345,72 @@
   font-size: 10px;
   line-height: 1.5;
   color: var(--text-4);
+}
+
+/* ---------- 窄中栏：工具栏分级让位 ---------- */
+/* 容器查询锚在 .editor（container-name: editor-box）。
+   优先级：纯信息 → 换行/编码 → 缩放条 → 跳转按钮；
+   「预览 / 源码」切换和跳转输入框永不让位
+   （跳转输入框必须留着：Ctrl+G 靠 jumpRef.focus() 工作，display:none 会静默失效）。 */
+
+/* 这几项是纯信息，允许缩到 0（省略号） */
+.editor-meta,
+.editor-edit-hint,
+.editor-dirty,
+.editor-current-line {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 这些是「被裁掉就没法用」的控件，永不压缩 */
+.editor-toolbar > button,
+.editor-toolbar > select,
+.editor-toolbar .editor-modes,
+.editor-toolbar .view-zoom,
+.editor-toolbar .editor-actions,
+.editor-toolbar .editor-jump,
+.editor-jump-input {
+  flex: 0 0 auto;
+}
+
+/* 1) 先让纯信息：大小 / 行数 / 编码 / 当前行 / 双击提示 / 未保存点 */
+@container editor-box (max-width: 560px) {
+  .editor-meta,
+  .editor-current-line,
+  .editor-edit-hint,
+  .editor-dirty {
+    display: none;
+  }
+}
+
+/* 2) 再让换行按钮（Alt+Z 仍可切换）与编码下拉 */
+@container editor-box (max-width: 430px) {
+  .editor-wrap-toggle,
+  .editor-toolbar .editor-enc {
+    display: none;
+  }
+}
+
+/* 3) 再让缩放条并取消它的固定预留（Ctrl+滚轮仍可缩放） */
+@container editor-box (max-width: 330px) {
+  .editor-toolbar {
+    padding-right: 12px;
+  }
+
+  .editor-toolbar .view-zoom {
+    display: none;
+  }
+}
+
+/* 4) 最后只藏冗余的「跳转」按钮，输入框留着（回车仍可跳，Ctrl+G 仍可聚焦） */
+@container editor-box (max-width: 270px) {
+  .editor-jump-btn {
+    display: none;
+  }
+
+  .editor-jump-input {
+    width: 56px;
+  }
 }
