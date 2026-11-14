@@ -55,7 +55,7 @@ enum PipeKind {
 }
 /// Windows 的 CREATE_NO_WINDOW：GUI 进程起控制台子进程时不要弹黑窗。
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// 已连接的后端：上游地址 + 认证 cookie。
 ///
@@ -441,6 +441,12 @@ fn build_command(target: &Target, args: &[&str]) -> Command {
     for arg in args {
         cmd.arg(arg);
     }
+    // pwsh 存在却起不来时（典型是 Store/MSIX 版的应用执行别名），
+    // opencode 的 shell 工具会把它当第一个候选直接使用、失败也不回退。
+    // 这里注入 SHELL 让 opencode 改选 Windows PowerShell，见 crate::shellprobe。
+    if let Some(shell) = crate::shellprobe::shell_override() {
+        cmd.env("SHELL", shell);
+    }
     cmd
 }
 
@@ -803,6 +809,41 @@ pub fn discover() -> Result<Backend, String> {
     discover_inner().map_err(|err| redact(&err))
 }
 
+/// 要不要因为「pwsh 坏了」重启服务：返回需要重启时的指纹。
+///
+/// 只在「这台机器的坏 pwsh 换了或第一次遇到」时返回 Some：指纹记在
+/// `%LOCALAPPDATA%\\oc-workbench\\shell-fallback.txt`，同一个坏 pwsh 只重启一次，
+/// 否则每次打开工作台都会重启服务、把正在跑的任务打断。
+///
+/// **重启成功（[`remember_restart`]）之后才落盘**：重启失败时要留给下一次再试。
+fn shell_restart_pending() -> Option<String> {
+    let fingerprint = crate::shellprobe::broken_fingerprint()?;
+    let marker = shell_fallback_marker();
+    if let Ok(prev) = std::fs::read_to_string(&marker) {
+        if prev.trim() == fingerprint {
+            return None;
+        }
+    }
+    Some(fingerprint)
+}
+
+/// 记下「已经为这个坏 pwsh 重启过服务」，下次不再重复重启。
+fn remember_restart(fingerprint: &str) {
+    let marker = shell_fallback_marker();
+    if let Some(dir) = marker.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(marker, fingerprint);
+}
+
+/// 记录「已经为哪个坏 pwsh 重启过服务」。
+fn shell_fallback_marker() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("oc-workbench").join("shell-fallback.txt")
+}
+
 fn discover_inner() -> Result<Backend, String> {
     // opencode 没装 / 找不到：先定位，别白等服务启动窗口。
     if resolve_opencode().is_none() {
@@ -816,6 +857,34 @@ fn discover_inner() -> Result<Backend, String> {
         Err(err) => return Err(format!("`opencode service status` 执行失败：{err}")),
     };
     let mut auto_started = false;
+    // 服务已经在跑，但它可能是「pwsh 还坏着的时候」起来的：那时 opencode 的
+    // shell 工具会一直选中坏 pwsh。SHELL 只在启动时读取，所以必须重启一次服务
+    // 才能让注入生效。同一个坏 pwsh 只重启一次，避免每次开窗都打断任务。
+    if find_base(&status).is_some() {
+        if let Some(fingerprint) = shell_restart_pending() {
+            crate::append_log(
+                "[auth] 检测到 pwsh 不可用，重启 opencode 服务以改用 Windows PowerShell\n",
+            );
+            match run_start(&["service", "restart"], SERVICE_START_TIMEOUT) {
+                Ok(()) => {
+                    // 重启成功才记账；失败要留给下一次启动再试。
+                    remember_restart(&fingerprint);
+                    let deadline = Instant::now() + SERVICE_START_TIMEOUT;
+                    status = run(&["service", "status"]).unwrap_or_default();
+                    while find_base(&status).is_none() && Instant::now() < deadline {
+                        thread::sleep(START_POLL);
+                        status = run(&["service", "status"]).unwrap_or_default();
+                    }
+                    auto_started = true;
+                }
+                Err(err) => {
+                    // 重启失败不强求：服务可能还在跑，按原样继续连。
+                    crate::append_log(&format!("[auth] 重启服务失败，继续沿用原服务：{err}\n"));
+                    status = run(&["service", "status"]).unwrap_or_default();
+                }
+            }
+        }
+    }
     if find_base(&status).is_none() {
         // 「启动 + 等就绪」共用同一个截止时间：start 耗掉的时间也算在里面，
         // 否则两个窗口会叠加，discover 锁被长期占住。
@@ -893,6 +962,67 @@ fn discover_inner() -> Result<Backend, String> {
     }
 
     Ok(Backend { base, cookie })
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use super::*;
+
+    fn marker(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ocwb-marker-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("shell-fallback.txt")
+    }
+
+    /// 读完标记判断「要不要重启」：返回需重启时的指纹。
+    fn pending(fingerprint: Option<&str>, marker: &Path) -> Option<String> {
+        let fingerprint = fingerprint?;
+        if let Ok(prev) = std::fs::read_to_string(marker) {
+            if prev.trim() == fingerprint {
+                return None;
+            }
+        }
+        Some(fingerprint.to_string())
+    }
+
+    /// 没有坏 pwsh：永远不重启。
+    #[test]
+    fn no_fingerprint_never_restarts() {
+        assert_eq!(pending(None, &marker("none")), None);
+    }
+
+    /// 第一次遇到坏 pwsh：需要重启一次。
+    #[test]
+    fn first_sighting_needs_restart() {
+        let m = marker("first");
+        assert_eq!(pending(Some(r"C:\ps\pwsh.exe"), &m), Some(r"C:\ps\pwsh.exe".to_string()));
+    }
+
+    /// 记过账之后，同一个坏 pwsh 不再触发重启。
+    #[test]
+    fn same_fingerprint_is_not_restarted_again() {
+        let m = marker("same");
+        let fp = r"C:\ps\pwsh.exe";
+        assert!(pending(Some(fp), &m).is_some());
+        remember_restart_at(fp, &m);
+        assert_eq!(pending(Some(fp), &m), None);
+    }
+
+    /// 换了一个坏 pwsh（例如又装了一个新的 Store 版）：重新重启一次。
+    #[test]
+    fn different_fingerprint_restarts_again() {
+        let m = marker("diff");
+        remember_restart_at(r"C:\a\pwsh.exe", &m);
+        assert!(pending(Some(r"C:\b\pwsh.exe"), &m).is_some());
+    }
+
+    /// [`remember_restart`] 的可注入版本（真实实现固定用 [`shell_fallback_marker`]）。
+    fn remember_restart_at(fingerprint: &str, marker: &Path) {
+        if let Some(dir) = marker.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(marker, fingerprint).expect("写标记");
+    }
 }
 
 #[cfg(test)]

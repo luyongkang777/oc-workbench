@@ -29,6 +29,7 @@ mod purge;
 mod remoteapi;
 mod update;
 mod winenc;
+mod shellprobe;
 mod server;
 mod proxy;
 mod static_files;
