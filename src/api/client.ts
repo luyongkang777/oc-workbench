@@ -1,3 +1,4 @@
+import { remoteTokenKey, withBase } from './base.ts'
 export type FsEntry = { path: string; type: 'directory' | 'file' }
 
 /** 单次请求的最长等待时间：后端卡住时不能让 UI 永远转圈。 */
@@ -20,7 +21,14 @@ function locationQuery(root: string): string {
  */
 function ocToken(): string {
   const injected = (window as unknown as { __OC_TOKEN?: unknown }).__OC_TOKEN
-  return typeof injected === 'string' ? injected : ''
+  if (typeof injected === 'string' && injected) return injected
+  // 浏览器/远程访问没有 IPC：凭据由入口 `?t=` 存进 localStorage。
+  // 不能只靠 cookie——手机浏览器（尤其微信内置）经常存不住，表现为 /api 全 403。
+  try {
+    return window.localStorage.getItem(remoteTokenKey()) ?? ''
+  } catch {
+    return ''
+  }
 }
 
 /** 把非 2xx 的响应压成一句短消息：JSON 只取 error/message，整体不超过 200 字符。 */
@@ -75,7 +83,7 @@ async function request(
   else init?.signal?.addEventListener('abort', onCancel)
 
   try {
-    const res = await fetch(path, { ...init, headers, signal: controller.signal })
+    const res = await fetch(withBase(path), { ...init, headers, signal: controller.signal })
     if (!res.ok) throw new Error(await errorText(res))
     return res
   } catch (err) {

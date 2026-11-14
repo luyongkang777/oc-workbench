@@ -15,6 +15,8 @@
  * cookie 代理，行为和改造前一致。
  */
 
+import { remoteTokenKey } from './base.ts'
+
 type WindowWithIpc = Window & {
   ipc?: { postMessage(message: string): void }
   __OC_TOKEN?: string
@@ -142,6 +144,28 @@ function scheduleRetry(): void {
 }
 
 /** 真正发起一次握手；startAuth（首次）与 retryAuth（重试）都走这里。 */
+/**
+ * 浏览器/远程访问：把入口 `?t=` 里的凭据存进 localStorage，并把 URL 里的 t 去掉。
+ *
+ * 为什么不只靠 cookie：手机上（尤其微信内置浏览器）经常存不住，
+ * 表现为页面能打开但所有 `/api` 都 403。localStorage 同源稳定，还能保留 30 天。
+ */
+function captureRemoteToken(): void {
+  try {
+    const url = new URL(window.location.href)
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''))
+    const token = url.searchParams.get('t') || hashParams.get('t')
+    if (!token) return
+    window.localStorage.setItem(remoteTokenKey(), token)
+    url.searchParams.delete('t')
+    hashParams.delete('t')
+    url.hash = hashParams.toString() ? '#' + hashParams.toString() : ''
+    window.history.replaceState(null, '', url.pathname + (url.search || '') + (url.hash || ''))
+  } catch {
+    // 存储不可用时继续走 cookie
+  }
+}
+
 function handshake(): void {
   const w = window as WindowWithIpc
 
@@ -160,6 +184,16 @@ function handshake(): void {
 
   const ipc = w.ipc
   if (!ipc?.postMessage) {
+    // 浏览器（远程访问）里没有 WebView2 的 IPC 桥，但入口已经用小票换过 cookie，
+    // 鉴权由 cookie 完成。这里必须直接判 ready：否则会一直显示「连接本地服务失败」，
+    // 用户还以为服务没起来。用 chrome.webview 区分「外壳还没就绪」和「根本没有外壳」。
+    const isWebView = Boolean((window as { chrome?: { webview?: unknown } }).chrome?.webview)
+    if (!isWebView) {
+      captureRemoteToken()
+      clearRetry()
+      emit({ status: 'ready', token: '' })
+      return
+    }
     // 外壳的 IPC 桥还没注入（页面先于桥就绪）：保持失败态但别停，退避后再要一次。
     stopNudge()
     if (state.status !== 'failed') emit({ status: 'failed', token: '', error: AUTH_FAILED_TEXT })

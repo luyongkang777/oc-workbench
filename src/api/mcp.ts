@@ -5,6 +5,7 @@
  * 每条会话都在某个目录里跑，所以这就是当前对话能用的那一批。
  * 原始结构里还有 integrationID 等字段，这里只挑界面要用的，清洗在 mcpStatus.ts。
  */
+import { withBase } from './base.ts'
 import { normalizeMcpServers, type McpServerInfo } from '../components/mcpStatus'
 
 /** 后端返回的一条记录；status 可能带 error。 */
@@ -36,7 +37,7 @@ async function call<T>(path: string): Promise<T> {
   }, REQUEST_TIMEOUT_MS)
 
   try {
-    const res = await fetch(path, { headers, cache: 'no-store', signal: controller.signal })
+    const res = await fetch(withBase(path), { headers, cache: 'no-store', signal: controller.signal })
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
     const text = await res.text()
     return (text ? JSON.parse(text) : undefined) as T

@@ -1,3 +1,4 @@
+import { withBase } from './base.ts'
 import { WORKBENCH_SOURCE } from './chat'
 
 /** 终端（T6）：在指定会话下创建一次性 PTY，轮询 snapshot 拿输出。 */
@@ -23,7 +24,7 @@ async function req(path: string, init?: RequestInit): Promise<Response> {
   if (init?.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
-  return fetch(path, { ...init, headers })
+  return fetch(withBase(path), { ...init, headers })
 }
 
 const SESSION_KEY = 'oc-workbench:terminal-session'

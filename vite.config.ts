@@ -75,6 +75,9 @@ export default defineConfig(async ({ command, isPreview }) => {
   const auth: Auth = shouldPair ? await resolveAuth() : { cookie: '', target: FALLBACK_TARGET }
 
   return {
+    // 构建产物用相对路径：同一个 exe 要在不同前缀下工作（`/u/<id>/`）。
+    // dev 保持 `/`，否则 Vite 的代理规则和资源路径都要跟着改。
+    base: command === 'build' ? './' : '/',
     define: {
       __APP_VERSION__: JSON.stringify(VERSION),
     },

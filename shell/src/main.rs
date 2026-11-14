@@ -25,7 +25,10 @@ mod fsutil;
 mod gitapi;
 mod gitbundle;
 mod projects;
+mod projects_api;
 mod purge;
+mod auth_gate;
+mod remote_auth;
 mod remoteapi;
 mod update;
 mod winenc;
@@ -147,10 +150,13 @@ fn start_local(token: &str) -> Result<String, String> {
     let backend: Arc<RwLock<Option<auth::Backend>>> = Arc::new(RwLock::new(None));
     // 与 backend 一起共享：后台线程写失败原因，`GET /api/state` 读给页面。
     let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // 路径前缀：设了的话页面和所有接口都挂在它下面（多实例隔离靠它）。
+    let base = remote_auth::remote_base();
     let port = server::start(server::Ctx {
         backend: backend.clone(),
         token: token.to_string(),
-        port: 0,
+        port: remote_auth::remote_port(),
+        base: base.clone(),
         last_error: last_error.clone(),
     })?;
     server::spawn_bootstrap(backend, last_error);
@@ -160,7 +166,8 @@ fn start_local(token: &str) -> Result<String, String> {
     append_log(&format!(
         "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));
-    Ok(format!("http://127.0.0.1:{port}/"))
+    // base 为空时结果与旧版完全一致。
+    Ok(format!("http://127.0.0.1:{port}{base}/"))
 }
 
 /// 决定页面加载的地址。
@@ -212,6 +219,12 @@ fn run() -> Result<(), String> {
     // token 由 main 生成，同时给本地服务和 IPC（页面加载后经 'oc:auth' 索取）。
     let token = server::new_token();
     let url = resolve_url(&token)?;
+
+    // 远程访问凭据（持久化，跨重启不变）。日志落在 gui-error.log，方便复制到手机。
+    let remote_token = remote_auth::cached_token();
+    append_log(&format!(
+        "[remote] 凭据 token={remote_token}\n[remote] 本地入口 {url}\n"
+    ));
 
     // IPC 回调里只入队 + 用 proxy 唤醒事件循环，真正的 evaluate_script 在主循环做
     // （WebView2 消息泵没转时脚本会被丢）。
@@ -810,7 +823,7 @@ fn log_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(LOG_NAME))
 }
 
-fn append_log(text: &str) {
+pub(crate) fn append_log(text: &str) {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
