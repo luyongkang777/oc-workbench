@@ -81,10 +81,8 @@ const ENCODING_PROBE: usize = 8192;
 /// 完整判定编码：先看 BOM；没有 BOM 就按「合法 UTF-8 → 否则合法 GB18030」猜。
 ///
 /// 判 GBK 前必须先确认「不是 UTF-8」：GBK 很宽松，UTF-8 的中文字节通常也能解成 GBK 乱码。
-/// 按内存里的字节判定编码（与 [`detect_file_encoding`] 同一套规则）。
-///
-/// 整份读取（Markdown / HTML 预览）拿到的是已经在内存里的 bytes，
-/// 不能只按 BOM 判：无 BOM 的 GBK 文件会被当成 UTF-8 解成乱码。
+/// 行索引与整份读取（Markdown / HTML 预览）都走这一套，避免两边判得不一样：
+/// 只按 BOM 判的话，无 BOM 的 GBK 文件会被当成 UTF-8 解成乱码。
 pub fn detect_bytes_encoding(bytes: &[u8], size: u64) -> (Enc, u64) {
     let (enc, data_start) = detect_encoding(&bytes[..bytes.len().min(4)]);
     if enc != Enc::Utf8 || data_start != 0 || size == 0 {
@@ -101,27 +99,14 @@ pub fn detect_bytes_encoding(bytes: &[u8], size: u64) -> (Enc, u64) {
     (Enc::Utf8, 0)
 }
 
+/// 从文件读判定编码：只读探测窗口那一小段，规则和 [`detect_bytes_encoding`] 完全一致。
 pub fn detect_file_encoding(file: &mut File, size: u64) -> io::Result<(Enc, u64)> {
-    let mut head = [0u8; 4];
-    let head_len = read_up_to(file, &mut head)?;
-    let (enc, data_start) = detect_encoding(&head[..head_len]);
-    if enc != Enc::Utf8 || data_start != 0 || size == 0 {
-        return Ok((enc, data_start));
-    }
-
     file.seek(SeekFrom::Start(0))?;
     let want = size.min(ENCODING_PROBE as u64) as usize;
     let mut probe = vec![0u8; want];
     let got = read_up_to(file, &mut probe)?;
     probe.truncate(got);
-    if probe.is_empty() || is_utf8_prefix(&probe) {
-        return Ok((Enc::Utf8, 0));
-    }
-    if crate::winenc::decode_strict(&probe).is_some() {
-        return Ok((Enc::Gbk, 0));
-    }
-    // 两边都不合法：保持旧行为，交给 UTF-8 lossy 显示
-    Ok((Enc::Utf8, 0))
+    Ok(detect_bytes_encoding(&probe, size))
 }
 
 /// 整段是否「像被切断的 UTF-8」：只有末尾半截字符才允许失败。

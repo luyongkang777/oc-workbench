@@ -284,6 +284,8 @@ async function main() {
   const exePort = process.env.OCW_CDP_PORT ? Number(process.env.OCW_CDP_PORT) : null
   const port = exePort ?? DEBUG_PORT
   const userDataDir = path.join(process.env.TEMP || OUT_DIR, 'ocwb-edge-profile-formats')
+  // cdp 提到外层：finally 里要清视口覆盖
+  let cdp = null
   const edge = exePort
     ? null
     : spawn(
@@ -304,7 +306,7 @@ async function main() {
     await waitOk(`http://127.0.0.1:${port}/json/version`, 20_000)
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
     const page = targets.find((item) => item.type === 'page')
-    const cdp = await Cdp.connect(page.webSocketDebuggerUrl)
+    cdp = await Cdp.connect(page.webSocketDebuggerUrl)
     await cdp.send('Page.enable')
     await cdp.send('Runtime.enable')
     // sandbox 里是 opaque origin，父页面拿不到 contentDocument；
@@ -545,6 +547,10 @@ async function main() {
     console.log(JSON.stringify(result, null, 2))
     writeFileSync(path.join(OUT_DIR, 'verify-formats.json'), JSON.stringify(result, null, 2))
   } finally {
+    // 恢复视口覆盖：否则脚本结束后页面还按 1500x950 渲染，看起来像窗口尺寸坏了。
+    if (cdp) {
+      await cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => {})
+    }
     if (edge) {
       // 只杀主进程会留下渲染子进程占着 profile 目录，下次启动会卡住。
       spawn('taskkill', ['/pid', String(edge.pid), '/T', '/F'], { stdio: 'ignore' })
