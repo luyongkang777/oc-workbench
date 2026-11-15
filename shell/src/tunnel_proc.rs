@@ -96,6 +96,60 @@ pub fn kill_by_port(relay_port: u16) {
     let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).status();
 }
 
+/// 本机是否已经有一条指向该回环端口的 ssh 隧道？返回它的 PID。
+///
+/// 用途：新进程 `-R` 被拒（端口已被占）时，先看看是不是「本机已经有一条」——
+/// 上一代 exe 被强杀留下的孤儿就属于这种，它指向的同样是本机 17800，
+/// 功能是好的。这时候不该继续重试刷错，复用即可。
+#[cfg(windows)]
+pub fn tunnel_pid_for(relay_port: u16) -> Option<u32> {
+    let script = format!(
+        "Get-CimInstance Win32_Process -Filter \"Name='ssh.exe'\" | \
+         Where-Object {{ $_.CommandLine -like '*-R 127.0.0.1:{relay_port}:*' }} | \
+         Select-Object -First 1 -ExpandProperty ProcessId"
+    );
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    hide_window(&mut cmd);
+    let out = cmd.output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse::<u32>().ok()
+}
+
+#[cfg(not(windows))]
+pub fn tunnel_pid_for(relay_port: u16) -> Option<u32> {
+    let out = Command::new("pgrep")
+        .args(["-f", &format!("-R 127.0.0.1:{relay_port}:")])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .parse::<u32>()
+        .ok()
+}
+
+/// 进程是否还活着（用于「复用已有隧道」时的存活监控）。
+#[cfg(windows)]
+pub fn pid_alive(pid: u32) -> bool {
+    let mut cmd = Command::new("tasklist");
+    cmd.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
+    hide_window(&mut cmd);
+    match cmd.output() {
+        Ok(out) => !String::from_utf8_lossy(&out.stdout).contains("No tasks"),
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn pid_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(not(windows))]
 pub fn kill_by_port(relay_port: u16) {
     let _ = Command::new("pkill")

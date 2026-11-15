@@ -176,6 +176,12 @@ fn keep_alive(config: TunnelConfig, generation: u64) {
         match proc::spawn_ssh(config.relay_port, config.local_port, &config.host) {
             Ok(mut child) => {
                 CHILD_PID.store(child.id(), Ordering::SeqCst);
+                // 竞态：spawn 后、记录 PID 前若已被新代取代（retire_current 看到 0 不会杀），
+                // 必须自己收掉，否则留下孤儿隧道，下次重建一直撞「端口被占用」。
+                if !still_current(generation) {
+                    proc::kill_pid(child.id());
+                    return;
+                }
                 proc::remember_pid(child.id());
                 backoff = RETRY_MIN;
                 // 不能「进程起来就清错误」：ssh 失败时也是先起来再退出（DNS 解析失败、
@@ -222,6 +228,36 @@ fn keep_alive(config: TunnelConfig, generation: u64) {
                     &config.host,
                     reason.as_str(),
                 )));
+
+                // 端口被拒时先看「本机是不是已经有一条在服务」：上一代 exe 被强杀留下的
+                // 孤儿就长这样（同样指向本机 17800、功能正常）。直接重建只会一直撞端口并刷屏，
+                // 所以先复用它 20 秒，再由本进程接管重建。
+                if detail.contains("forwarding failed") {
+                    if let Some(existing) = proc::tunnel_pid_for(config.relay_port) {
+                        crate::tunnel_status::set_error(None);
+                        crate::append_log(&format!(
+                            "[tunnel] 本机已有隧道 pid={existing} 在服务，先复用它（20 秒后接管重建）\n"
+                        ));
+                        for _ in 0..10 {
+                            if !still_current(generation) {
+                                return;
+                            }
+                            // 旧进程自己没了就不用等满 20 秒
+                            if !proc::pid_alive(existing) {
+                                break;
+                            }
+                            thread::sleep(Duration::from_secs(2));
+                        }
+                        // 接管：杀掉旧进程（它可能已经不可用，也可能只是残留），自己重建。
+                        proc::kill_pid(existing);
+                        thread::sleep(proc::RELEASE_GRACE);
+                        continue;
+                    }
+                    // 本机没有同端口隧道 → 端口被别处占着（多半在等服务端释放），重试拉长。
+                    proc::kill_by_port(config.relay_port);
+                    thread::sleep(proc::RELEASE_GRACE);
+                    backoff = RETRY_MAX;
+                }
                 crate::append_log(&format!(
                     "[tunnel] ssh 退出（{reason}），{} 秒后重连\n",
                     backoff.as_secs()
