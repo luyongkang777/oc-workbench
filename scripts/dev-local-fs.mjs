@@ -640,6 +640,12 @@ async function handle(req, res) {
     throw httpError(405, '只支持 GET / PUT / POST')
   }
   const url = new URL(req.url, 'http://127.0.0.1')
+
+  // 目录浏览（手机选项目用）：dev 也实现一份，语义与外壳 /local/browse 一致。
+  if (url.pathname === '/local/browse' || url.pathname === '/local/browse/mkdir') {
+    return handleBrowse(req, res, url)
+  }
+
   const action = url.pathname.split('/').pop()
   const root = url.searchParams.get('root') || ''
   const rel = url.searchParams.get('path') || ''
@@ -816,6 +822,94 @@ async function handle(req, res) {
   }
 
   throw httpError(404, '未知的本地文件接口')
+}
+
+/**
+ * 目录浏览：���给前端列子目录 / 新建文件夹。
+ *
+ * 只列目录、不读文件内容；路径必须绝对。语义与 `shell/src/browse.rs` 保持一致。
+ */
+async function handleBrowse(req, res, url) {
+  if (url.pathname === '/local/browse/mkdir') {
+    if (req.method !== 'POST') throw httpError(405, '新建文件夹只支持 POST')
+    const raw = (await readBody(req, 8 * 1024)).toString('utf8').trim()
+    let body = {}
+    try {
+      body = raw ? JSON.parse(raw) : {}
+    } catch {
+      throw httpError(400, '请求体不是 JSON')
+    }
+    const parent = String(body.parent || '').trim()
+    const name = String(body.name || '').trim()
+    if (!parent || !path.isAbsolute(parent)) throw httpError(400, '需要绝对路径的上级目录')
+    if (!name || name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name)) {
+      throw httpError(400, '文件夹名不合法')
+    }
+    if (name.endsWith('.') || name.endsWith(' ')) throw httpError(400, '文件夹名不能以点或空格结尾')
+    const target = path.join(parent, name)
+    let exists = false
+    try {
+      await statFile(target)
+      exists = true
+    } catch {
+      /* 不存在才继续建 */
+    }
+    if (exists) throw httpError(409, '同名文件夹已存在')
+    await mkdir(target)
+    return sendJson(res, 200, { ok: true, path: target })
+  }
+
+  const raw = (url.searchParams.get('path') || '').trim()
+  if (!raw) {
+    // 盘符列表：能 readdir 就认为存在
+    const drives = []
+    for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+      const root = `${letter}:\\`
+      try {
+        await readdir(root)
+        drives.push({ name: `${letter}:`, path: root })
+      } catch {
+        /* 这个盘不存在 */
+      }
+    }
+    return sendJson(res, 200, { path: '', parent: '', drives, dirs: [], truncated: false })
+  }
+  if (!path.isAbsolute(raw)) throw httpError(400, '需要绝对路径（例如 C:\\Users）')
+
+  const entries = await readdir(raw, { withFileTypes: true })
+  const noise = new Set(['$recycle.bin', 'system volume information', 'recovery'])
+  const dirs = []
+  let truncated = false
+  for (const entry of entries) {
+    if (dirs.length >= 1000) {
+      truncated = true
+      break
+    }
+    if (noise.has(entry.name.toLowerCase())) continue
+    const full = path.join(raw, entry.name)
+    if (entry.isDirectory()) {
+      dirs.push({ name: entry.name, path: full })
+      continue
+    }
+    if (entry.isSymbolicLink()) {
+      try {
+        const info = await statFile(full)
+        if (info.isDirectory()) dirs.push({ name: entry.name, path: full })
+      } catch {
+        /* 断链跳过 */
+      }
+    }
+  }
+  dirs.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+  const parent = path.dirname(raw)
+  const display = raw.replace(/[\\/]+$/, '') || raw
+  return sendJson(res, 200, {
+    path: raw.length > 3 ? display : raw,
+    parent: parent === raw ? '' : parent,
+    drives: [],
+    dirs,
+    truncated,
+  })
 }
 
 /** 只拦截 `/local` 与 `/local/`，其余请求原样交给 Vite。 */

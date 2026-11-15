@@ -12,7 +12,9 @@
 #![windows_subsystem = "windows"]
 
 mod auth;
+mod balance;
 mod body;
+mod browse;
 mod cli;
 mod draft;
 mod fetch;
@@ -297,7 +299,30 @@ fn run() -> Result<(), String> {
     let no_query = url.split('?').next().unwrap_or(&url);
     let local_origin = no_query.trim_end_matches('/').to_string();
     let nav_origin = local_origin.clone();
-    let ipc_origin = local_origin.clone();
+    // 本机实例在 URL 里的路径标识（单机模式为空，远程模式形如 /u/<id>）。
+    //
+    // 为什么需要它：白名单放行的是「站点」，而「账号 → 打开另一台电脑」跳的是同一个
+    // 网关域名、不同 /u/<另一台 id>/ 路径。不分辨的话，那台电脑的页面运行在本机 webview
+    // 里，它就能用 `oc:auth` 拿走本机 token、用 `oc:save-root` 覆盖本机 root.txt。
+    // 所以 IPC 按命令分级：窗口命令谁都给，读本机状态/弹对话框只给本机页面。
+    let ipc_local_marker = origin_of(&url)
+        .and_then(|origin| local_origin.strip_prefix(&origin).map(str::to_string))
+        .unwrap_or_default();
+    let ipc_local_origin = local_origin.clone();
+    // 允许发 IPC 的页面来源。启动地址只是本地隧道入口（127.0.0.1:17800），
+    // 页面随后会被 302 到公网网关（http://<公网IP>:7800/u/<id>/）。
+    // 只认启动时那一个 origin 的话，窗口按钮、令牌握手、项目清单这些 IPC
+    // 会在跳转后全部被拒，表现就是「窗口不能拖、不能最小化/最大化/关闭」。
+    // 所以白名单跟着「已经放行的导航目标」一起扩容，仍然只放行我们批准过的站点。
+    let allowed_origins: Arc<Mutex<Vec<String>>> = {
+        let mut list: Vec<String> = Vec::new();
+        if let Some(origin) = origin_of(&url) {
+            list.push(origin);
+        }
+        Arc::new(Mutex::new(list))
+    };
+    let origins_nav = allowed_origins.clone();
+    let origins_ipc = allowed_origins.clone();
     // 账号面板点「打开另一台电脑」要跳到公网网关，必须放行（否则静默无反应）。
     // 注意不能在这里快照：gatewayUrl 是登录后才写进 settings.json 的。
     let token_sent = Arc::new(AtomicBool::new(false));
@@ -322,13 +347,18 @@ fn run() -> Result<(), String> {
                 || target.starts_with("blob:");
             if !allowed {
                 append_log(&format!("[nav] 阻止导航 {target}\n"));
+                return false;
             }
-            allowed
+            // 这是我们批准过的页面 → 把它所在的站点加入 IPC 白名单，
+            // 页面跳到网关域名后发窗口命令时才不会被当成外来源丢掉。
+            remember_origin(&origins_nav, &target);
+            true
         })
         .with_ipc_handler(move |request: wry::http::Request<String>| {
             let uri = request.uri().to_string();
-            // 只接受本站页面发来的消息；uri 为空时放行（部分平台不提供来源）。
-            if !uri.is_empty() && !uri.starts_with(&ipc_origin) {
+            // 只接受我们自己加载过的页面发来的消息（本地入口 + 跳转后的网关）。
+            // uri 为空时放行：部分平台不提供来源。
+            if !uri.is_empty() && !origin_allowed(&origins_ipc, &uri) {
                 append_log(&format!("[ipc] 拒绝来源 {uri}\n"));
                 return;
             }
@@ -371,6 +401,15 @@ fn run() -> Result<(), String> {
                         let _ = proxy.send_event(());
                     }
                 });
+                return;
+            }
+            // 走到这里说明它既不是窗口命令也不是打开外链：下面会读本机密钥、
+            // 改本机项目清单、弹本机对话框，只允许本机实例自己的页面。
+            let native_page = uri.is_empty()
+                || uri.starts_with(&ipc_local_origin)
+                || (!ipc_local_marker.is_empty() && uri.contains(&ipc_local_marker));
+            if !native_page {
+                append_log(&format!("[ipc] 忽略非本机页面的命令：{body}\n"));
                 return;
             }
             if let Some(root) = body.strip_prefix("oc:save-root:") {
@@ -751,6 +790,58 @@ enum WinCmd {
     ToggleMaximize,
     Close,
     Drag,
+}
+
+/// 取 URL 的站点根（scheme://host[:port]）。非法或非 http(s) 返回 None。
+///
+/// IPC 来源判定按 origin 而不是完整地址：同一台服务器上的页面换路径
+/// （例如远程入口 `/u/<id>/` 后面再跟子路径）不该被当成外来源。
+fn origin_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    if !matches!(scheme, "http" | "https") {
+        return None;
+    }
+    let end = rest.find('/').unwrap_or(rest.len());
+    let host = &rest[..end];
+    if host.is_empty() {
+        return None;
+    }
+    Some(format!("{scheme}://{host}"))
+}
+
+/// 把 URL 的站点加进白名单；第一次出现时返回该 origin（日志交给调用方，方便单测）。
+fn push_origin(list: &mut Vec<String>, url: &str) -> Option<String> {
+    let origin = origin_of(url)?;
+    if list.iter().any(|item| item == &origin) {
+        return None;
+    }
+    list.push(origin.clone());
+    Some(origin)
+}
+
+/// 把放行过的导航目标记进 IPC 白名单（去重，首次新增时记一行日志）。
+fn remember_origin(list: &Arc<Mutex<Vec<String>>>, url: &str) {
+    if let Ok(mut items) = list.lock() {
+        if let Some(origin) = push_origin(&mut items, url) {
+            append_log(&format!("[ipc] 允许来源 {origin}\n"));
+        }
+    }
+}
+
+/// 来源地址是否属于已放行的站点（按 origin 比，路径无关）。
+fn origin_listed(list: &[String], uri: &str) -> bool {
+    match origin_of(uri) {
+        Some(origin) => list.iter().any(|item| item == &origin),
+        // 解析不出站点就退回前缀比：宁可拒绝也不放行来路不明的东西。
+        None => list.iter().any(|item| uri.starts_with(item.as_str())),
+    }
+}
+
+/// IPC 来源是否在已放行的站点里。
+fn origin_allowed(list: &Arc<Mutex<Vec<String>>>, uri: &str) -> bool {
+    list.lock()
+        .map(|items| origin_listed(&items, uri))
+        .unwrap_or(false)
 }
 
 /// 最大化状态变化时告诉页面，前端据此在「最大化」和「还原」图标之间切换。

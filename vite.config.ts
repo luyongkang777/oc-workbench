@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { localBalancePlugin } from './scripts/dev-local-balance.mjs'
 import { localFsPlugin } from './scripts/dev-local-fs.mjs'
 import { localGitPlugin } from './scripts/dev-local-git.mjs'
 import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
@@ -84,7 +85,16 @@ export default defineConfig(async ({ command, isPreview }) => {
     // 顺序有意义：LocalFs 拦的是所有 `/local/*`，Git / Remote / Purge 必须排它前面，
     // 否则 `/local/git/status`、`/local/remote/accounts`、`/local/purge/status`
     // 会被 fs 插件接走（回「未知的本地文件接口」）。
-    plugins: [react(), localGitPlugin(), localRemotePlugin(), localPurgePlugin(), localFsPlugin()],
+    // 顺序有意义：balance / browse 这类具体前缀必须在 localFsPlugin 之前，
+    // 否则会被它当成「未知的本地文件接口」回 404。
+    plugins: [
+      react(),
+      localGitPlugin(),
+      localRemotePlugin(),
+      localPurgePlugin(),
+      localBalancePlugin(),
+      localFsPlugin(),
+    ],
     server: {
       port: 5273,
       strictPort: true,

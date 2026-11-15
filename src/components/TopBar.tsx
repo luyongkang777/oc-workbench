@@ -1,4 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import BalanceChip from './BalanceChip'
 import { Icon } from './Icon'
 import ProjectTabs from './ProjectTabs'
 import UpdateEntry from './UpdateEntry'
@@ -94,6 +95,7 @@ export default function TopBar(props: TopBarProps) {
         <span className="status-text" title={props.retryError ?? props.statusText}>
           {props.statusText}
         </span>
+        <BalanceChip />
         {props.showRetry ? (
           <button
             type="button"

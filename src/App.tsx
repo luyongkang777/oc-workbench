@@ -4,6 +4,7 @@ import { getAuthState, subscribeAuth } from './api/auth'
 import { isWindowDragTarget, sendWindowCommand } from './api/window'
 import { AppContext, type AppContextValue } from './appContext'
 import AppShell from './components/AppShell'
+import FolderPicker from './components/FolderPicker'
 import { readRemoteBack } from './appConfig'
 import { parseSubagentMode, type SubagentMode } from './components/subagent'
 import { useAppEffects } from './hooks/useAppEffects'
@@ -95,7 +96,16 @@ export default function App() {
     [tabs],
   )
 
-  const { root, projects, applyRoot, forgetProject, pickFolder } = useWorkspace({
+  const {
+    root,
+    projects,
+    applyRoot,
+    forgetProject,
+    pickFolder,
+    folderPickerOpen,
+    closeFolderPicker,
+    chooseFolder,
+  } = useWorkspace({
     rootRef,
     hasDirtyTabs: tabs.hasDirtyTabs,
     currentUiState: () => ({ file: tabs.file, view }),
@@ -288,6 +298,13 @@ export default function App() {
   return (
     <AppContext.Provider value={ctx}>
       <AppShell />
+      {/* 浏览器/手机选项目目录：exe 里走原生对话框，这里只在外壳缺席时出现 */}
+      <FolderPicker
+        open={folderPickerOpen}
+        initialPath={root}
+        onClose={closeFolderPicker}
+        onPick={chooseFolder}
+      />
     </AppContext.Provider>
   )
 }

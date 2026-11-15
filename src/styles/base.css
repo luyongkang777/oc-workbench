@@ -303,6 +303,53 @@ body {
   background: var(--bg-control);
 }
 
+/* ---------- 顶栏余额胶囊（DeepSeek 官方余额） ---------- */
+/* 只说一个数：明细在 title 里。窄窗口/手机由 mobile.css 隐藏。 */
+.balance-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-radius: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--ease),
+    background var(--ease),
+    border-color var(--ease);
+}
+
+.balance-chip:hover {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
+}
+
+.balance-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+/* 余额偏低：变黄提醒该充钱了 */
+.balance-chip.warn {
+  color: var(--warn);
+  border-color: var(--warn-line);
+}
+
+/* 查询失败 / 账号不可用 / 没配密钥 */
+.balance-chip.bad,
+.balance-chip.pending {
+  color: var(--text-3);
+}
+
 /* 关闭按钮沿用 Windows 习惯：悬停红底白叉 */
 .win-close:hover {
   background: #d33a2c;

@@ -5,8 +5,8 @@
 
 use super::{
     centered_window_position, clamp_saved_window, comfort_window_logical, format_window_size,
-    normalize_scale, parse_window_size, should_remember_window, window_memory_decision,
-    WindowMemory,
+    normalize_scale, origin_listed, origin_of, parse_window_size, push_origin,
+    should_remember_window, window_memory_decision, WindowMemory,
 };
 
 /// 有代表性的「物理分辨率 + 缩放率」组合。
@@ -185,4 +185,68 @@ fn window_memory_decision_covers_all_three_cases() {
         window_memory_decision((1280.0, 840.0), initial, auto),
         WindowMemory::Clear
     );
+}
+
+// ---------- IPC 来源白名单 ----------
+//
+// 实测故障：exe 从本地隧道入口 `http://127.0.0.1:17800/u/<id>/?t=...` 启动，
+// 页面被 302 到公网网关 `http://<公网IP>:7800/u/<id>/`。白名单只认启动时那个
+// origin，于是跳转后所有 IPC 都被丢弃 —— 窗口不能拖、不能最小化/最大化/关闭。
+
+#[test]
+fn origin_of_returns_site_root() {
+    assert_eq!(
+        origin_of("http://127.0.0.1:17800/u/abc/?t=x").as_deref(),
+        Some("http://127.0.0.1:17800")
+    );
+    assert_eq!(
+        origin_of("https://example.com/path").as_deref(),
+        Some("https://example.com")
+    );
+    // 没有路径也要能取到。
+    assert_eq!(
+        origin_of("http://10.0.0.2:7800").as_deref(),
+        Some("http://10.0.0.2:7800")
+    );
+    // 非 http(s) 与残缺地址一律不认。
+    assert_eq!(origin_of("about:blank"), None);
+    assert_eq!(origin_of("data:text/html,x"), None);
+    assert_eq!(origin_of("file:///C:/x.html"), None);
+    assert_eq!(origin_of("http://"), None);
+    assert_eq!(origin_of(""), None);
+}
+
+#[test]
+fn gateway_origin_is_whitelisted_after_redirect() {
+    let mut list = vec!["http://127.0.0.1:17800".to_string()];
+
+    // 启动地址：本地隧道入口本来就在白名单里。
+    assert!(origin_listed(&list, "http://127.0.0.1:17800/u/abc/?t=x"));
+
+    // 跳转前，公网网关不该被认（白名单不能被无意放宽）。
+    assert!(!origin_listed(&list, "http://81.70.181.82:7800/u/abc/"));
+
+    // 导航放行后把网关站点记进来。
+    assert_eq!(
+        push_origin(&mut list, "http://81.70.181.82:7800/u/abc/").as_deref(),
+        Some("http://81.70.181.82:7800")
+    );
+
+    // 之后页面在网关域名上发的窗口命令不再被拒。
+    assert!(origin_listed(&list, "http://81.70.181.82:7800/u/abc/"));
+
+    // 同一站点换路径不重复添加，也不影响判定。
+    assert_eq!(push_origin(&mut list, "http://81.70.181.82:7800/u/abc/x"), None);
+    assert_eq!(list.len(), 2);
+
+    // 别的站点仍然进不来。
+    assert!(!origin_listed(&list, "http://evil.example/"));
+}
+
+#[test]
+fn non_http_navigation_does_not_widen_the_whitelist() {
+    let mut list: Vec<String> = Vec::new();
+    assert_eq!(push_origin(&mut list, "about:blank"), None);
+    assert_eq!(push_origin(&mut list, "data:text/html,hi"), None);
+    assert!(list.is_empty());
 }

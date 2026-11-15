@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { BALANCE_REFRESH_EVENT } from '../api/balance'
 import { isIncrementalEvent, subscribeEvents, type StreamEvent } from '../api/chat'
 
 /**
@@ -107,6 +108,12 @@ export function useChatEvents(
       while (!stopped) {
         try {
           await subscribeEvents((event) => {
+            // 一轮模型调用结束 = 刚刚扣了钱：广播一次，让顶栏余额立刻更新。
+            // 任何会话都算（余额是账号级的），胶囊自己做了 2.5 秒节流。
+            if (typeof event.type === 'string' && event.type.endsWith('step.ended')) {
+              window.dispatchEvent(new CustomEvent(BALANCE_REFRESH_EVENT))
+            }
+
             // form.created 的 data 是 { form: {...} }，sessionID 在 form 里
             const sid = event.data?.sessionID ?? event.data?.form?.sessionID
 

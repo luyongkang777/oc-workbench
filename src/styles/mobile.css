@@ -23,9 +23,28 @@
 
 #root .app[data-mobile='1'] .topbar .brand,
 #root .app[data-mobile='1'] .status-text,
-#root .app[data-mobile='1'] .win-controls,
 #root .app[data-mobile='1'] .update-entry {
   display: none;
+}
+
+/* 余额在手机上保留：远程访问时最想知道的就是还剩多少钱。
+   只做紧凑化，别让它挤掉项目标签。 */
+#root .app[data-mobile='1'] .balance-chip {
+  height: 28px;
+  padding: 0 8px;
+  margin-left: 0;
+  font-size: 12px;
+}
+
+/* .win-controls 不在这里隐藏：exe 拖窄到手机宽度时它是唯一的关闭入口。
+   手机浏览器里没有外壳 IPC，组件自身就不渲染（hasWindowControls 为假）。 */
+#root .app[data-mobile='1'] .win-controls {
+  height: 100%;
+  margin-right: -8px;
+}
+
+#root .app[data-mobile='1'] .win-control {
+  width: 40px;
 }
 
 #root .app[data-mobile='1'] .topbar-right {

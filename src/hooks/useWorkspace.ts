@@ -128,16 +128,28 @@ export function useWorkspace(options: {
     [rootRef, commitProjects, applyRoot],
   )
 
-  // 选文件夹：外壳通过 IPC 弹原生对话框；dev/浏览器退化成输入框。
+  // 选文件夹：外壳通过 IPC 弹原生对话框；浏览器/手机打开目录浏览面板
+  // （以前这里是 window.prompt 让人手输路径，手机上基本没法用）。
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)
   const pickFolder = useCallback(() => {
     const w = window as unknown as { ipc?: { postMessage(message: string): void } }
     if (w.ipc?.postMessage) {
       w.ipc.postMessage('oc:pick-folder')
       return
     }
-    const value = window.prompt('输入文件夹路径（可直接粘贴带引号的路径）', rootRef.current)
-    if (value) applyRoot(value)
-  }, [rootRef, applyRoot])
+    setFolderPickerOpen(true)
+  }, [])
+
+  const closeFolderPicker = useCallback(() => setFolderPickerOpen(false), [])
+
+  /** 在浏览面板里选定目录：关面板 + 切过去（与原生对话框落地后同一条路）。 */
+  const chooseFolder = useCallback(
+    (path: string) => {
+      setFolderPickerOpen(false)
+      applyRoot(path)
+    },
+    [applyRoot],
+  )
 
   // 启动时拉起项目清单。外壳回的清单可能比「刚打开的这个目录」旧（两条 IPC 到达顺序不定），
   // 所以跟本地已有的合并，别把用户刚打开的项目覆盖掉。
@@ -185,5 +197,15 @@ export function useWorkspace(options: {
     return () => window.clearTimeout(timer)
   }, [uiSnapshot.file, uiSnapshot.view, rootRef])
 
-  return { root, projects, applyRoot, forgetProject, pickFolder, commitProjects }
+  return {
+    root,
+    projects,
+    applyRoot,
+    forgetProject,
+    pickFolder,
+    folderPickerOpen,
+    closeFolderPicker,
+    chooseFolder,
+    commitProjects,
+  }
 }

@@ -1,0 +1,268 @@
+/*
+ * DeepSeek 余额面板（点顶栏胶囊打开）。
+ *
+ * 右侧抽屉，与账号面板同一套交互（遮罩点击关闭、Esc 关闭）。
+ * 手机端铺满整屏——底部弹出的键盘不会把输入框挤出视野。
+ */
+
+.balance-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 60;
+}
+
+.balance-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border-left: 1px solid var(--line-1);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.28);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform var(--ease),
+    visibility var(--ease);
+  z-index: 61;
+}
+
+.balance-panel.open {
+  transform: none;
+  visibility: visible;
+}
+
+.balance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-1);
+  flex: 0 0 auto;
+}
+
+.balance-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.balance-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1;
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.balance-close:hover {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+.balance-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 14px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.balance-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.balance-section-title {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* 顶部余额数字：面板里最显眼的一行 */
+.balance-now {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.balance-now-value {
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+
+.balance-now.warn .balance-now-value {
+  color: var(--warn);
+}
+
+.balance-now.bad .balance-now-value,
+.balance-now.pending .balance-now-value {
+  color: var(--text-3);
+}
+
+.balance-hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--text-3);
+  word-break: break-word;
+}
+
+.balance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.balance-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  color: var(--text-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+}
+
+.balance-input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.balance-unit {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.balance-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  border-radius: var(--r-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--ease),
+    color var(--ease),
+    border-color var(--ease);
+}
+
+.balance-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.balance-btn.primary {
+  background: var(--accent-weak);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.balance-btn.primary:hover:not(:disabled) {
+  background: var(--accent-weak-hover);
+}
+
+.balance-btn.ghost {
+  background: var(--bg-control);
+  border-color: var(--line-1);
+  color: var(--text-2);
+}
+
+.balance-btn.ghost:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  color: var(--text-1);
+}
+
+.balance-btn.ghost.danger:hover:not(:disabled) {
+  color: #d33a2c;
+  border-color: #d33a2c66;
+}
+
+/* 金额 / 渠道快捷按钮 */
+.balance-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.balance-preset {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.balance-preset:hover {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+}
+
+.balance-preset.active {
+  color: var(--accent);
+  background: var(--accent-weak);
+  border-color: var(--accent-line);
+}
+
+.balance-msg {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.balance-msg.ok {
+  color: var(--accent);
+}
+
+.balance-msg.bad {
+  color: #e06c5f;
+}
+
+/* 手机：铺满整屏，输入框足够大（防 iOS/Android 自动缩放） */
+@media (max-width: 640px) {
+  .balance-panel {
+    width: 100%;
+    max-width: none;
+    border-left: none;
+  }
+
+  .balance-input {
+    height: 40px;
+    font-size: 16px;
+  }
+
+  .balance-btn {
+    height: 40px;
+  }
+
+  .balance-preset {
+    height: 34px;
+  }
+}

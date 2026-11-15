@@ -14,6 +14,8 @@ import './styles/mobile.css'
 import './styles/mobile-tuning.css'
 import './styles/mobile-breakpoints.css'
 import './styles/account.css'
+import './styles/balance.css'
+import './styles/folder.css'
 // 顶部设备条：自带 [data-mobile] 的尺寸分支，放在断点之后也不会被覆盖
 import './styles/device-strip.css'
 

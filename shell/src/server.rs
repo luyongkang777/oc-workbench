@@ -515,6 +515,18 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             crate::cli::handle(request, &path, &url);
             return;
         }
+        // 目录浏览（手机选项目用）：只列目录，路径必须是绝对路径。
+        // 必须排在 fsapi 前面，否则会被「未知的本地文件接口」吃掉。
+        if path == "/local/browse" || path.starts_with("/local/browse/") {
+            crate::browse::handle(request, &path, &url);
+            return;
+        }
+        // DeepSeek 官方余额：壳自己读本机密钥去查官方接口（4 秒防抖缓存）。
+        // 放在 fsapi 前面，否则会被「未知的本地文件接口」吃掉。
+        if path == "/local/balance" || path.starts_with("/local/balance/") {
+            crate::balance::handle(request, &path, &url);
+            return;
+        }
         // 破甲注入开关：只读写插件 config.json 的 enabled，必须排在 fsapi 前面。
         if path.starts_with("/local/purge/") {
             crate::purge::handle(request, &path, &url);

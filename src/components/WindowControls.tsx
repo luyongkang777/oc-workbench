@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { onWindowMaximized, sendWindowCommand } from '../api/window'
+import { hasWindowControls, onWindowMaximized, sendWindowCommand } from '../api/window'
 
 /**
  * 自绘窗口按钮（最小化 / 最大化 / 关闭）。
@@ -15,6 +15,10 @@ export default function WindowControls() {
   const [maximized, setMaximized] = useState(false)
 
   useEffect(() => onWindowMaximized(setMaximized), [])
+
+  // 浏览器里（dev / 手机 / 远程网页）没有外壳 IPC，这三个按钮点了只会没反应，
+  // 不渲染比画出来更诚实。桌面 exe 拖窄到手机宽度时仍然保留——那是唯一的关闭入口。
+  if (!hasWindowControls()) return null
 
   return (
     <div className="win-controls" data-win-controls>

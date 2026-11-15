@@ -1,0 +1,286 @@
+/*
+ * 选项目目录的浏览面板（手机 / 浏览器）。
+ *
+ * 桌面居中弹窗；手机上铺满整屏——目录列表本来就要占满视野，
+ * 小浮窗在 390px 宽里只放得下两行。
+ */
+
+.folder-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 70;
+}
+
+.folder-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 520px;
+  max-width: 92vw;
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
+  visibility: hidden;
+  z-index: 71;
+}
+
+.folder-dialog.open {
+  visibility: visible;
+}
+
+.folder-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-1);
+  flex: 0 0 auto;
+}
+
+.folder-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.folder-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 18px;
+  line-height: 1;
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.folder-close:hover {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+/* 路径条：上一级 + 面包屑（可点回任意一级） */
+.folder-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-1);
+  flex: 0 0 auto;
+}
+
+.folder-up {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line-1);
+  background: var(--bg-control);
+  color: var(--text-2);
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.folder-up:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.folder-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+
+.folder-crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.folder-crumb-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.folder-crumb {
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  color: var(--text-2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.folder-crumb:hover {
+  color: var(--accent);
+  background: var(--bg-control);
+}
+
+.folder-crumb-sep,
+.folder-crumb-gap {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  padding: 0 1px;
+}
+
+/* 目录列表 */
+.folder-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px;
+  min-height: 160px;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  text-align: left;
+  border-radius: var(--r-2);
+  cursor: pointer;
+}
+
+.folder-row:hover {
+  background: var(--bg-control);
+}
+
+.folder-icon {
+  flex: 0 0 auto;
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-hint {
+  margin: 0;
+  padding: 10px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 底部：新建文件夹 + 用它 */
+.folder-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--line-1);
+}
+
+.folder-new {
+  display: flex;
+  gap: 8px;
+}
+
+.folder-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  color: var(--text-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+}
+
+.folder-input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.folder-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  border-radius: var(--r-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.folder-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.folder-btn.primary {
+  background: var(--accent-weak);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.folder-btn.primary:hover:not(:disabled) {
+  background: var(--accent-weak-hover);
+}
+
+.folder-btn.ghost {
+  background: var(--bg-control);
+  border-color: var(--line-1);
+  color: var(--text-2);
+}
+
+.folder-btn.ghost:hover:not(:disabled) {
+  background: var(--bg-control-hover);
+  color: var(--text-1);
+}
+
+.folder-msg {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: #e06c5f;
+}
+
+/* 手机：整屏 */
+@media (max-width: 640px) {
+  .folder-dialog {
+    left: 0;
+    top: 0;
+    transform: none;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+  }
+
+  .folder-row {
+    padding: 12px 10px;
+    font-size: 15px;
+  }
+
+  .folder-input,
+  .folder-btn {
+    height: 40px;
+    font-size: 15px;
+  }
+}
