@@ -181,11 +181,33 @@ export async function claimDevice(
   base: string,
   token: string,
   device: LocalDevice,
-): Promise<{ id: string; name: string; owner: string }> {
-  return request<{ id: string; name: string; owner: string }>(base, '/portal/api/claim', {
-    method: 'POST',
-    body: JSON.stringify(device),
-  }, token)
+): Promise<{ id: string; name: string; owner: string; port: number }> {
+  // port 是网关分给这台设备的回环端口，sshd 在那上面 -R 回本机 17800。
+  // 拿回来要让 exe 建隧道 —— 否则「登录了但网页端连不过来」（离线）。
+  return request<{ id: string; name: string; owner: string; port: number }>(
+    base,
+    '/portal/api/claim',
+    { method: 'POST', body: JSON.stringify(device) },
+    token,
+  )
+}
+
+/**
+ * 把隧道端口交给 exe：写进 settings.json 并立刻重建隧道。
+ *
+ * 失败不抛错：隧道建不起来只影响「远端能不能连进来」，不该挡住登录本身。
+ */
+export async function setTunnelPort(port: number): Promise<void> {
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return
+  try {
+    await fetch(localApi('/local/account/tunnel'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ relayPort: port }),
+    })
+  } catch {
+    // 忽略：下次启动 exe 仍会按 settings.json 里的旧值重试
+  }
 }
 
 // ---------- 请求 ----------

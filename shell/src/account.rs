@@ -57,6 +57,36 @@ pub fn handle(mut request: Request, path: &str, _url: &str) {
         respond_json(request, 200, device_json());
         return;
     }
+    // 隧道端口：登录认领后网关会把分给这台设备的回环端口回给页面，
+    // 页面转手存到这里 —— exe 随即按它重建隧道，不需要用户再跑脚本。
+    if path.ends_with("/tunnel") {
+        if request.method().as_str() != "POST" {
+            respond_json(request, 405, "{\"error\":\"只支持 POST\"}".to_string());
+            return;
+        }
+        let mut body = String::new();
+        if let Err(err) = request.as_reader().read_to_string(&mut body) {
+            respond_json(request, 400, format!("{{\"error\":\"读取失败：{err}\"}}"));
+            return;
+        }
+        let port = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("relayPort").and_then(|p| p.as_i64()))
+            .unwrap_or(0);
+        if port <= 0 || port > 65535 {
+            respond_json(request, 400, "{\"error\":\"relayPort 不合法\"}".to_string());
+            return;
+        }
+        match crate::update::set_number_setting("relayPort", Some(port)) {
+            Ok(()) => {
+                // 立即生效：不等下次启动。
+                crate::tunnel::apply(0);
+                respond_json(request, 200, "{\"ok\":true}".to_string())
+            }
+            Err(_) => respond_json(request, 500, "{\"error\":\"写入设置失败\"}".to_string()),
+        }
+        return;
+    }
     // 网关地址（前端 setGatewayUrl 时同步过来；导航白名单要用）
     if path.ends_with("/gateway") {
         if request.method().as_str() != "POST" {

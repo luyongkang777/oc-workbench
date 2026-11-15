@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   DEFAULT_GATEWAY,
   clearGatewaySession,
-  deviceUrl,
   claimDevice,
+  setTunnelPort,
+  deviceUrl,
   gatewayDevices,
   gatewayLogin,
   loadSessionFile,
@@ -45,8 +46,11 @@ export function useAccountSession(open: boolean, onOpenDevice: (url: string, nam
     const local = await localDevice()
     if (!local) return // dev / 手机：没有本机身份，跳过
     try {
-      await claimDevice(host, tk, local)
+      const claimed = await claimDevice(host, tk, local)
       setClaimHint('')
+      // 拿到回环端口就交给 exe 建隧道：这样「登录一次」就等于「这台电脑在线」，
+      // 不需要用户再手动跑 remote-tunnel.ps1 或挂看门狗。
+      if (claimed.port) void setTunnelPort(claimed.port)
     } catch (err) {
       // 认领失败要让人看见（不然只会觉得「怎么没有我的电脑」）；常见原因是设备 token 对不上
       setClaimHint(`本机登记失败：${(err as Error).message}`)

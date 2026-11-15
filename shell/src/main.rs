@@ -28,6 +28,8 @@ mod projects;
 mod projects_api;
 mod purge;
 mod auth_gate;
+mod tunnel;
+mod tunnel_proc;
 mod remote_auth;
 mod account;
 mod remoteapi;
@@ -166,6 +168,9 @@ fn start_local(token: &str) -> Result<String, String> {
     // 后台确认 opencode CLI 是 v2 且是最新版：缺了就装，旧了就更新。
     // 和 bootstrap 并行：它连不上时每 5 秒重试，装完自然就连上了。
     cli::spawn_auto_update();
+    // 远程模式：隧道由 exe 自己建（启动即建、断了重连、退出清掉），
+    // 不再需要用户手动跑 scripts/remote-tunnel.ps1 或挂看门狗。
+    tunnel::apply(port);
     append_log(&format!(
         "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));
@@ -428,6 +433,9 @@ fn run() -> Result<(), String> {
             } => {
                 // 关窗前把用户拖出来的尺寸写回设置，下次启动沿用。
                 remember_window_size(&window, initial_logical, auto_logical);
+                // 隧道子进程必须一起清掉：留着它会让服务器端口继续被占，
+                // 下次启动的 ssh -R 必然失败（ExitOnForwardFailure），表现为一直离线。
+                tunnel::stop();
                 *control_flow = ControlFlow::Exit;
                 return;
             }
@@ -454,6 +462,7 @@ fn run() -> Result<(), String> {
                         }
                         WinCmd::Close => {
                             remember_window_size(&window, initial_logical, auto_logical);
+                            tunnel::stop();
                             *control_flow = ControlFlow::Exit;
                             return;
                         }
