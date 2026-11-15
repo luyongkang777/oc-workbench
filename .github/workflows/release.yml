@@ -62,6 +62,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          # 零依赖项目没有 go.sum，setup-go 会报 Restore cache failed
+          cache: false
 
       - name: 网关测试
         working-directory: remote-gateway

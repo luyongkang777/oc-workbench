@@ -135,9 +135,13 @@ const downloadBase = githubRepo
   : (process.env.OC_WORKBENCH_DOWNLOAD_BASE || '').trim().replace(/\/+$/, '')
 const downloadUrl = downloadBase ? `${downloadBase}/${outName}.exe` : `${outName}.exe`
 const notesPath = path.join(root, 'RELEASE_NOTES.md')
-const notes =
+// RELEASE_NOTES.md 里的 HTML 注释是写给维护者看的（「发布前改这里」之类）。
+// 客户端把 notes 当纯文本渲染（更新面板里 {info.notes}），不剥掉就会原样显示给用户。
+const stripHtmlComments = (text) => text.replace(/<!--[\s\S]*?-->/g, '').trim()
+const notes = stripHtmlComments(
   (process.env.OC_WORKBENCH_NOTES || '').trim() ||
-  (existsSync(notesPath) ? readFileSync(notesPath, 'utf8').trim() : '')
+    (existsSync(notesPath) ? readFileSync(notesPath, 'utf8').trim() : ''),
+)
 const manifest = {
   version,
   url: downloadUrl,
