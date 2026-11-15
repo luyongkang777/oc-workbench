@@ -7,6 +7,19 @@
  * commit 才真正删掉这条及其之后的消息。工作台用 stage 做「回撤预览」，
  * 用户改完重新发送时由服务端（或我们显式 commit）落地。
  */
+/**
+ * 手机视口判断（api 层保持零依赖：这个文件会被 node --test 直接跑）。
+ * 阈值与 src/hooks/useMobileLayout.ts 的 MOBILE_MAX_WIDTH(800) / MOBILE_MAX_HEIGHT(520) 一致。
+ */
+function mobileViewport(): boolean {
+  if (typeof window === 'undefined') return false
+  const w = window.innerWidth
+  const h = window.innerHeight
+  if (!Number.isFinite(w) || w <= 0) return false
+  if (w <= 800) return true
+  return Number.isFinite(h) && h > 0 && h <= 520
+}
+
 export type SessionRevert = {
   messageID: string
   partID?: string
@@ -229,15 +242,21 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
  * cursor.next 翻页收集，最多 MAX_PAGES 页兜底。
  */
 const MAX_PAGES = 12
+/** 手机：一页 50 条（少几个 RTT），页数与桌面一致 —— 只减页数会漏掉排在 200 名之后的项目会话。 */
+const MOBILE_PAGE_SIZE = 50
+const MOBILE_MAX_PAGES = 12
 
 export async function listSessions(limit = 20, root?: string): Promise<SessionInfo[]> {
   const matches: SessionInfo[] = []
   const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
   const wanted = root ? norm(root) : null
   let cursor: string | undefined
+  const mobile = mobileViewport()
+  const pageSize = mobile ? Math.max(limit, MOBILE_PAGE_SIZE) : limit
+  const maxPages = mobile ? MOBILE_MAX_PAGES : MAX_PAGES
 
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const params = new URLSearchParams({ limit: String(limit), order: 'desc', parentID: 'null' })
+  for (let page = 0; page < maxPages; page += 1) {
+    const params = new URLSearchParams({ limit: String(pageSize), order: 'desc', parentID: 'null' })
     if (cursor) params.set('cursor', cursor)
     const data = await call<{ data?: SessionInfo[]; cursor?: { next?: string } } | SessionInfo[]>(
       `/api/session?${params.toString()}`
@@ -368,7 +387,8 @@ export async function firstUserText(sessionID: string, maxPages = 4): Promise<st
   let cursor: string | undefined
   let earliest = ''
   for (let page = 0; page < maxPages; page += 1) {
-    const result = await listMessagePage(sessionID, cursor)
+    // 起名只需要首条用户消息，50 条足够，别拉 200 条
+    const result = await listMessagePage(sessionID, cursor, TITLE_PAGE_LIMIT)
     if (result.messages.length === 0) break
     for (let i = result.messages.length - 1; i >= 0; i -= 1) {
       const message = result.messages[i]
@@ -397,6 +417,8 @@ export function titleFromText(text: string, max = 24): string {
 
 /** 服务端单页上限是 200，传更大会 400。 */
 const MESSAGE_PAGE_LIMIT = 200
+/** 起名只要首条用户消息：单页 50 条就够，少传 150 条。 */
+const TITLE_PAGE_LIMIT = 50
 /** 一次最多翻多少页：200 × 50 = 一万条，够长会话用，也防病理会话把内存吃光。 */
 const MAX_MESSAGE_PAGES = 50
 
@@ -413,8 +435,13 @@ export type MessagePage = {
  * 服务端默认只回最新 50 条，且翻页参数只能靠响应里的 `cursor.next`
  * （传 `previous` 或裸 id 都是空/400）。所以调用方必须沿 next 往回走。
  */
-export async function listMessagePage(sessionID: string, cursor?: string): Promise<MessagePage> {
-  const params = new URLSearchParams({ limit: String(MESSAGE_PAGE_LIMIT) })
+export async function listMessagePage(
+  sessionID: string,
+  cursor?: string,
+  limit = MESSAGE_PAGE_LIMIT,
+): Promise<MessagePage> {
+  const safeLimit = Math.min(Math.max(Math.floor(limit) || MESSAGE_PAGE_LIMIT, 1), MESSAGE_PAGE_LIMIT)
+  const params = new URLSearchParams({ limit: String(safeLimit) })
   if (cursor) params.set('cursor', cursor)
   const data = await call<{ data?: ChatMessage[]; cursor?: { next?: string } }>(
     `/api/session/${encodeURIComponent(sessionID)}/message?${params.toString()}`,
@@ -432,6 +459,7 @@ export async function listMessagePage(sessionID: string, cursor?: string): Promi
 export async function listMessages(
   sessionID: string,
   maxPages = MAX_MESSAGE_PAGES,
+  limit = MESSAGE_PAGE_LIMIT,
 ): Promise<{ messages: ChatMessage[]; hasMore: boolean; next?: string }> {
   const all: ChatMessage[] = []
   const seen = new Set<string>()
@@ -439,7 +467,7 @@ export async function listMessages(
   let hasMore = false
 
   for (let page = 0; page < maxPages; page += 1) {
-    const result = await listMessagePage(sessionID, cursor)
+    const result = await listMessagePage(sessionID, cursor, limit)
     // 到底时服务端仍会给一个 next，但下一页为空：以「本页为空」为终点
     if (result.messages.length === 0) break
     for (const message of result.messages) {

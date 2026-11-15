@@ -172,6 +172,14 @@ body,
   margin: 0;
 }
 
+/* 手机/平板浏览器会「自动放大」文字：Android 的 Font Boosting 按容器宽度抬高字号，
+   iOS Safari 横屏也会把正文放大约 20%。表现是同一段话忽大忽小、竖屏正常横屏变大。
+   钉死 100%：只允许用户手动双指缩放，不允许浏览器自己放大。 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--bg-0);
   color: var(--text-1);

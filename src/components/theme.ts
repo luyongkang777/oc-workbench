@@ -47,3 +47,9 @@ export function themeIcon(pref: ThemePref, resolved: ResolvedTheme): 'monitor' |
   if (pref === 'system') return 'monitor'
   return resolved === 'light' ? 'sun' : 'moon'
 }
+
+/** 系统是否深色。matchMedia 不存在（极老内核 / 测试环境）时按暗色处理。 */
+export function prefersDarkScheme(): boolean {
+  if (typeof window.matchMedia !== 'function') return true
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}

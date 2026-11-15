@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { isMobileViewport } from '../hooks/useMobileLayout'
 import type { SessionLike } from './sessionLight'
 import ChatHeader from './ChatHeader'
 import ChatInput from './ChatInput'
@@ -143,6 +144,10 @@ type ChatNotice = {
 
 /** 首次进入会话先拉几页（每页 200 条），剩下的往上滚时续拉。 */
 const INITIAL_MESSAGE_PAGES = 5
+/** 手机单页条数：一条消息平均十几 KB，200 条在移动网络要 4~8 秒。 */
+const MOBILE_MESSAGE_LIMIT = 40
+/** 手机首屏只拉一页，往上滚再续拉。 */
+const MOBILE_INITIAL_PAGES = 1
 
 /**
  * 标题是服务端在第一条消息之后才生成的（实测十几到二十几秒）。
@@ -473,7 +478,13 @@ export default function Chat({
    */
   const reloadMessages = useCallback(async (sessionID: string) => {
     try {
-      const page = await listMessagePage(sessionID)
+      // 手机上每轮对话都会走这里刷新：200 条要传 3.2MB，
+      // 只合并最新 40 条就够（历史已在本地）。
+      const page = await listMessagePage(
+        sessionID,
+        undefined,
+        isMobileViewport() ? MOBILE_MESSAGE_LIMIT : undefined,
+      )
       if (currentRef.current !== sessionID) return
       setMessages((prev) => mergeMessages(prev, page.messages))
       // 游标只记一次：用户已经翻到的位置不能被后续刷新覆盖
@@ -495,7 +506,12 @@ export default function Chat({
   const loadSession = useCallback(async (sessionID: string): Promise<ChatMessage[] | null> => {
     olderCursorRef.current = undefined
     try {
-      const { messages: all, hasMore, next } = await listMessages(sessionID, INITIAL_MESSAGE_PAGES)
+      const mobile = isMobileViewport()
+      const { messages: all, hasMore, next } = await listMessages(
+        sessionID,
+        mobile ? MOBILE_INITIAL_PAGES : INITIAL_MESSAGE_PAGES,
+        mobile ? MOBILE_MESSAGE_LIMIT : undefined,
+      )
       // 会话已经切走了：不要用旧会话的消息覆盖界面，但要如实告诉调用方没拿到
       if (currentRef.current !== sessionID) return null
       setMessages(all)
@@ -873,7 +889,11 @@ export default function Chat({
     const el = scrollRef.current
     const fromBottom = el ? el.scrollHeight - el.scrollTop : 0
     try {
-      const page = await listMessagePage(sessionID, cursor)
+      const page = await listMessagePage(
+        sessionID,
+        cursor,
+        isMobileViewport() ? MOBILE_MESSAGE_LIMIT : undefined,
+      )
       if (currentRef.current !== sessionID) return
       if (page.messages.length === 0) {
         olderCursorRef.current = undefined

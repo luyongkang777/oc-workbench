@@ -1,0 +1,158 @@
+/*
+ * 手机 / 窄视口布局。
+ *
+ * 桌面是三栏并排；窄到手机宽度时三栏挤成一团（实测 390px 视口下页面宽 792px，
+ * 聊天面板整块跑到屏幕外）。这里把 .main 变成单列，同一时刻只显示一栏，
+ * 由底部导航切换。所有规则都挂在 .app[data-mobile='1'] 上，
+ * 桌面（data-mobile 不存在）的样式完全不受影响。
+ */
+
+#root .app[data-mobile='1'] {
+  --mobile-nav-h: 50px;
+  /* 手机浏览器地址栏伸缩时不要跳动 */
+  height: 100dvh;
+}
+
+/* ---------- 顶栏：压成一行，状态文字和窗口按钮让位 ---------- */
+
+#root .app[data-mobile='1'] .topbar {
+  height: 46px;
+  padding: 0 8px;
+  gap: 6px;
+}
+
+#root .app[data-mobile='1'] .topbar .brand,
+#root .app[data-mobile='1'] .status-text,
+#root .app[data-mobile='1'] .win-controls,
+#root .app[data-mobile='1'] .update-entry {
+  display: none;
+}
+
+#root .app[data-mobile='1'] .topbar-right {
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* 手指点得中：顶栏按钮至少 38px 见方 */
+#root .app[data-mobile='1'] .topbar-iconbtn,
+#root .app[data-mobile='1'] .review-toggle,
+#root .app[data-mobile='1'] .retry-button {
+  min-width: 38px;
+  height: 34px;
+  padding: 0 8px;
+}
+
+/* 项目标签可以横向滑，不换行不压缩 */
+#root .app[data-mobile='1'] .project-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#root .app[data-mobile='1'] .project-tab {
+  height: 34px;
+  padding: 0 10px;
+}
+
+/* ---------- 主区：单列，一次只显示一栏 ---------- */
+
+#root .app[data-mobile='1'] .main {
+  /* 纵向单列：面板占满，子智能体条缩成底部一条 */
+  flex-direction: column;
+  position: relative;
+  /* 面板内部的 min-content 不能反过来把 flex 撑破 */
+  min-width: 0;
+}
+
+#root .app[data-mobile='1'] .main > .col-resizer {
+  display: none;
+}
+
+#root .app[data-mobile='1'] .main > .sidebar,
+#root .app[data-mobile='1'] .main > .editor-pane,
+#root .app[data-mobile='1'] .main > .chat-pane {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+}
+
+/* 子智能体：收起时是底部一条，展开时整屏盖住当前栏 */
+#root .app[data-mobile='1'] .main > .subagent-bar {
+  flex: 0 0 32px;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  padding-top: 0;
+  border-left: none;
+  border-top: 1px solid var(--line-1);
+}
+
+#root .app[data-mobile='1'] .main > .subagent-bar .subagent-bar-btn {
+  flex-direction: row;
+  width: auto;
+  padding: 0 12px;
+  writing-mode: horizontal-tb;
+  font-size: var(--fs-xs);
+}
+
+#root .app[data-mobile='1'] .main > .subagent-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  border-left: none;
+}
+
+#root .app[data-mobile='1'] .main[data-pane='files'] > .editor-pane,
+#root .app[data-mobile='1'] .main[data-pane='files'] > .chat-pane,
+#root .app[data-mobile='1'] .main[data-pane='editor'] > .sidebar,
+#root .app[data-mobile='1'] .main[data-pane='editor'] > .chat-pane,
+#root .app[data-mobile='1'] .main[data-pane='chat'] > .sidebar,
+#root .app[data-mobile='1'] .main[data-pane='chat'] > .editor-pane {
+  display: none;
+}
+
+/* ---------- 底部导航 ---------- */
+
+.mobile-nav {
+  display: none;
+}
+
+#root .app[data-mobile='1'] .mobile-nav {
+  display: flex;
+  flex: 0 0 auto;
+  height: calc(var(--mobile-nav-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--bg-1);
+  border-top: 1px solid var(--line-1);
+}
+
+#root .app[data-mobile='1'] .mobile-nav-btn {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#root .app[data-mobile='1'] .mobile-nav-btn.active {
+  color: var(--accent);
+}
+
+#root .app[data-mobile='1'] .mobile-nav-btn:active {
+  background: var(--bg-control);
+}

@@ -21,6 +21,8 @@ type Props = {
   onPathRemoved?: (relPath: string) => void
   /** 被重命名（App 用它把打开中的文件路径换到新名字）。 */
   onPathRenamed?: (from: string, to: string) => void
+  /** 行高：手机上行要更大才好点，虚拟列表必须与真实行高同步。 */
+  rowHeight?: number
 }
 
 /** 新建文件时的常用类型：只负责把扩展名补到文件名后面。 */
@@ -130,6 +132,7 @@ export default function FileTree({
   isDirty,
   onPathRemoved,
   onPathRenamed,
+  rowHeight = ROW_HEIGHT,
 }: Props) {
   const [state, setState] = useState<TreeState>(EMPTY_STATE)
   const [selected, setSelected] = useState('')
@@ -496,12 +499,12 @@ export default function FileTree({
   }, [menu, dialog, dialogBusy])
 
   const maxFirst = Math.max(0, rows.length - 1)
-  const first = Math.min(maxFirst, Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS))
-  const last = Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN_ROWS)
+  const first = Math.min(maxFirst, Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS))
+  const last = Math.min(rows.length, Math.ceil((scrollTop + viewportHeight) / rowHeight) + OVERSCAN_ROWS)
 
   // 折叠/切目录后行数变短：滚出范围的 scrollTop 要主动收回，否则会渲染出空列表。
   useEffect(() => {
-    const max = Math.max(0, rows.length * ROW_HEIGHT - viewportHeight)
+    const max = Math.max(0, rows.length * rowHeight - viewportHeight)
     if (scrollTop <= max) return
     setScrollTop(max)
     if (scrollRef.current) scrollRef.current.scrollTop = max
@@ -534,12 +537,17 @@ export default function FileTree({
           setMenu({ x: event.clientX, y: event.clientY, path: '', kind: 'blank' })
         }}
       >
-        <div className="tree-rows" style={{ height: rows.length * ROW_HEIGHT }}>
+        <div className="tree-rows" style={{ height: rows.length * rowHeight }}>
           {rows.slice(first, last).map((row, index) => (
             <div
               key={row.key}
               className={`tree-row${selected === row.path ? ' active' : ''}${dragPath === row.path ? ' dragging' : ''}`}
-              style={{ top: (first + index) * ROW_HEIGHT, paddingLeft: 8 + row.depth * 14 }}
+              style={{
+                top: (first + index) * rowHeight,
+                height: rowHeight,
+                lineHeight: `${rowHeight}px`,
+                paddingLeft: 8 + row.depth * 14,
+              }}
               title={row.path}
               draggable={row.kind !== 'status'}
               onDragStart={(event) => {

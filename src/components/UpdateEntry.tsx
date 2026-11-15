@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { isMobileViewport } from '../hooks/useMobileLayout'
 import { getAuthState, subscribeAuth } from '../api/auth'
 import { Icon } from './Icon'
 import {
@@ -89,6 +90,8 @@ export default function UpdateEntry({ version }: { version: string }) {
 
   useEffect(() => {
     if (auth.status !== 'ready') return
+    // 手机上更新的是 Windows 客户端，检查没有意义；这条请求在公网链路上要 2~3 秒
+    if (isMobileViewport()) return
     let cancelled = false
     let timer = 0
 

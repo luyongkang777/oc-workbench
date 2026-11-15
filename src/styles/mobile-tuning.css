@@ -1,0 +1,146 @@
+/*
+ * 手机端各区域微调
+ *
+ * 文件树 / 编辑器 / 页头 / 聊天输入等单点尺寸与截断规则。
+ *
+ * 从 mobile.css 拆出来的：三份按 main.tsx 里的 import 顺序加载，
+ * 顺序不能调换 —— 后面的规则依赖前面的基础布局做覆盖。
+ */
+
+/* ---------- 各栏在小屏上的收紧 ---------- */
+
+/* 文件树 / 面板标题：行更高，点得中 */
+#root .app[data-mobile='1'] .pane-title {
+  height: 42px;
+  padding: 0 12px;
+}
+
+#root .app[data-mobile='1'] .pane-action {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+/* 编辑器工具栏：152px 的缩放条预留是桌面硬下限，手机上会直接撑破 */
+#root .app[data-mobile='1'] .editor-toolbar {
+  height: 36px;
+  padding: 0 10px;
+  padding-right: 10px;
+  gap: 6px;
+}
+
+#root .app[data-mobile='1'] .view-zoom {
+  display: none;
+}
+
+#root .app[data-mobile='1'] .editor-modes button {
+  height: 30px;
+  padding: 0 10px;
+}
+
+/* 聊天头部：手机上按最紧档显示，同时不让内容反撑面板 */
+#root .app[data-mobile='1'] .chat-header {
+  min-width: 0;
+  padding: 0 6px;
+  gap: 4px;
+}
+
+/* 模型名太长会把破甲 / 上下文挤到屏幕外：手机上截断，title 里仍是全名 */
+#root .app[data-mobile='1'] .model-toggle {
+  min-width: 0;
+}
+
+#root .app[data-mobile='1'] .model-toggle-text {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 手机上头部一行塞不下全部：上下文环让位（点开会话面板仍能看），
+   其余按钮保持可见，不再需要横向滑动 */
+#root .app[data-mobile='1'] .chat-context {
+  display: none;
+}
+
+/* 允许控件收缩：宽度不够时由控件让位，不靠横滑（滚动祖先会画坏 fixed 菜单） */
+#root .app[data-mobile='1'] .chat-header > * {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+#root .app[data-mobile='1'] .chat-tabbed {
+  min-width: 0;
+}
+
+/* 输入区：手机上让输入框独占一行，按钮排到下面一行 */
+#root .app[data-mobile='1'] .chat-input-wrap {
+  padding: 6px 10px 8px;
+  gap: 6px;
+}
+
+/* 手机上不显示 token 统计与 MCP 计数：两行吃掉 76px，桌面看更合适 */
+#root .app[data-mobile='1'] .chat-stats,
+#root .app[data-mobile='1'] [data-composer-stat='mcp'] {
+  display: none;
+}
+
+#root .app[data-mobile='1'] .chat-input-row {
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 16px 起：手机浏览器聚焦输入框时不会自动放大整页 */
+#root .app[data-mobile='1'] .chat-input {
+  order: -1;
+  flex: 1 1 100%;
+  width: 100%;
+  /* 约两行半：再多就内部滚动，不占屏幕 */
+  height: 58px;
+  min-height: 58px;
+  padding: 8px 12px;
+  font-size: 16px;
+}
+
+#root .app[data-mobile='1'] .chat-attach-add {
+  flex: 0 0 auto;
+  min-width: 64px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+
+#root .app[data-mobile='1'] .chat-send {
+  flex: 0 0 auto;
+  min-width: 76px;
+  height: 36px;
+  padding: 0 14px;
+  /* 靠右，中间留白，视觉上更轻 */
+  margin-left: auto;
+}
+
+/* 会话标签、文件标签可以横滑 */
+#root .app[data-mobile='1'] .chat-tabs,
+#root .app[data-mobile='1'] .file-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#root .app[data-mobile='1'] .chat-tabs::-webkit-scrollbar,
+#root .app[data-mobile='1'] .file-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* 正文字号：14px 在手机屏上偏小，提到 15px；代码块保持 13px 不动 */
+#root .app[data-mobile='1'] .chat-msg,
+#root .app[data-mobile='1'] .chat-bubble,
+#root .app[data-mobile='1'] .chat-reasoning {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+/* 手机上没有 hover，按下时给一点反馈 */
+#root .app[data-mobile='1'] button:active {
+  opacity: 0.72;
+}
+

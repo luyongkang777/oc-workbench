@@ -7,3 +7,6 @@ shell/target-rel/
 .tmp/
 release/
 shell/target-verify/
+
+# 真实网关配置含 enroll 密钥（= 注册权限），只在本机保留
+scripts/gateway.config.json

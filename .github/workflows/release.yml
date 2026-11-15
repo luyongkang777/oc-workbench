@@ -58,6 +58,17 @@ jobs:
       - name: 前端测试
         run: npm test
 
+      # 网关是部署到服务器上的独立 Go 程序，发版前也必须过一遍
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: 网关测试
+        working-directory: remote-gateway
+        run: |
+          go vet ./...
+          go test ./... -count=1
+
       # build.rs 在编译期把 dist 嵌进二进制，没有 dist 连 cargo test 都编译不过，
       # 所以测试前必须先出一次前端产物（后面的 build:exe 会再跑一遍，很快）。
       - name: 构建前端产物

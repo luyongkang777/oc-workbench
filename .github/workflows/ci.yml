@@ -1,0 +1,65 @@
+name: ci
+
+# 每次 push / PR 都跑：前端类型检查 + 单测，网关 vet + 单测 + 交叉编译。
+# release.yml 只负责打 tag 发版，日常回归看这个。
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    # 单测里有按 process.platform 分支的逻辑，和 release 保持一致用 Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+
+      - name: 前端单测
+        run: npm test
+
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: remote-gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: 网关单测
+        run: go test ./... -count=1
+
+      # 部署用的是 Linux 二进制，这里顺带确认交叉编译没坏
+      - name: 交叉编译（linux/amd64）
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags "-s -w" -o /tmp/ocw-gateway .
+          ls -l /tmp/ocw-gateway
