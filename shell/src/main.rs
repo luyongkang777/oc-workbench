@@ -138,6 +138,29 @@ fn init_com_sta() {
 #[cfg(not(windows))]
 fn init_com_sta() {}
 
+/// 远程访问时本机工作台必须监听的固定端口。
+///
+/// ssh -R 隧道（服务器 relayPort → 本机这个端口）和网关 nginx 的
+/// `proxy_set_header Host 127.0.0.1:17800` 都按它写，端口一变远端就永远离线。
+const DEFAULT_REMOTE_PORT: u16 = 17800;
+
+/// 本机该用哪个端口起服务：0 = 让系统随机分配。
+///
+/// 只有「这台机器已经登记到网关」（settings.json 有 remoteBase）才固定端口：
+/// 纯单机用法随机更安全（端口穷举的成本高一点），远程模式下必须固定。
+fn local_port() -> u16 {
+    let registered = update::text_setting("remoteBase")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if !registered {
+        return 0;
+    }
+    update::number_setting("remotePort")
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_REMOTE_PORT)
+}
+
 /// 起内嵌前端 + 本地代理。
 ///
 /// **这里不做任何后端发现**：`auth::discover()` 最长会等两条子命令各 5 秒，
@@ -150,7 +173,7 @@ fn start_local(token: &str) -> Result<String, String> {
     let port = server::start(server::Ctx {
         backend: backend.clone(),
         token: token.to_string(),
-        port: 0,
+        port: local_port(),
         last_error: last_error.clone(),
     })?;
     server::spawn_bootstrap(backend, last_error);

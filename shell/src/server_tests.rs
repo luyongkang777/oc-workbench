@@ -458,3 +458,43 @@ fn upstream_alive_distinguishes_dead_port_from_live_one() {
     let empty: Arc<RwLock<Option<Backend>>> = Arc::new(RwLock::new(None));
     assert!(!super::upstream_alive(&base, &empty), "没有 cookie 时判死");
 }
+
+/// 固定端口必须真的绑上：远程访问整条链路（ssh -R -> 本机 17800 -> 网关 nginx）
+/// 都按端口号硬编码，`start` 悄悄换端口就会表现为「网页端永远离线」。
+#[test]
+fn fixed_port_is_bound_exactly() {
+    let wanted = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("占端口");
+        listener.local_addr().expect("取端口").port()
+    };
+    let port = start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: "t-fixed".to_string(),
+        port: wanted,
+        last_error: Arc::new(Mutex::new(None)),
+    })
+    .expect("固定端口应能启动");
+    assert_eq!(port, wanted, "必须监听指定端口，不能自己换");
+}
+
+/// 固定端口被占用时要报错（而且是能看懂的中文），不能静默回退随机端口。
+///
+/// 回退随机的后果：本地页面照常能用，但隧道仍指着旧端口 -> 远端一直离线，
+/// 用户完全看不出问题在哪。
+#[test]
+fn busy_fixed_port_fails_with_clear_error() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").expect("占端口");
+    let busy = taken.local_addr().expect("取端口").port();
+    let err = start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: "t-busy".to_string(),
+        port: busy,
+        last_error: Arc::new(Mutex::new(None)),
+    })
+    .expect_err("端口被占时必须失败");
+    assert!(
+        err.contains(&busy.to_string()) && err.contains("被占用"),
+        "错误里要写清哪个端口被占了，实际：{err}"
+    );
+    drop(taken);
+}

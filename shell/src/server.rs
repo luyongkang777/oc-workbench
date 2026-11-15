@@ -335,7 +335,26 @@ impl Drop for FlagGuard {
 }
 
 pub fn start(mut ctx: Ctx) -> Result<u16, String> {
-    let server = Server::http("127.0.0.1:0").map_err(|e| format!("本地服务启动失败：{e}"))?;
+    // ctx.port == 0 = 随机端口（单机用法）；非 0 = 固定端口（远程访问必须：
+    // ssh -R 隧道与网关 nginx 片段都写死了 17800）。
+    //
+    // 固定端口绑不上时**必须报错**，不能回退随机：换了端口本地页面自己还能用，
+    // 但隧道仍指着旧端口，远端只会看到「离线」，排查起来毫无线索。
+    let bind_addr = if ctx.port == 0 {
+        "127.0.0.1:0".to_string()
+    } else {
+        format!("127.0.0.1:{}", ctx.port)
+    };
+    let server = Server::http(&bind_addr).map_err(|e| {
+        if ctx.port == 0 {
+            format!("本地服务启动失败：{e}")
+        } else {
+            format!(
+                "本地端口 {} 被占用，无法启动：{e}\n\n远程访问要求固定端口（ssh 隧道与网关都指向它）。\n请关掉占用该端口的程序（常见：上一个没退干净的 oc-workbench）后重开。",
+                ctx.port
+            )
+        }
+    })?;
     let addr = server
         .server_addr()
         .to_ip()
