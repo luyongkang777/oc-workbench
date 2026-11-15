@@ -271,6 +271,22 @@ body.resizing .col-resizer::after {
   text-overflow: ellipsis;
 }
 
+/* 「有比当前更新的会话」角标：手机端新建的会话靠它一眼看到，
+   不然两条同名会话根本分不出哪个是新的。 */
+.chat-session-badge {
+  flex: 0 0 auto;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent, #2f81f7);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .chat-sessions {
   max-height: 220px;
   overflow: auto;

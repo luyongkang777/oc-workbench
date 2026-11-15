@@ -209,6 +209,14 @@ export default function ChatHeader({
     ? lightFor(current, lights, connected)
     : 'unknown'
 
+  // 比当前会话更新的会话数：手机端 / CLI 里新建的会话会立刻落在这个计数里，
+  // 不用展开下拉才知道「那边有动静」。切到更新的会话后计数自然归零。
+  const currentAt = current ? sessionLastAt(current) ?? 0 : 0
+  const newerCount =
+    currentAt > 0
+      ? sessions.filter((item) => item.id !== current?.id && (sessionLastAt(item) ?? 0) > currentAt).length
+      : 0
+
   return (
     <>
       <div className="chat-header">
@@ -222,6 +230,11 @@ export default function ChatHeader({
           <span className="chat-session-toggle-text">
             {current ? shortTitle(current) : '会话'} ▾
           </span>
+          {newerCount > 0 ? (
+            <span className="chat-session-badge" title={`有 ${newerCount} 个比当前更新的会话`}>
+              {newerCount}
+            </span>
+          ) : null}
         </button>
 
         <div className="mode-picker" ref={modesBox}>
