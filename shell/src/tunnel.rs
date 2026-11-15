@@ -119,6 +119,22 @@ pub fn stop() {
     *guard = None;
 }
 
+/// 强制重建隧道。
+///
+/// 用于「ssh 配置刚被自动写好」这种情况：`relayPort` / `tunnelHost` 都没变，
+/// 直接调 `apply` 会因为「配置相同」提前返回，旧进程还在用坏掉的配置重试。
+pub fn reset_and_apply() {
+    {
+        let mut guard = match CURRENT.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *guard = None;
+    }
+    retire_current();
+    apply(0);
+}
+
 /// 让现有线程失效并杀掉它的子进程。代际号 +1 是唯一可靠的失效方式。
 fn retire_current() {
     GENERATION.fetch_add(1, Ordering::SeqCst);

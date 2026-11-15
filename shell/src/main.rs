@@ -31,6 +31,7 @@ mod auth_gate;
 mod tunnel;
 mod tunnel_proc;
 mod tunnel_status;
+mod tunnel_setup;
 mod remote_auth;
 mod account;
 mod remoteapi;
@@ -172,6 +173,22 @@ fn start_local(token: &str) -> Result<String, String> {
     // 远程模式：隧道由 exe 自己建（启动即建、断了重连、退出清掉），
     // 不再需要用户手动跑 scripts/remote-tunnel.ps1 或挂看门狗。
     tunnel::apply(port);
+    // 新电脑通常没有 ssh 别名和密钥，隧道会一直「连不上 tiku」。
+    // 启动时在后台补一次自动配置（生成密钥 → 公钥交给网关 → 写 ~/.ssh/config），
+    // 成功就按新配置重建隧道。已配好的机器这里会立刻返回，不会动用户配置。
+    if !base.is_empty() {
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let Some((gateway, token)) = tunnel_setup::saved_session() else {
+                return;
+            };
+            let outcome = tunnel_setup::ensure(&gateway, &token);
+            append_log(&format!("[tunnel] 自动配置：{}\n", outcome.message));
+            if outcome.ok {
+                tunnel::reset_and_apply();
+            }
+        });
+    }
     append_log(&format!(
         "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));

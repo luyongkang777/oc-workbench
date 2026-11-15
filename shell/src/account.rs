@@ -57,6 +57,30 @@ pub fn handle(mut request: Request, path: &str, _url: &str) {
         respond_json(request, 200, device_json());
         return;
     }
+    // 自动配置 ssh（生成密钥 → 上传公钥给网关 → 写 ~/.ssh/config）。
+    // 必须排在 `/tunnel` 之前，否则会被 ends_with 吃掉。
+    if path.ends_with("/tunnel/setup") {
+        if request.method().as_str() != "POST" {
+            respond_json(request, 405, "{\"error\":\"只支持 POST\"}".to_string());
+            return;
+        }
+        let reply = match crate::tunnel_setup::saved_session() {
+            Some((gateway, token)) => {
+                let outcome = crate::tunnel_setup::ensure(&gateway, &token);
+                if outcome.ok {
+                    // 配置刚写好：立刻按新配置重建隧道，不用等重启。
+                    crate::tunnel::reset_and_apply();
+                }
+                serde_json::json!({ "ok": outcome.ok, "message": outcome.message })
+            }
+            None => serde_json::json!({
+                "ok": false,
+                "message": "还没有登录账号，配置通道需要在账号面板里登录一次"
+            }),
+        };
+        respond_json(request, 200, reply.to_string());
+        return;
+    }
     // 隧道：GET 查状态（界面用来显示「为什么没连上」），POST 交回环端口。
     // 端口是登录认领时网关给的，页面转手存到这里，exe 随即重建隧道。
     if path.ends_with("/tunnel") {

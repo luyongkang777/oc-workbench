@@ -134,6 +134,7 @@ func newMux(srv *server) *http.ServeMux {
 	mux.HandleFunc("GET /portal/api/whoami", cors(srv.apiWhoami))
 	mux.HandleFunc("POST /portal/api/claim", cors(srv.apiClaim))
 	mux.HandleFunc("POST /portal/api/logout", cors(srv.apiLogout))
+	mux.HandleFunc("POST /portal/api/tunnelkey", cors(srv.apiTunnelKey))
 	mux.HandleFunc("OPTIONS /portal/api/", cors(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

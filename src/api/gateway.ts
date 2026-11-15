@@ -210,6 +210,22 @@ export async function setTunnelPort(port: number): Promise<void> {
   }
 }
 
+/**
+ * 让 exe 自动把 ssh 配好（生成密钥 → 上传公钥给网关 → 写 ~/.ssh/config）。
+ *
+ * 幂等：已经配好的电脑会立刻返回「已配置」。失败也只影响「远端能不能连进来」，
+ * 不抛错、不打断登录。
+ */
+export async function setupTunnel(): Promise<{ ok: boolean; message: string }> {
+  try {
+    const res = await fetch(localApi('/local/account/tunnel/setup'), { method: 'POST' })
+    if (!res.ok) return { ok: false, message: `HTTP ${res.status}` }
+    return (await res.json()) as { ok: boolean; message: string }
+  } catch (err) {
+    return { ok: false, message: (err as Error).message }
+  }
+}
+
 /** 本机隧道的状态（给界面显示「为什么没连上」）。 */
 export type TunnelStatus = {
   running: boolean

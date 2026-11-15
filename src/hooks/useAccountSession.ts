@@ -15,6 +15,7 @@ import {
   saveGatewaySession,
   setGatewayUrl,
   tunnelStatus,
+  setupTunnel,
   type GatewayDevice,
   type TunnelStatus,
 } from '../api/gateway'
@@ -54,7 +55,12 @@ export function useAccountSession(open: boolean, onOpenDevice: (url: string, nam
       setClaimHint('')
       // 拿到回环端口就交给 exe 建隧道：这样「登录一次」就等于「这台电脑在线」，
       // 不需要用户再手动跑 remote-tunnel.ps1 或挂看门狗。
-      if (claimed.port) void setTunnelPort(claimed.port)
+      if (claimed.port) await setTunnelPort(claimed.port)
+      // 新电脑没有 ssh 配置（隧道会一直报「没有配 ssh 别名」）：让 exe 自动配。
+      // 已配好的电脑这里会立刻返回，不产生任何副作用。
+      const prepared = await setupTunnel()
+      if (!prepared.ok) setClaimHint(`通道自动配置失败：${prepared.message}`)
+      setTunnel(await tunnelStatus())
     } catch (err) {
       // 认领失败要让人看见（不然只会觉得「怎么没有我的电脑」）；常见原因是设备 token 对不上
       setClaimHint(`本机登记失败：${(err as Error).message}`)
