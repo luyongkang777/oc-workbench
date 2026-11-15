@@ -744,7 +744,31 @@ export default function Chat({
     }
   }, [connected, currentID, sessions])
 
-  useChatEvents(connected, currentID, refreshSession, applyStream)
+  /**
+   * 只刷新会话列表（不切换当前会话）。
+   *
+   * 手机端 / CLI 在别的会话里发消息时，事件回调会调它 —— 以前这类事件被
+   * 直接丢弃，电脑上的列表会一直停在打开时的那份快照上。
+   */
+  const reloadSessions = useCallback(async () => {
+    try {
+      setSessions(await listSessions(20, root))
+    } catch {
+      // 静默：列表刷新失败不该打断正在进行的对话
+    }
+  }, [root])
+
+  useChatEvents(connected, currentID, refreshSession, applyStream, reloadSessions)
+
+  // 兜底：事件偶尔会漏（SSE 重连的空档、别的客户端建会话时没有可识别的事件），
+  // 30 秒强制对一次列表。页面在后台时不查，省掉没意义的请求。
+  useEffect(() => {
+    if (!connected) return
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void reloadSessions()
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [connected, reloadSessions])
 
   const busyRef = useRef(busy)
   busyRef.current = busy
