@@ -242,10 +242,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
  * 第 100 名之后，只取一页再客户端过滤会把它的历史会话全部漏掉，所以这里按
  * cursor.next 翻页收集，最多 MAX_PAGES 页兜底。
  */
-const MAX_PAGES = 12
-/** 手机：一页 50 条（少几个 RTT），页数与桌面一致 —— 只减页数会漏掉排在 200 名之后的项目会话。 */
+const MAX_PAGES = 6
+/** 手机：一页 50 条（少几个 RTT）。 */
 const MOBILE_PAGE_SIZE = 50
-const MOBILE_MAX_PAGES = 12
+const MOBILE_MAX_PAGES = 6
 
 export async function listSessions(limit = 20, root?: string): Promise<SessionInfo[]> {
   const matches: SessionInfo[] = []
@@ -253,7 +253,9 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
   const wanted = root ? norm(root) : null
   let cursor: string | undefined
   const mobile = mobileViewport()
-  const pageSize = mobile ? Math.max(limit, MOBILE_PAGE_SIZE) : limit
+  // 一页固定 50 条（不是 limit）：limit 只决定「显示多少」，取大一页能把
+  // 分页次数压到 1~2 次 —— 远程下每页都是一次公网往返，省下来的就是感知延迟。
+  const pageSize = Math.max(limit, MOBILE_PAGE_SIZE)
   const maxPages = mobile ? MOBILE_MAX_PAGES : MAX_PAGES
 
   for (let page = 0; page < maxPages; page += 1) {
@@ -269,6 +271,9 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
       // location 缺失的老会话保守放行，避免历史数据凭空消失
       if (!dir || norm(dir) === wanted) matches.push(session)
     }
+    // 够用就停：列表按时间倒序，先出现的匹配就是最新的那批。
+    // 以前要翻满 12 页（每页 200 条）才敢停，手机上一个会话列表就要 12 个 RTT。
+    if (matches.length >= limit) break
     cursor = Array.isArray(data) ? undefined : data.cursor?.next
     if (!cursor || list.length === 0) break
   }

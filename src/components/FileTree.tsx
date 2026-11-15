@@ -52,8 +52,11 @@ const HIDDEN = new Set(['node_modules', '.git', 'dist', 'target', '.vite', '.vit
 /** 行高与 panels.css 的 .tree-row 一致（改了要同步这里）。 */
 const ROW_HEIGHT = 27
 const OVERSCAN_ROWS = 10
-/** 已加载目录的轮询间隔：够快看到 agent 新写的文件，又不至于把本地服务打满。 */
-const POLL_INTERVAL_MS = 2000
+/**
+ * 已加载目录的轮询间隔：够快看到 agent 新写的文件，又不至于把本地服务打满。
+ * 远程访问下每个请求 60~90ms，2 秒一轮太密；5 秒对「文件被改了」的感知足够。
+ */
+const POLL_INTERVAL_MS = 5000
 
 function baseName(relPath: string): string {
   const trimmed = relPath.replace(/[\\/]+$/, '')
