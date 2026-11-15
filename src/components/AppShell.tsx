@@ -6,6 +6,7 @@ import ChatTabs from './ChatTabs'
 import CodeView from './CodeView'
 import FileTabs from './FileTabs'
 import FileTree from './FileTree'
+import DeviceStrip from './DeviceStrip'
 import GitPanel from './GitPanel'
 import { IconDefs } from './Icon'
 import MobileNav from './MobileNav'
@@ -87,6 +88,8 @@ export default function AppShell() {
   return (
     <div className="app" data-mobile={mobile ? '1' : undefined}>
       <IconDefs />
+      {/* 同账号下在线的电脑：直接顶在最上面，方便来回切（只有一台时自己会隐藏） */}
+      <DeviceStrip />
       <TopBar
         onMouseDown={handleTopbarMouseDown}
         projects={projects}

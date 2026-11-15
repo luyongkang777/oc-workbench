@@ -12,7 +12,7 @@ func TestDevicesPageEscapesUserInput(t *testing.T) {
 		`<img src=x onerror=alert(2)>`,
 		false,
 		[]Device{{ID: "dev-a", Name: evil, Port: 17801}},
-		map[string]bool{"dev-a": true},
+		map[string]probeState{"dev-a": {Online: true}},
 		nil,
 		`<b>notice</b>`,
 		`<i>err</i>`,
@@ -31,7 +31,7 @@ func TestDevicesPageEscapesUserInput(t *testing.T) {
 
 // 回归：配对码从 6 位改成 8 位时漏改了界面（maxlength=6 会把输入截断，永远绑不上）。
 func TestDevicesPagePairInputIsEightDigits(t *testing.T) {
-	html := devicesPage("u", false, nil, map[string]bool{}, nil, "", "")
+	html := devicesPage("u", false, nil, map[string]probeState{}, nil, "", "")
 
 	if !strings.Contains(html, `maxlength="8"`) {
 		t.Fatal("配对码输入框应是 maxlength=8")
@@ -51,7 +51,7 @@ func TestDevicesPagePairInputIsEightDigits(t *testing.T) {
 func TestDevicesPageOnlineDot(t *testing.T) {
 	html := devicesPage("u", false,
 		[]Device{{ID: "dev-a", Name: "A"}, {ID: "dev-b", Name: "B"}},
-		map[string]bool{"dev-a": true},
+		map[string]probeState{"dev-a": {Online: true}},
 		nil, "", "")
 
 	if !strings.Contains(html, `class="dot on"`) {
@@ -63,7 +63,7 @@ func TestDevicesPageOnlineDot(t *testing.T) {
 }
 
 func TestDevicesPageEmptyState(t *testing.T) {
-	html := devicesPage("u", false, nil, map[string]bool{}, nil, "", "")
+	html := devicesPage("u", false, nil, map[string]probeState{}, nil, "", "")
 	if !strings.Contains(html, "还没有绑定电脑") {
 		t.Fatal("空列表应给出提示")
 	}

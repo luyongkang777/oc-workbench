@@ -24,6 +24,8 @@ export type GatewayDevice = {
   name: string
   port: number
   online: boolean
+  /** 这台电脑上有工作台会话正在生成（手机顶部设备条的黄灯） */
+  busy?: boolean
   lastSeen: number
   /** 相对路径，带 ?t= 与一次性票据 */
   url: string
@@ -72,11 +74,29 @@ export function getGatewayUser(): string {
   return read(USER_KEY)
 }
 
+/**
+ * 登录态变化的广播。
+ *
+ * 顶部设备条和账号面板是两个独立组件，各自持有自己的 state：面板里登录/退出之后，
+ * 设备条不该等下一个 15 秒轮询才更新。localStorage 的 storage 事件只在别的标签页触发，
+ * 同页写不会通知，所以这里用自定义事件补一条即时通道。
+ */
+export const ACCOUNT_EVENT = 'oc-account-changed'
+
+function notifyAccountChanged(): void {
+  try {
+    window.dispatchEvent(new Event(ACCOUNT_EVENT))
+  } catch {
+    /* 非浏览器环境（单测）忽略 */
+  }
+}
+
 export function saveGatewaySession(token: string, username: string): void {
   write(TOKEN_KEY, token)
   write(USER_KEY, username)
   // 顺带落盘，清缓存后还能自动恢复
   void saveSessionFile({ token, username, gateway: getGatewayUrl() })
+  notifyAccountChanged()
 }
 
 export function clearGatewaySession(): void {
@@ -96,6 +116,7 @@ export function clearGatewaySession(): void {
   write(TOKEN_KEY, '')
   write(USER_KEY, '')
   void clearSessionFile()
+  notifyAccountChanged()
 }
 
 // ---------- 本地文件持久化（经 exe 的 /local/account/session） ----------

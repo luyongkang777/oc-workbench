@@ -208,6 +208,29 @@
   box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
 }
 
+/* 在跑：黄灯呼吸（和顶部设备条同一套读法）。放 .on 之后才能盖过绿色。 */
+.account-dot.busy {
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+  animation: account-dot-breath 1.5s ease-in-out infinite;
+}
+
+@keyframes account-dot-breath {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.32;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-dot.busy {
+    animation: none;
+  }
+}
+
 .account-device-main {
   display: flex;
   flex-direction: column;

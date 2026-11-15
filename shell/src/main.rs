@@ -32,6 +32,7 @@ mod tunnel;
 mod tunnel_proc;
 mod tunnel_status;
 mod tunnel_setup;
+mod busy;
 mod remote_auth;
 mod account;
 mod remoteapi;
@@ -166,7 +167,10 @@ fn start_local(token: &str) -> Result<String, String> {
         base: base.clone(),
         last_error: last_error.clone(),
     })?;
-    server::spawn_bootstrap(backend, last_error);
+    server::spawn_bootstrap(backend.clone(), last_error);
+    // 后台采样「本机有没有会话在跑」：`/api/state` 的 busy 字段由它提供，
+    // 手机顶部的设备条据此显示黄灯（在跑）/ 绿灯（空闲）。
+    busy::spawn(backend.clone());
     // 后台确认 opencode CLI 是 v2 且是最新版：缺了就装，旧了就更新。
     // 和 bootstrap 并行：它连不上时每 5 秒重试，装完自然就连上了。
     cli::spawn_auto_update();
@@ -184,7 +188,7 @@ fn start_local(token: &str) -> Result<String, String> {
             };
             let outcome = tunnel_setup::ensure(&gateway, &token);
             append_log(&format!("[tunnel] 自动配置：{}\n", outcome.message));
-            if outcome.ok {
+            if outcome.ok && outcome.changed {
                 tunnel::reset_and_apply();
             }
         });

@@ -669,10 +669,15 @@ fn shell_state(request: tiny_http::Request, ctx: &Ctx) {
         Ok(guard) => guard.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     };
+    // 有没有会话正在生成：网关探测每台设备时读它，手机顶部的设备条据此亮黄灯。
+    // 值来自后台采样线程（busy.rs），这里只读原子变量，不产生任何上游请求。
+    let (busy, running) = crate::busy::snapshot();
     let body = serde_json::json!({
         "connected": base.is_some(),
         "base": base,
         "error": error,
+        "busy": busy,
+        "running": running,
     })
     .to_string();
     let _ = respond_json(request, 200, body);

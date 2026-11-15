@@ -90,11 +90,13 @@ func (s *server) apiLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 type apiDevice struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Port     int    `json:"port"`
-	Online   bool   `json:"online"`
-	LastSeen int64  `json:"lastSeen"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Port   int    `json:"port"`
+	Online bool   `json:"online"`
+	// Busy = 这台电脑上有工作台会话正在生成。手机顶部的设备条据此显示黄灯/绿灯。
+	Busy     bool  `json:"busy"`
+	LastSeen int64 `json:"lastSeen"`
 	// URL 带 ?t=<token>：客户端直接 iframe/新窗口打开，由设备自己签发 cookie。
 	URL string `json:"url"`
 }
@@ -114,11 +116,13 @@ func (s *server) apiDevices(w http.ResponseWriter, r *http.Request) {
 	online := probeAll(devices)
 	out := make([]apiDevice, 0, len(devices))
 	for _, dev := range devices {
+		state := online[dev.ID]
 		out = append(out, apiDevice{
 			ID:       dev.ID,
 			Name:     dev.Name,
 			Port:     dev.Port,
-			Online:   online[dev.ID],
+			Online:   state.Online,
+			Busy:     state.Busy,
 			LastSeen: dev.LastSeen,
 			URL:      s.deviceOpenURL(u.ID, dev),
 		})

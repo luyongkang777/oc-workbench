@@ -30,6 +30,8 @@ button.link{background:transparent;border:none;color:var(--dim);font-size:15px;m
 .dev-meta{color:var(--dim);font-size:14px;margin-top:2px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#4a5160;margin-right:6px;vertical-align:middle;box-shadow:0 0 0 1px rgba(0,0,0,.25)}
 .dot.on{background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,.55)}
+.dot.busy{background:#f59e0b;box-shadow:0 0 8px rgba(245,158,11,.65);animation:dotbreath 1.6s ease-in-out infinite}
+@keyframes dotbreath{0%,100%{opacity:1}50%{opacity:.35}}
 .dev-actions{display:flex;gap:8px;flex-shrink:0}
 .err{background:rgba(217,83,79,.14);border:1px solid rgba(217,83,79,.45);padding:10px 12px;border-radius:10px;font-size:15px;margin-bottom:14px}
 .ok{background:rgba(46,160,67,.14);border:1px solid rgba(46,160,67,.45);padding:10px 12px;border-radius:10px;font-size:15px;margin-bottom:14px}
@@ -102,17 +104,25 @@ func registerPage(errMsg string) string {
 	return page("注册 · OpenCode 工作台", body)
 }
 
-func devicesPage(username string, isAdmin bool, devices []Device, online map[string]bool, invites []Invite, notice, errMsg string) string {
+func devicesPage(username string, isAdmin bool, devices []Device, probed map[string]probeState, invites []Invite, notice, errMsg string) string {
 	var cards strings.Builder
 	for _, dev := range devices {
-		isOn := online[dev.ID]
+		state := probed[dev.ID]
+		isOn := state.Online
+		// 在跑（有会话正在生成）用黄灯呼吸：不点开也能看出这台电脑是不是在干活。
 		when := "离线"
 		if isOn {
 			when = "在线"
 		}
+		if state.Busy {
+			when = "在跑"
+		}
 		dot := ""
 		if isOn {
 			dot = " on"
+		}
+		if state.Busy {
+			dot = " on busy"
 		}
 		cards.WriteString(fmt.Sprintf(`<div class="card row dev">
   <div class="dev-main">

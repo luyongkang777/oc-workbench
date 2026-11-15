@@ -26,6 +26,11 @@ const NET_TIMEOUT: Duration = Duration::from_secs(15);
 #[derive(Clone)]
 pub struct SetupOutcome {
     pub ok: bool,
+    /// 这次是不是**真的改了配置**（生成密钥 / 写了 ssh config）。
+    ///
+    /// 调用方只在 changed 时才重建隧道：已经配好的机器每刷新一次账号面板都会走
+    /// 这里，若无条件重建，就会「面板一打开、隧道就断一下」，探测那几秒显示离线。
+    pub changed: bool,
     pub message: String,
 }
 
@@ -41,6 +46,7 @@ pub fn ensure(gateway: &str, token: &str) -> SetupOutcome {
     if configured() {
         return SetupOutcome {
             ok: true,
+            changed: false,
             message: "这台电脑已经配好 ssh，跳过".to_string(),
         };
     }
@@ -62,13 +68,15 @@ pub fn ensure(gateway: &str, token: &str) -> SetupOutcome {
     }
     SetupOutcome {
         ok: true,
+        changed: true,
         message: format!("已自动配置通道（{REMOTE_USER}@{host}）"),
     }
 }
 
 fn fail(message: String) -> SetupOutcome {
-    SetupOutcome { ok: false, message }
+    SetupOutcome { ok: false, changed: false, message }
 }
+
 
 /// 从网关地址里取主机名（`http://81.70.181.82:7800` → `81.70.181.82`）。
 fn host_of(gateway: &str) -> Option<String> {

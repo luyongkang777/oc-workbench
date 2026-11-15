@@ -1,0 +1,128 @@
+/* ==========================================================================
+   顶部设备切换条：同账号下在线的电脑
+   --------------------------------------------------------------------------
+   只在两台及以上在线时出现（一台没得切，白占一行）。
+   黄灯呼吸 = 那台电脑上有会话在跑；绿灯常亮 = 在线但空闲。
+   ========================================================================== */
+
+.dev-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--line-1);
+  background: var(--bg-0);
+  /* 手机横向滑动不要看到滚动条 */
+  scrollbar-width: none;
+}
+
+.dev-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.dev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.dev-chip:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+/* 当前所在的那台：强调色边框 + 淡底，避免和别的电脑混在一起 */
+.dev-chip.active {
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+  color: var(--text-1);
+}
+
+.dev-chip:disabled {
+  cursor: default;
+}
+
+/* 切换过程中别的按钮压暗，表示暂时点不动 */
+.dev-chip:disabled:not(.active) {
+  opacity: 0.55;
+}
+
+/* ---------- 状态灯 ---------- */
+
+.dev-light {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.55);
+}
+
+/* 正在跑：黄灯 + 呼吸。1.5 秒一个周期，足够看出在动又不刺眼 */
+.dev-light.busy {
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+  animation: dev-strip-breath 1.5s ease-in-out infinite;
+}
+
+@keyframes dev-strip-breath {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.32;
+    transform: scale(0.8);
+  }
+}
+
+/* 系统开了「减少动态效果」就不呼吸，只留黄灯（颜色已经能区分） */
+@media (prefers-reduced-motion: reduce) {
+  .dev-light.busy {
+    animation: none;
+  }
+}
+
+.dev-chip-name {
+  max-width: 8.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dev-chip-id {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dev-chip-wait {
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+
+/* ---------- 手机：整条横滚，手指更好点 ---------- */
+
+.app[data-mobile='1'] .dev-strip {
+  padding: 6px 8px;
+  gap: 8px;
+}
+
+.app[data-mobile='1'] .dev-chip {
+  height: 34px;
+  font-size: var(--fs-md);
+}

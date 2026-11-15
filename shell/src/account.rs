@@ -67,8 +67,9 @@ pub fn handle(mut request: Request, path: &str, _url: &str) {
         let reply = match crate::tunnel_setup::saved_session() {
             Some((gateway, token)) => {
                 let outcome = crate::tunnel_setup::ensure(&gateway, &token);
-                if outcome.ok {
-                    // 配置刚写好：立刻按新配置重建隧道，不用等重启。
+                // 只有「这次真的写了新配置」才重建隧道。已经配好的机器每开一次面板
+                // 都会走到这里，无条件重建会让隧道断一下、设备在那几秒显示离线。
+                if outcome.ok && outcome.changed {
                     crate::tunnel::reset_and_apply();
                 }
                 serde_json::json!({ "ok": outcome.ok, "message": outcome.message })

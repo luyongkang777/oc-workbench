@@ -1,7 +1,8 @@
 import type { GatewayDevice, TunnelStatus } from '../api/gateway'
 
-/** 在线/离线文案：在线显示「在线」，离线显示最后一次登记时间。 */
+/** 在线/离线文案：在跑 > 在线 > 最后一次登记时间。 */
 function whenText(dev: GatewayDevice): string {
+  if (dev.busy) return '在跑'
   if (dev.online) return '在线'
   if (!dev.lastSeen) return '从未连接'
   const d = new Date(dev.lastSeen * 1000)
@@ -83,7 +84,7 @@ export default function AccountDeviceList({
             className="account-device"
             onClick={() => void openDevice(dev)}
           >
-            <span className={`account-dot${dev.online ? ' on' : ''}`} aria-hidden="true" />
+            <span className={`account-dot${dev.online ? ' on' : ''}${dev.busy ? ' busy' : ''}`} aria-hidden="true" />
             <span className="account-device-main">
               <span className="account-device-name">{dev.name}</span>
               <span className="account-device-meta">

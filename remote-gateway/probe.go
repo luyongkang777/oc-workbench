@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,9 @@ import (
 // 只要拿到响应（200/403 都算 —— 403 说明工作台活着、只是 token 不匹配）就是在线；
 // 502/504（隧道在但 exe 没起）和连接失败算离线。
 //
+// 顺带取「有没有会话在跑」（`busy`）：手机顶部的设备条靠它显示黄灯/绿灯，
+// 用户不打开那台电脑也知道它是不是正在干活。
+//
 // 回环 + 隧道一次往返约 20~60ms，20~30 台并发探测 + 3 秒缓存完全够用。
 
 const probeTimeout = 1500 * time.Millisecond
@@ -23,11 +27,31 @@ const probeCacheTTL = 3 * time.Second
 
 var probeClient = &http.Client{Timeout: probeTimeout}
 
-func probeDevice(dev Device) bool {
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/state", dev.Port)
+// probeState 是一台设备的探测结果。
+type probeState struct {
+	Online bool
+	Busy   bool
+}
+
+func probeDevice(dev Device) probeState {
+	// 带实例前缀才能拿到 JSON：远程模式下裸 `/api/state` 会被当成未知路径直接 404，
+	// 那时只能判在线、拿不到 busy。
+	target := fmt.Sprintf("/u/%s/api/state", dev.ID)
+	if state, ok := probePath(dev, target); ok {
+		return state
+	}
+	// 老设备（没有 remoteBase 前缀）退回裸路径：只判在线，busy 保持 false。
+	state, _ := probePath(dev, "/api/state")
+	return state
+}
+
+// probePath 探一个路径。第二个返回值表示「拿到了可解析的状态 JSON」
+// （只有这种情况 busy 才有意义）。
+func probePath(dev Device, path string) (probeState, bool) {
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", dev.Port, path)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return false
+		return probeState{}, false
 	}
 	// 设备端 host_allowed() 只认 127.0.0.1:17800，直连隧道时 Host 是 127.0.0.1:<回环端口>，
 	// 不改写就会被 403。
@@ -36,19 +60,30 @@ func probeDevice(dev Device) bool {
 
 	resp, err := probeClient.Do(req)
 	if err != nil {
-		return false
+		return probeState{}, false
 	}
 	defer resp.Body.Close()
 	// 必须读完再关：不读干净的话 Go 不会把连接放回池子，
 	// 每 3 秒一轮探测都会新建 TCP 连接，设备多了会堆 TIME_WAIT。
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 32<<10))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	// 502/504 = 隧道在但设备没起（ssh 转发失败）；其它状态码（200/403…）说明工作台活着
-	return resp.StatusCode != http.StatusBadGateway && resp.StatusCode != http.StatusGatewayTimeout
+	if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout {
+		return probeState{Online: false}, false
+	}
+	state := probeState{Online: true}
+	var payload struct {
+		Busy bool `json:"busy"`
+	}
+	if json.Unmarshal(body, &payload) == nil && resp.StatusCode == http.StatusOK {
+		state.Busy = payload.Busy
+		return state, true
+	}
+	return state, false
 }
 
 type probeCacheEntry struct {
 	at   time.Time
-	data map[string]bool
+	data map[string]probeState
 }
 
 var (
@@ -56,8 +91,8 @@ var (
 	probeCache = map[string]probeCacheEntry{}
 )
 
-// probeAll 返回 deviceID -> 在线。结果缓存 3 秒，刷新列表不会每点一次就扫一遍。
-func probeAll(devices []Device) map[string]bool {
+// probeAll 返回 deviceID -> 探测结果。结果缓存 3 秒，刷新列表不会每点一次就扫一遍。
+func probeAll(devices []Device) map[string]probeState {
 	// key 必须带上回环端口：设备被删除后重建会换端口（17801~17840 里找空位），
 	// 只看 ID 会在 3 秒缓存内把旧端口的探测结果当成新设备的，灯是错的。
 	key := ""
@@ -73,7 +108,7 @@ func probeAll(devices []Device) map[string]bool {
 	}
 	probeMu.Unlock()
 
-	result := make(map[string]bool, len(devices))
+	result := make(map[string]probeState, len(devices))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, dev := range devices {
@@ -81,9 +116,9 @@ func probeAll(devices []Device) map[string]bool {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ok := probeDevice(device)
+			state := probeDevice(device)
 			mu.Lock()
-			result[device.ID] = ok
+			result[device.ID] = state
 			mu.Unlock()
 		}()
 	}
