@@ -238,25 +238,27 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 /**
  * 会话列表（顶层会话，不含 subagent 子会话）。
  *
- * 后端不支持按目录过滤，且默认只给全局最新的 limit 条；某个目录的最新会话可能排在
- * 第 100 名之后，只取一页再客户端过滤会把它的历史会话全部漏掉，所以这里按
+ * 后端不支持按目录过滤，且默认只给全局最新的 limit 条；某个目录的会话可能排在
+ * 第几百名之后，只取一页再客户端过滤会把它的历史会话全部漏掉，所以这里按
  * cursor.next 翻页收集，最多 MAX_PAGES 页兜底。
+ *
+ * 页数不能省：本机实测 680 条顶层会话、57 个目录里 **26 个**目录的会话落在
+ * 300 名之后 —— 砍到 6 页（300 条）会让这些项目切换后会话列表变空。
+ * 省请求靠下面的「够用就停」，不靠减页数。
  */
-const MAX_PAGES = 6
-/** 手机：一页 50 条（少几个 RTT）。 */
-const MOBILE_PAGE_SIZE = 50
-const MOBILE_MAX_PAGES = 6
+const MAX_PAGES = 12
+/** 一页固定 50 条（不是 limit）：limit 只决定「显示多少」，取大一页能把分页次数压到 1~2 次。 */
+const PAGE_SIZE = 50
+const MOBILE_MAX_PAGES = 12
 
 export async function listSessions(limit = 20, root?: string): Promise<SessionInfo[]> {
   const matches: SessionInfo[] = []
   const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
   const wanted = root ? norm(root) : null
   let cursor: string | undefined
-  const mobile = mobileViewport()
-  // 一页固定 50 条（不是 limit）：limit 只决定「显示多少」，取大一页能把
-  // 分页次数压到 1~2 次 —— 远程下每页都是一次公网往返，省下来的就是感知延迟。
-  const pageSize = Math.max(limit, MOBILE_PAGE_SIZE)
-  const maxPages = mobile ? MOBILE_MAX_PAGES : MAX_PAGES
+  // 一页固定 50 条：远程下每页是一次公网往返，取大一页能少翻几次。
+  const pageSize = Math.max(limit, PAGE_SIZE)
+  const maxPages = mobileViewport() ? MOBILE_MAX_PAGES : MAX_PAGES
 
   for (let page = 0; page < maxPages; page += 1) {
     const params = new URLSearchParams({ limit: String(pageSize), order: 'desc', parentID: 'null' })
@@ -265,20 +267,22 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
       `/api/session?${params.toString()}`
     )
     const list = Array.isArray(data) ? data : (data.data ?? [])
-    if (!wanted) return list
+    // 不要 root 时一页就够，但仍按 limit 截断（页大小可能比 limit 大）。
+    if (!wanted) return list.slice(0, Math.max(limit, 1))
     for (const session of list) {
       const dir = session.location?.directory
       // location 缺失的老会话保守放行，避免历史数据凭空消失
       if (!dir || norm(dir) === wanted) matches.push(session)
     }
     // 够用就停：列表按时间倒序，先出现的匹配就是最新的那批。
-    // 以前要翻满 12 页（每页 200 条）才敢停，手机上一个会话列表就要 12 个 RTT。
+    // 常见项目一页就凑够，省掉剩下的几十次公网往返；冷门项目会继续翻到 MAX_PAGES。
     if (matches.length >= limit) break
     cursor = Array.isArray(data) ? undefined : data.cursor?.next
     if (!cursor || list.length === 0) break
   }
 
-  return matches
+  // 页大小比 limit 大，所以这里要截断，保持「最多返回 limit 条」的契约。
+  return matches.slice(0, Math.max(limit, 1))
 }
 
 /**
