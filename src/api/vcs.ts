@@ -1,3 +1,4 @@
+import { withBase } from './base.ts'
 /** 工作区改动（T7）：status 列文件，diff 拿 patch。 */
 
 export type FileStatus = {
@@ -22,7 +23,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const headers = new Headers()
   const current = token()
   if (current) headers.set('x-oc-token', current)
-  const res = await fetch(path, { headers, signal })
+  const res = await fetch(withBase(path), { headers, signal })
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
   return (await res.json()) as T
 }

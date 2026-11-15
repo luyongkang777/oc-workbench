@@ -50,8 +50,17 @@ pub struct Ctx {
     pub backend: Arc<RwLock<Option<Backend>>>,
     /// 每次启动随机生成的本地 API token（32 位 hex），由 main 生成后同时交给本服务和 IPC。
     pub token: String,
-    /// 本地监听端口，start() 拿到真实端口后回填。
+    /// 本地监听端口：0 = 随机（默认，保持原有行为），非 0 = 固定端口。
+    ///
+    /// 固定端口是给 SSH 反向隧道用的：隧道目标写死在服务器上，
+    /// 端口一变就指向没人监听的地址（表现为 502 但进程还活着）。
+    /// start() 会把真实端口回填到这里。
     pub port: u16,
+    /// 路径前缀（如 `/u/abc`）；空表示不启用（默认，行为与旧版一致）。
+    ///
+    /// 设了前缀后，所有请求都必须带前缀；不带的一律 404，
+    /// 避免根路径把界面暴露出去，也避免「以为设了、其实没生效」的误判。
+    pub base: String,
     /// 最近一次连接失败的原因；连上后清空。
     ///
     /// 只读地暴露给页面（`GET /api/state`）：换台机器最常见的问题是
@@ -385,7 +394,38 @@ pub fn start(mut ctx: Ctx) -> Result<u16, String> {
 
 fn handle(request: tiny_http::Request, ctx: &Ctx) {
     let url = request.url().to_string();
-    let path = url.split('?').next().unwrap_or("").to_string();
+    let raw_path = url.split('?').next().unwrap_or("").to_string();
+
+    // 前缀本身（不带尾斜杠）先跳一次：否则页面里的相对资源会按错基准解析。
+    if !ctx.base.is_empty() && raw_path == ctx.base {
+        // query 要原样带过去：`/u/<id>?t=xxx` 这种链接如果丢了 t，页面能开但接口全 403。
+        let query = url
+            .split_once('?')
+            .map(|(_, rest)| format!("?{rest}"))
+            .unwrap_or_default();
+        let location = format!("{}/{query}", ctx.base);
+        let header = Header::from_bytes(&b"location"[..], location.as_bytes())
+            .expect("location 头构造失败");
+        let _ = request.respond(Response::from_string("").with_status_code(302).with_header(header));
+        return;
+    }
+
+    // 剥前缀；不匹配一律 404（根路径不许露出界面）。
+    let Some(path) = strip_base(&raw_path, &ctx.base) else {
+        let _ = request.respond(Response::from_string("404 路径不存在").with_status_code(404));
+        return;
+    };
+
+    // 下游一律按「剥掉前缀后的 URL」工作，行为与单机完全一致：
+    // 代理 / 本地接口 / 静态资源都只看到 `/api/...`、`/local/...`。
+    // 不这么做的话，代理会把 `/u/<id>/api/info` 原样发给 opencode，
+    // 命中它的静态页路由返回 200 HTML，前端解析失败 → 永远显示「未连接」。
+    let url = format!(
+        "{path}{}",
+        url.split_once('?')
+            .map(|(_, rest)| format!("?{rest}"))
+            .unwrap_or_default()
+    );
 
     // Host 校验对所有请求生效（含静态资源），失败直接 403。
     if !host_allowed(&request, ctx.port) {
@@ -393,17 +433,65 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
         return;
     }
 
+    // 远程入口：`<base>/?t=<remoteToken>` 换一个签名 cookie。
+    // 浏览器拿不到 IPC 下发的 token，这条路是给手机/外部浏览器用的。
+    if path == "/" || path == "/index.html" {
+        match crate::auth_gate::login_from_query(&url, &ctx.base, now_secs()) {
+            crate::auth_gate::LoginOutcome::Accepted(value) => {
+                // 用 fragment（`#`）而不是 query 传递凭据：浏览器不会把 `#` 后面
+                // 发给服务器，否则服务端又看到 `?t=` 再 302 一次，直接死循环
+                // （实测 ERR_TOO_MANY_REDIRECTS）。前端读完会清掉它。
+                let fragment = url
+                    .split_once('?')
+                    .map(|(_, rest)| format!("#{rest}"))
+                    .unwrap_or_default();
+                let location = if ctx.base.is_empty() {
+                    format!("/{fragment}")
+                } else {
+                    format!("{}/{fragment}", ctx.base)
+                };
+                let header = Header::from_bytes(&b"location"[..], location.as_bytes())
+                    .expect("location 头构造失败");
+                let response = Response::from_string("")
+                    .with_status_code(302)
+                    .with_header(crate::auth_gate::cookie_header(&ctx.base, &value))
+                    .with_header(crate::auth_gate::no_referrer())
+                    .with_header(crate::auth_gate::no_store())
+                    .with_header(header);
+                let _ = request.respond(response);
+                return;
+            }
+            crate::auth_gate::LoginOutcome::Rejected => {
+                let _ = request.respond(
+                    Response::from_string("403 token 不正确").with_status_code(403),
+                );
+                return;
+            }
+            crate::auth_gate::LoginOutcome::Ignore => {}
+        }
+    }
+
     // 本地文件通道：直接读磁盘，不经过 opencode。同样要 token（页面从 IPC 拿）。
     if path == "/local" || path.starts_with("/local/") {
-        if !token_allowed(&request, &ctx.token) {
+        if !token_allowed(&request, ctx) {
             let _ = request.respond(
                 Response::from_string("403 缺少或错误的 x-oc-token").with_status_code(403),
             );
             return;
         }
+        // 账号会话 / 本机身份 / 网关地址：远程登录面板要用，走本地通道。
+        if path.starts_with("/local/account/") {
+            crate::account::handle(request, &path, &url);
+            return;
+        }
         // Git 面板：同样走本地通道，token 上面已经校验过。
         if path.starts_with("/local/git/") {
             crate::gitapi::handle(request, &path, &url);
+            return;
+        }
+        // 项目清单：外壳版本走 IPC，浏览器/远程访问走这条（等价语义）。
+        if path == "/local/projects" {
+            crate::projects_api::handle(request);
             return;
         }
         // 远程账号与仓库托管：同样走本地通道。
@@ -439,7 +527,7 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
 
     if path == "/api" || path.starts_with("/api/") {
         // 先 Host 再 token，任一失败都不转发。
-        if !token_allowed(&request, &ctx.token) {
+        if !token_allowed(&request, ctx) {
             let _ = request.respond(
                 Response::from_string("403 缺少或错误的 x-oc-token").with_status_code(403),
             );
@@ -487,12 +575,59 @@ fn host_allowed(request: &tiny_http::Request, port: u16) -> bool {
     let name = name.trim_matches(|c| c == '[' || c == ']');
     name.eq_ignore_ascii_case("127.0.0.1") || name.eq_ignore_ascii_case("localhost")
 }
-
-fn token_allowed(request: &tiny_http::Request, token: &str) -> bool {
-    match header_value(request, "x-oc-token") {
-        Some(value) => value.trim() == token,
-        None => false,
+/// 剥掉路径前缀；不匹配返回 `None`。
+///
+/// 按「整段」匹配：`/u/abc` 只接受 `/u/abc/...`，不能误匹配 `/u/abcd/`
+/// ——否则两个实例的请求会串到一起。
+fn strip_base(path: &str, base: &str) -> Option<String> {
+    if base.is_empty() {
+        return Some(path.to_string());
     }
+    let base = base.trim_end_matches('/');
+    match path.strip_prefix(base) {
+        Some(rest) if rest.starts_with('/') => Some(rest.to_string()),
+        _ => None,
+    }
+}
+
+/// 两种凭据都认：
+///   * `x-oc-token` 头 —— WebView2 外壳（token 经 IPC 下发），行为与旧版一致；
+///   * cookie —— 外部浏览器，由入口 `?t=` 签发，签名里带实例前缀。
+fn token_allowed(request: &tiny_http::Request, ctx: &Ctx) -> bool {
+    if let Some(value) = header_value(request, "x-oc-token") {
+        let value = value.trim();
+        // 外壳：每次启动随机生成的 token（WebView2 经 IPC 下发）。
+        if value == ctx.token {
+            return true;
+        }
+        // 远程实例：localStorage 里存的是持久化的 remoteToken，手机存不住 cookie 时靠它。
+        // 桌面（base 为空）**不认** remoteToken——不能把「每次启动随机」的门禁降级成持久凭据。
+        if !ctx.base.is_empty() && value == crate::remote_auth::cached_token() {
+            return true;
+        }
+    }
+    // cookie 同理，只在前缀实例上生效。
+    if ctx.base.is_empty() {
+        return false;
+    }
+    let Some(value) = crate::auth_gate::cookie_value(request, crate::auth_gate::COOKIE_NAME)
+    else {
+        return false;
+    };
+    crate::remote_auth::verify_session(
+        crate::remote_auth::cached_token(),
+        &ctx.base,
+        &value,
+        now_secs(),
+    )
+}
+
+/// Unix 秒。cookie 的过期判断用它，和签发时保持同一时基。
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|delta| delta.as_secs())
+        .unwrap_or(0)
 }
 
 /// 用 JSON 回一个响应（前端会把 body 拼进异常信息）。

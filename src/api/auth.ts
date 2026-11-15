@@ -14,6 +14,8 @@
  * Vite dev 模式没有外壳 IPC：直接置为 ready、token 用空串，交给 Vite 自己的
  * cookie 代理，行为和改造前一致。
  */
+import { remoteTokenKey } from './base.ts'
+
 
 type WindowWithIpc = Window & {
   ipc?: { postMessage(message: string): void }
@@ -141,6 +143,42 @@ function scheduleRetry(): void {
   }, delay)
 }
 
+/**
+ * 浏览器/远程访问：把入口 `?t=` 里的凭据存进 localStorage，并把 URL 里的 t 去掉。
+ *
+ * 为什么不只靠 cookie：手机上（尤其微信内置浏览器）经常存不住，
+ * 表现为页面能打开但所有 `/api` 都 403。localStorage 同源稳定。
+ */
+function captureRemoteToken(): void {
+  try {
+    const url = new URL(window.location.href)
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''))
+    const token = url.searchParams.get('t') || hashParams.get('t')
+    if (!token) return
+    window.localStorage.setItem(remoteTokenKey(), token)
+    url.searchParams.delete('t')
+    hashParams.delete('t')
+    url.hash = hashParams.toString() ? '#' + hashParams.toString() : ''
+    window.history.replaceState(null, '', url.pathname + (url.search || '') + (url.hash || ''))
+  } catch {
+    // 存储不可用时继续走 cookie
+  }
+}
+
+/**
+ * 当前页面是不是「经公网网关打开的远程页面」。
+ *
+ * 判据只看 host：本地模式永远是 127.0.0.1 / localhost，远程模式是网关 IP/域名。
+ * **不能只看路径前缀** —— 本地模式同样带 `/u/<id>/`。
+ *
+ * 为什么重要：WebView2 里远程页面也能看到 `chrome.webview`，握手会去跟外壳要
+ * token；外壳按 origin 校验会拒绝非本机页面，3 秒超时后界面显示
+ * 「连接本地服务失败」，而后端其实完全正常。
+ */
+export function isRemoteHost(): boolean {
+  const host = window.location.hostname
+  return !(host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]')
+}
 /** 真正发起一次握手；startAuth（首次）与 retryAuth（重试）都走这里。 */
 function handshake(): void {
   const w = window as WindowWithIpc
@@ -157,9 +195,27 @@ function handshake(): void {
     window.clearTimeout(retryTimer)
     retryTimer = null
   }
+  // 远程页面（网关 IP/域名）必须先于 IPC 判断处理：它在 WebView2 里同样能看到
+  // window.ipc，会去跟外壳要 token，而外壳按 origin 拒绝非本机页面 → 3 秒超时
+  // → 界面显示「连接本地服务失败」。远程鉴权靠 cookie + localStorage 里的 x-oc-token。
+  if (isRemoteHost()) {
+    captureRemoteToken()
+    clearRetry()
+    emit({ status: 'ready', token: '' })
+    return
+  }
 
   const ipc = w.ipc
   if (!ipc?.postMessage) {
+    // 浏览器（远程访问）里没有 WebView2 的 IPC 桥，但入口已经用票据换过 cookie，
+    // 鉴权由 cookie 完成。用 chrome.webview 区分「外壳还没就绪」和「根本没有外壳」。
+    const isWebView = Boolean((window as { chrome?: { webview?: unknown } }).chrome?.webview)
+    if (!isWebView || isRemoteHost()) {
+      captureRemoteToken()
+      clearRetry()
+      emit({ status: 'ready', token: '' })
+      return
+    }
     // 外壳的 IPC 桥还没注入（页面先于桥就绪）：保持失败态但别停，退避后再要一次。
     stopNudge()
     if (state.status !== 'failed') emit({ status: 'failed', token: '', error: AUTH_FAILED_TEXT })

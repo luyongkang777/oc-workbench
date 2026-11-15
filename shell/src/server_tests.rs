@@ -22,6 +22,7 @@ fn start_test_server(base: Option<String>, token: &str) -> u16 {
     start(Ctx {
         backend: Arc::new(RwLock::new(backend)),
         token: token.to_string(),
+        base: String::new(),
         port: 0,
         last_error: Arc::new(Mutex::new(None)),
     })
@@ -33,6 +34,7 @@ fn start_test_server_with_error(token: &str, error: Option<&str>) -> u16 {
     start(Ctx {
         backend: Arc::new(RwLock::new(None)),
         token: token.to_string(),
+        base: String::new(),
         port: 0,
         last_error: Arc::new(Mutex::new(error.map(|text| text.to_string()))),
     })
@@ -470,6 +472,7 @@ fn fixed_port_is_bound_exactly() {
     let port = start(Ctx {
         backend: Arc::new(RwLock::new(None)),
         token: "t-fixed".to_string(),
+        base: String::new(),
         port: wanted,
         last_error: Arc::new(Mutex::new(None)),
     })
@@ -488,6 +491,7 @@ fn busy_fixed_port_fails_with_clear_error() {
     let err = start(Ctx {
         backend: Arc::new(RwLock::new(None)),
         token: "t-busy".to_string(),
+        base: String::new(),
         port: busy,
         last_error: Arc::new(Mutex::new(None)),
     })

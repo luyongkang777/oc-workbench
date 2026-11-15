@@ -20,7 +20,15 @@ pub fn proxy(request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
     };
 
     let method = request.method().as_str().to_string();
-    let target = format!("{base}{url}");
+    // 上游只认根路径下的 `/api/*`：远程模式下页面挂在 `/u/<id>/` 下，
+    // 直接把原始 url 拼给 opencode 会打到它的静态页路由 —— 返回 200 + HTML，
+    // 前端 JSON.parse 失败，界面永远显示「未连接」（实测踩过）。
+    // 所以这里用剥掉前缀的 path，再把 query 单独接回去。
+    let query = url
+        .split_once('?')
+        .map(|(_, rest)| format!("?{rest}"))
+        .unwrap_or_default();
+    let target = format!("{base}{path}{query}");
     let has_body = method != "GET" && method != "HEAD";
 
     let mut request = request;

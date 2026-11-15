@@ -10,7 +10,8 @@
  * localStorage 跨不了启动。dev/浏览器没有外壳时才退化成 localStorage。
  */
 
-import { onIpcMessage } from './auth'
+import { isRemoteHost, onIpcMessage } from './auth'
+import { withBase } from './base.ts'
 import { parseProjects, type Project } from '../components/projectList'
 
 const LS_KEY = 'oc-workbench:projects'
@@ -20,7 +21,39 @@ const FALLBACK_MS = 4000
 
 type WindowWithIpc = Window & { ipc?: { postMessage(message: string): void } }
 
+/** 浏览器/远程访问：走 HTTP（cookie 已在入口换过）。 */
+async function fetchProjectsHttp(): Promise<Project[] | null> {
+  try {
+    const res = await fetch(withBase('/local/projects'), {
+      headers: { accept: 'application/json' },
+    })
+    if (!res.ok) return null
+    return parseProjects(await res.json())
+  } catch {
+    return null
+  }
+}
+
+/** 浏览器/远程访问：写回清单。成功返回 true。 */
+async function saveProjectsHttp(list: Project[]): Promise<boolean> {
+  try {
+    const res = await fetch(withBase('/local/projects'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(list),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export function hasShellIpc(): boolean {
+  // 远程页面（网关 IP/域名）在 WebView2 里同样能看到 window.ipc，但外壳按 origin
+  // 拒绝非本机页面的消息 —— 「有 IPC 桥」不等于「能用 IPC」。
+  // 不排除远程页面的话，项目清单会先发一条 oc:projects、等 4 秒超时，
+  // 再退回新 origin 上空的 localStorage，界面永远停在「选一个文件夹」。
+  if (isRemoteHost()) return false
   return Boolean((window as WindowWithIpc).ipc?.postMessage)
 }
 
@@ -45,8 +78,9 @@ export function startProjects(onReady: (list: Project[]) => void): () => void {
   }
 
   const w = window as WindowWithIpc
-  if (!w.ipc?.postMessage) {
-    finish(readLocal())
+  if (!hasShellIpc()) {
+    // 浏览器/远程访问：没有 IPC，改走 HTTP；失败再退 localStorage。
+    void fetchProjectsHttp().then((list) => finish(list ?? readLocal()))
     return () => {}
   }
 
@@ -87,17 +121,21 @@ export function startProjects(onReady: (list: Project[]) => void): () => void {
 /** 写回清单：有外壳就落 projects.json，否则写 localStorage（dev 用）。 */
 export function persistProjects(list: Project[]): void {
   const w = window as WindowWithIpc
-  if (w.ipc?.postMessage) {
+  if (hasShellIpc()) {
     try {
-      w.ipc.postMessage(`oc:projects-save:${JSON.stringify(list)}`)
+      w.ipc?.postMessage(`oc:projects-save:${JSON.stringify(list)}`)
       return
     } catch {
       // 落到下面的 localStorage
     }
   }
-  try {
-    window.localStorage.setItem(LS_KEY, JSON.stringify(list))
-  } catch {
-    // 存储不可用只影响下次启动的恢复，不影响本次
-  }
+  // 没有外壳：先试 HTTP（远程访问），失败再退 localStorage（dev）。
+  void saveProjectsHttp(list).then((ok) => {
+    if (ok) return
+    try {
+      window.localStorage.setItem(LS_KEY, JSON.stringify(list))
+    } catch {
+      // 存储不可用只影响下次启动的恢复，不影响本次
+    }
+  })
 }

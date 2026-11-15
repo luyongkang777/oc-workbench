@@ -1,3 +1,4 @@
+import { withBase } from './base.ts'
 /**
  * MCP 服务器列表（`GET /api/mcp`）。
  *
@@ -36,7 +37,7 @@ async function call<T>(path: string): Promise<T> {
   }, REQUEST_TIMEOUT_MS)
 
   try {
-    const res = await fetch(path, { headers, cache: 'no-store', signal: controller.signal })
+    const res = await fetch(withBase(path), { headers, cache: 'no-store', signal: controller.signal })
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
     const text = await res.text()
     return (text ? JSON.parse(text) : undefined) as T

@@ -25,7 +25,11 @@ mod fsutil;
 mod gitapi;
 mod gitbundle;
 mod projects;
+mod projects_api;
 mod purge;
+mod auth_gate;
+mod remote_auth;
+mod account;
 mod remoteapi;
 mod update;
 mod winenc;
@@ -137,30 +141,6 @@ fn init_com_sta() {
 
 #[cfg(not(windows))]
 fn init_com_sta() {}
-
-/// 远程访问时本机工作台必须监听的固定端口。
-///
-/// ssh -R 隧道（服务器 relayPort → 本机这个端口）和网关 nginx 的
-/// `proxy_set_header Host 127.0.0.1:17800` 都按它写，端口一变远端就永远离线。
-const DEFAULT_REMOTE_PORT: u16 = 17800;
-
-/// 本机该用哪个端口起服务：0 = 让系统随机分配。
-///
-/// 只有「这台机器已经登记到网关」（settings.json 有 remoteBase）才固定端口：
-/// 纯单机用法随机更安全（端口穷举的成本高一点），远程模式下必须固定。
-fn local_port() -> u16 {
-    let registered = update::text_setting("remoteBase")
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    if !registered {
-        return 0;
-    }
-    update::number_setting("remotePort")
-        .and_then(|value| u16::try_from(value).ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_REMOTE_PORT)
-}
-
 /// 起内嵌前端 + 本地代理。
 ///
 /// **这里不做任何后端发现**：`auth::discover()` 最长会等两条子命令各 5 秒，
@@ -170,10 +150,16 @@ fn start_local(token: &str) -> Result<String, String> {
     let backend: Arc<RwLock<Option<auth::Backend>>> = Arc::new(RwLock::new(None));
     // 与 backend 一起共享：后台线程写失败原因，`GET /api/state` 读给页面。
     let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // 路径前缀：每台电脑一个（`/u/<id>`），远程入口与实例隔离都靠它。
+    // 没有就自动生成并落盘——不能依赖手工写 settings.json，否则两台电脑
+    // 抄同一份配置会共用一个设备 ID，列表里合并成一台。
+    let base = remote_auth::ensure_base();
     let port = server::start(server::Ctx {
         backend: backend.clone(),
         token: token.to_string(),
-        port: local_port(),
+        // 远程模式必须固定端口：隧道与网关 nginx 都写死 17800。
+        port: remote_auth::remote_port(),
+        base: base.clone(),
         last_error: last_error.clone(),
     })?;
     server::spawn_bootstrap(backend, last_error);
@@ -183,7 +169,16 @@ fn start_local(token: &str) -> Result<String, String> {
     append_log(&format!(
         "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));
-    Ok(format!("http://127.0.0.1:{port}/"))
+    // base 为空时结果与旧版完全一致。
+    if base.is_empty() {
+        return Ok(format!("http://127.0.0.1:{port}/"));
+    }
+    // 远程模式（配了 base）下静态资源也要凭据，而 WebView2 导航不带 cookie：
+    // 先用持久化的 remoteToken 换一次 cookie（和手机浏览器走同一条路）。
+    Ok(format!(
+        "http://127.0.0.1:{port}{base}/?t={}",
+        remote_auth::cached_token()
+    ))
 }
 
 /// 决定页面加载的地址。
@@ -236,6 +231,12 @@ fn run() -> Result<(), String> {
     let token = server::new_token();
     let url = resolve_url(&token)?;
 
+    // 远程访问凭据（持久化，跨重启不变）。日志落在 gui-error.log，方便复制到手机。
+    let remote_token = remote_auth::cached_token();
+    append_log(&format!(
+        "[remote] 凭据 token={remote_token}\n[remote] 本地入口 {url}\n"
+    ));
+
     // IPC 回调里只入队 + 用 proxy 唤醒事件循环，真正的 evaluate_script 在主循环做
     // （WebView2 消息泵没转时脚本会被丢）。
     //
@@ -255,9 +256,15 @@ fn run() -> Result<(), String> {
     let ipc_token = token.clone();
     let proxy = event_loop.create_proxy();
 
-    let local_origin = url.trim_end_matches('/').to_string();
+    // 白名单只能按「去掉 query 的 origin」比：远程启动地址是 `{base}/?t=<token>`，
+    // 直接用 trim_end_matches('/') 会把 `?t=` 也留在 origin 里，
+    // 之后 302 回来的地址匹配不上 → 导航被拦 → 窗口全白（只留一行 [nav] 日志）。
+    let no_query = url.split('?').next().unwrap_or(&url);
+    let local_origin = no_query.trim_end_matches('/').to_string();
     let nav_origin = local_origin.clone();
     let ipc_origin = local_origin.clone();
+    // 账号面板点「打开另一台电脑」要跳到公网网关，必须放行（否则静默无反应）。
+    let gateway_origin = update::gateway_url();
     let token_sent = Arc::new(AtomicBool::new(false));
 
     let mut builder = WebViewBuilder::new()
@@ -266,9 +273,14 @@ fn run() -> Result<(), String> {
             // 允许本站、空白页与 data/about 这类内部页；只拦外部导航。
             // 不能拦得太死：F5 刷新、渲染进程崩溃自愈都会触发导航，
             // 拦掉它们等于让整个工作台在重载后不可用。
+            let gateway_ok = match &gateway_origin {
+                Some(gw) => target == *gw || target.starts_with(&format!("{gw}/")),
+                None => false,
+            };
             let allowed = target.is_empty()
                 || target == nav_origin
                 || target.starts_with(&format!("{nav_origin}/"))
+                || gateway_ok
                 || target.starts_with("about:")
                 || target.starts_with("data:")
                 || target.starts_with("blob:");
@@ -833,7 +845,7 @@ fn log_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(LOG_NAME))
 }
 
-fn append_log(text: &str) {
+pub(crate) fn append_log(text: &str) {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())

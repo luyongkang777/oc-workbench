@@ -56,6 +56,15 @@ func page(title, body string) string {
 
 func esc(s string) string { return html.EscapeString(s) }
 
+// shortID 取设备 ID 后 6 位：两台电脑的计算机名经常一样（都是 DESKTOP-XXXX
+// 或用户都叫「LU」），只显示名字分不清谁是谁，ID 才是唯一的。
+func shortID(id string) string {
+	if len(id) > 6 {
+		return id[len(id)-6:]
+	}
+	return id
+}
+
 func loginPage(errMsg, notice string) string {
 	body := `<h1>OpenCode 工作台</h1>
 <p class="sub">登录后可以看到你自己的电脑</p>`
@@ -108,7 +117,7 @@ func devicesPage(username string, isAdmin bool, devices []Device, online map[str
 		cards.WriteString(fmt.Sprintf(`<div class="card row dev">
   <div class="dev-main">
     <div class="dev-name"><span class="dot%s"></span>%s</div>
-    <div class="dev-meta">%s</div>
+    <div class="dev-meta">%s · %s</div>
   </div>
   <div class="dev-actions">
     <form method="get" action="/portal/open/%s"><button type="submit">打开</button></form>
@@ -116,7 +125,7 @@ func devicesPage(username string, isAdmin bool, devices []Device, online map[str
       <button type="submit" class="link">解绑</button>
     </form>
   </div>
-</div>`, dot, esc(dev.Name), esc(when), esc(dev.ID), esc(dev.ID)))
+</div>`, dot, esc(dev.Name), esc(when), esc(shortID(dev.ID)), esc(dev.ID), esc(dev.ID)))
 	}
 	if len(devices) == 0 {
 		cards.WriteString(`<div class="card empty">还没有绑定电脑。<br>在电脑上运行 <code>scripts\\pair.ps1</code>，把显示的 8 位配对码填到下面。</div>`)

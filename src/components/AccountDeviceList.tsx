@@ -10,6 +10,16 @@ function whenText(dev: GatewayDevice): string {
 }
 
 /**
+ * 设备短标识（ID 后 6 位）。
+ *
+ * 两台电脑的计算机名经常一模一样（都是 `DESKTOP-XXXX` 或用户都叫「LU」），
+ * 只显示名字根本分不清哪台是哪台。ID 是每台机器唯一的，取后 6 位够读又不占地方。
+ */
+function shortId(id: string): string {
+  return id.length > 6 ? id.slice(-6) : id
+}
+
+/**
  * 已登录后的设备列表。
  *
  * 纯展示：状态在 useAccountSession，点按行为通过 props 回传。
@@ -63,7 +73,9 @@ export default function AccountDeviceList({
             <span className={`account-dot${dev.online ? ' on' : ''}`} aria-hidden="true" />
             <span className="account-device-main">
               <span className="account-device-name">{dev.name}</span>
-              <span className="account-device-meta">{whenText(dev)}</span>
+              <span className="account-device-meta">
+                {whenText(dev)} · {shortId(dev.id)}
+              </span>
             </span>
             <span className="account-device-open">打开</span>
           </button>
