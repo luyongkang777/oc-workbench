@@ -132,13 +132,9 @@ pub fn tunnel_pid_for(relay_port: u16) -> Option<u32> {
 /// 进程是否还活着（用于「复用已有隧道」时的存活监控）。
 #[cfg(windows)]
 pub fn pid_alive(pid: u32) -> bool {
-    let mut cmd = Command::new("tasklist");
-    cmd.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
-    hide_window(&mut cmd);
-    match cmd.output() {
-        Ok(out) => !String::from_utf8_lossy(&out.stdout).contains("No tasks"),
-        Err(_) => false,
-    }
+    // 别解析 tasklist 的本地化文案：中文系统的「没有运行的任务」不含 "No tasks"，
+    // 旧实现会永远返回 true，明知进程死了也空等 20 秒。直接问系统要句柄最稳。
+    crate::auth::pid_is_running(pid)
 }
 
 #[cfg(not(windows))]

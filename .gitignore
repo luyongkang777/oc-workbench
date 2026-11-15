@@ -10,3 +10,6 @@ shell/target-verify/
 
 # 真实网关配置含 enroll 密钥（= 注册权限），只在本机保留
 scripts/gateway.config.json
+
+# 网关本地构建产物（部署用 Linux 二进制，别把 Windows exe 提交进来）
+remote-gateway/ocw-gateway.exe

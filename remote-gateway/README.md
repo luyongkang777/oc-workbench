@@ -69,7 +69,6 @@ CI：`.github/workflows/ci.yml` 在每次 push/PR 跑「前端 tsc + 单测」�
 - 注册 / 设备登记 / 配对：各自独立的桶，5 分钟 10 次
 - 账号总数上限 200（`signup.go` 的 `maxAccounts`），满了返回「注册用户已满」
 - 用户名 2~32 字符、密码至少 8 位、重名直接拒绝
-- 用户名 2~32 字符、密码至少 8 位、重名直接拒绝
 
 > 之前做过邀请码模式，现在改成开放注册。`-mode invite` 命令和 `/portal/admin/invite`
 > 路由还在，但注册流程已经不用它们了；想恢复邀请码只要把 `handleSignup` 里的

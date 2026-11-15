@@ -38,6 +38,10 @@ jobs:
       - name: 前端单测
         run: npm test
 
+      # 验收 #11 要求 npm run build 全绿；只跑单测发现不了构建期错误。
+      - name: 构建前端产物
+        run: npm run build
+
   gateway:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -65,3 +69,32 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
             go build -trimpath -ldflags "-s -w" -o /tmp/ocw-gateway .
           ls -l /tmp/ocw-gateway
+
+  shell:
+    # 外壳是约 1700 行新增 Rust，之前 CI 完全没有覆盖。
+    # build.rs 会把 dist 嵌进二进制，所以必须先出前端产物才能编译/测试。
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shell
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建前端产物（build.rs 需要）
+        run: npm run build
+
+      - name: 外壳单测
+        working-directory: shell
+        run: cargo test

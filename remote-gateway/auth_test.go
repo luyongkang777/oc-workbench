@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -138,6 +139,25 @@ func TestRevokeIgnoresBadInput(t *testing.T) {
 	// 不应 panic；合法 token 仍然可用
 	if a.Read(a.Make(1)) != 1 {
 		t.Fatal("坏输入不该影响正常 token")
+	}
+}
+
+// 匿名入口（/portal/logout、/portal/api/logout）能直接打到 Revoke：
+// 伪造的、过期时间离谱的 token 都不许进表，否则循环请求就能把表撑爆并把锁占满。
+func TestRevokeRejectsForgedAndOverlong(t *testing.T) {
+	a := newAuth()
+	now := time.Now().Unix()
+	// 签名段瞎写
+	a.Revoke(fmt.Sprintf("1.%d.deadbeef", now+60))
+	// 结构合法、签名也对，但过期时间超过正常 TTL
+	a.Revoke(fmt.Sprintf("1.%d.%s", now+8*86400, a.sign(1, now+8*86400)))
+	// 已过期
+	a.Revoke(fmt.Sprintf("1.%d.%s", now-60, a.sign(1, now-60)))
+	a.mu.Lock()
+	n := len(a.revoked)
+	a.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("伪造/异常 token 不该进吊销表，实际 %d 条", n)
 	}
 }
 

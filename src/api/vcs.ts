@@ -1,4 +1,4 @@
-import { withBase } from './base.ts'
+import { authToken, withBase } from './base.ts'
 /** 工作区改动（T7）：status 列文件，diff 拿 patch。 */
 
 export type FileStatus = {
@@ -15,13 +15,10 @@ export type FileDiff = {
   deletions: number
 }
 
-function token(): string {
-  return (window as unknown as { __OC_TOKEN?: string }).__OC_TOKEN ?? ''
-}
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const headers = new Headers()
-  const current = token()
+  const current = authToken()
   if (current) headers.set('x-oc-token', current)
   const res = await fetch(withBase(path), { headers, signal })
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)

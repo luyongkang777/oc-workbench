@@ -165,6 +165,21 @@ function captureRemoteToken(): void {
   }
 }
 
+/** 把地址栏里的 ?t= / #t= 抹掉（只清不留，桌面端用）。 */
+function stripEntryToken(): void {
+  try {
+    const url = new URL(window.location.href)
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''))
+    if (!url.searchParams.has('t') && !hashParams.has('t')) return
+    url.searchParams.delete('t')
+    hashParams.delete('t')
+    url.hash = hashParams.toString() ? '#' + hashParams.toString() : ''
+    window.history.replaceState(null, '', url.pathname + (url.search || '') + (url.hash || ''))
+  } catch {
+    // 改不了地址栏也不影响功能
+  }
+}
+
 /**
  * 当前页面是不是「经公网网关打开的远程页面」。
  *
@@ -205,6 +220,7 @@ function handshake(): void {
     return
   }
 
+
   const ipc = w.ipc
   if (!ipc?.postMessage) {
     // 浏览器（远程访问）里没有 WebView2 的 IPC 桥，但入口已经用票据换过 cookie，
@@ -222,6 +238,10 @@ function handshake(): void {
     scheduleRetry()
     return
   }
+
+  // 走到这里说明是 WebView2 外壳：token 已经经 IPC 下发，
+  // 地址栏里的 t 留在历史/截图里只会泄漏，清掉。
+  stripEntryToken()
 
   // 只在第一次（或外部把 __ocIpc 换掉时）记住外壳原有处理函数
   if (w.__ocIpc && w.__ocIpc !== installedIpc) baseIpc = w.__ocIpc

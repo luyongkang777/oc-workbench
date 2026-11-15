@@ -15,6 +15,7 @@ import SubagentPanel from './SubagentPanel'
 import Terminal from './Terminal'
 import TopBar from './TopBar'
 import WelcomePane from './WelcomePane'
+import { isRemoteHost } from '../api/auth'
 
 /**
  * 主界面的全部布局与 JSX。
@@ -277,8 +278,10 @@ export default function AppShell() {
         onOpenDevice={(url) => {
           setAccountOpen(false)
           // 顶层导航（不是 iframe）：这样远程页面的 origin 就是网关，账号 cookie 同站生效。
-          // back 参数带着本机地址，跨 origin 只能靠 URL 传。
-          const back = encodeURIComponent(window.location.href)
+          // back 只传能回去的东西：远程页面里的 127.0.0.1 是手机自己，回网关门户才对。
+          const back = encodeURIComponent(
+            isRemoteHost() ? '/' : window.location.pathname + window.location.hash,
+          )
           window.location.href = `${url}${url.includes('?') ? '&' : '?'}back=${back}`
         }}
       />

@@ -6,8 +6,9 @@
  * `oc:projects-save:<json>`。清单内容（去重/排序/每个项目的界面状态）由前端
  * `components/projectList.ts` 负责，外壳只存不管。
  *
- * 为什么不用 localStorage：本地服务端口每次启动都变，origin 跟着变，
- * localStorage 跨不了启动。dev/浏览器没有外壳时才退化成 localStorage。
+ * 为什么不用 localStorage：本地服务的端口可能在两次启动间变化（默认随机端口，
+ * 只有远程模式才固定），origin 跟着变，localStorage 跨不了启动。dev/浏览器没有
+ * 外壳时才退化成 localStorage。
  */
 
 import { isRemoteHost, onIpcMessage } from './auth'

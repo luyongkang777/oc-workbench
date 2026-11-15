@@ -11,13 +11,18 @@
 - 现状：token 每次启动随机（`main.rs`），页面靠 IPC 取，重启即失效。
 - 改法：
   - `update.rs`：`load_settings` / `save_settings` 从私有改为 `pub(crate)`
-  - 新增 `shell/src/remote_auth.rs`：
-    - `remote_token()`：从 settings.json 读 `remoteToken`，没有就用 `getrandom` 生成 32 字节 hex 落盘
-    - `sign_session(token, instance_id, exp) -> String`、`verify_session(...) -> bool`
-    - HMAC-SHA256 用已有 `sha2` 手写（约 30 行），不引新依赖
-  - 启动日志打一次完整入口 URL（方便复制到手机）
-- 文件：`shell/src/update.rs`、`shell/src/remote_auth.rs`(新)、`shell/src/main.rs`
+- 改法：`server::start` 接受端口参数；端口从 settings.json 的 `remotePort` 读。
+  - 显式配了 `remotePort` 就用配的
+  - 没配、但有设备前缀（`ensure_base()` 现在会自动生成）→ 固定 **17800**，隧道和网关 nginx 都按它写死
+  - 前缀也没有 → 0（随机）
+- 文件：`shell/src/main.rs`、`shell/src/server.rs`
 - 验收：
+  - 有前缀时固定 17800，`curl 127.0.0.1:17800` 有响应
+  - 17800 被占用时报错清楚、退出码非 0（不能静默换端口，隧道会指错）
+  - 前缀分支有单测覆盖（`server_tests.rs` 的 `base_prefix_routes_and_blocks_bare_paths`）
+  - `npm test` 全绿
+- 说明：原计划「不设就保持随机」与「每台机器自动生成唯一前缀」冲突（前缀一生成就走固定端口）。
+  实现选了后者：设备 ID 不能靠手写，否则两台机器抄同一份配置会合并成一台。
   - 首次启动 settings.json 出现 `remoteToken`，32 字节 hex
   - 手动改坏 settings.json 不崩（沿用现有「坏文件当空对象」逻辑）
   - 同一个 token 签出的 cookie 在进程重启后仍验签通过
@@ -62,12 +67,12 @@
 ## T5 加载地址与根路径跳转
 
 - 现状：`main.rs:163` 返回 `http://127.0.0.1:{port}/`，这是 WebView2 打开的地址。
-- 改法：拼上 `remoteBase`；设了前缀时 `GET /` 返回 302 到 `<base>/`。
+- 改法：拼上 `remoteBase`；设了前缀时 `GET /` 返回 404（与 T3 一致，裸路径不暴露界面）。
 - 文件：`shell/src/main.rs`、`shell/src/server.rs`
 - 验收：
   - 设前缀后双击 exe **不白屏**，能正常进主界面
   - 不设前缀时行为和现在一致
-- 说明：这条不做，T3 一上线本机就白屏。
+- 说明：这条不做，T3 一上线本机就白屏（加载地址必须带前缀）。
 
 ## T6 入口 token 换 cookie
 
@@ -81,21 +86,21 @@
   - 带 `?t=` 访问 → 302 + Set-Cookie 正确（HttpOnly、Path=base、SameSite=Lax）
   - 之后不带 token 的 `/api/*` 用 cookie 能通
   - 伪造/过期 cookie → 401
-  - WebView2 外壳原有 IPC 流程不受影响
+  - 伪造/过期 cookie → 403
 
 ## T7 服务器加 7800 单入口
 
-- 改法：新建 `/www/server/panel/vhost/nginx/remote-web-7800.conf`（独立 server 块，不是 extension 目录）
-  - `listen 7800`
-  - `location = /u/<id> { return 301 /u/<id>/; }`
-  - `location ^~ /u/<id>/ { proxy_pass http://127.0.0.1:17801; }` ← **结尾不带斜杠，不剥前缀**
-  - `proxy_set_header Host 127.0.0.1:17800;` ← 关键，绕过后端 Host 校验
-  - 抄 `remote-mcp-7810.conf` 的 SSE 参数（`proxy_buffering off`、3600s、Upgrade）
-  - `access_log off`
-  - 在配置里写注释：不要加统一登录、不要给 proxy_pass 加尾斜杠
+- 改法：新建 `/www/server/panel/vhost/nginx/remote-web-7800.conf`（独立 server 块，不是 extension 目录）。
+  仓库里的部署参考：`remote-gateway/nginx-7800.conf.example`（从生产导出，含 `_gw_auth` 与 301）。
+  - `listen 7800`；`location /` 指网关 `127.0.0.1:17900`
+  - `location = /_gw_auth { internal; proxy_pass .../portal/api/authcheck; }` ← 设备入口的登录 + 归属校验
+  - 设备段由网关写进 `ocw-devices.inc`：`location ^~ /u/<id>/`（`proxy_pass` **结尾不带斜杠，不剥前缀**、
+    `Host 127.0.0.1:17800`、SSE 参数、`access_log off`）
+  - 少尾斜杠的 301：基础块里有 `location ~ ^/u/([^/]+)$`，网关生成的设备段里也各有一份精确匹配
+  - 不要在 `proxy_pass` 上加尾斜杠；不要绕开 `auth_request`
 - 验收：
   - `nginx -t` 通过
-  - 服务器本地 `curl -I http://127.0.0.1:7800/u/<id>/` 正常
+  - 服务器本地 `curl -I http://127.0.0.1:7800/u/<id>/` 正常，`/u/<id>`（少斜杠）返回 301
   - **从本机（非服务器）连 7800 成功**（确认轻量防火墙已放行）
   - `curl -I http://81.70.181.82/`、`:3900`、`:7810`、`:7820` 全部无变化
 
@@ -106,12 +111,12 @@
   - 看门狗：进程在 **且** 服务器侧 17801 真实连通才算活；只看端口会被别的程序骗
   - 脚本 UTF-8 带 BOM（PowerShell 5.1 必需）
 - 文件：`scripts/remote-tunnel.ps1`(新)、`scripts/tunnel-watchdog.ps1`(新)
-- 验收：杀掉隧道 60 秒内自动恢复，日志有明确记录
+- 验收：杀掉隧道 60 秒内自动恢复；看门狗要同时验「本机进程在」和「服务器侧 17801 真实连通」，只看前者会被端口被占骗过
 
 ## T9 端到端验收
 
 - 手机切 4G，走完 `product.md` 的 13 条验收标准。
-- 重点：流式回复不缓冲、锁屏 1 分钟回来仍可用、重启 exe 后链接仍有效、用 A 的 cookie 打 B 的路径必须 401。
+- 重点：流式回复不缓冲、锁屏 1 分钟回来仍可用（重连补全量）、重启 exe 后链接仍有效、用 A 的 cookie 打 B 的路径必须 403。
 
 ---
 

@@ -126,21 +126,30 @@ export function useFileTabs(options: {
   /** 换一组打开的文件（切项目 / 启动恢复）：传 null 清空，传路径开成唯一标签。 */
   const resetTabs = useCallback((path: string | null) => {
     // 换一套文件时旧标签的未保存标记必须清掉，否则新标签会被误判成脏的
-    setDirtyTabs(new Set())
+    const emptyDirty = new Set<string>()
+    dirtyTabsRef.current = emptyDirty
+    setDirtyTabs(emptyDirty)
     if (!path) {
+      fileTabsRef.current = []
+      activeFileRef.current = null
       setFileTabs([])
       setActiveFile(null)
       return
     }
     const key = fileTabKey(null, path)
-    setFileTabs([{ key, path, root: null, seq: 1, line: null, editSeq: 0 }])
+    const next = [{ key, path, root: null, seq: 1, line: null, editSeq: 0 }]
+    // ref 要同步写：同一 tick 里 hasDirtyTabs / closeTab / openFile 读的都是 ref。
+    fileTabsRef.current = next
+    setFileTabs(next)
     setActiveFile(key)
   }, [])
 
   /** 把某个标签重新开进当前工作区（点「外部文件」标记时，applyRoot 会清空标签，这里补回来）。 */
   const reopenTab = useCallback((tab: FileTab) => {
     const key = fileTabKey(null, tab.path)
-    setDirtyTabs(new Set())
+    const clearedDirty = new Set<string>()
+    dirtyTabsRef.current = clearedDirty
+    setDirtyTabs(clearedDirty)
     const next = [
       { key, path: tab.path, root: null, seq: tab.seq + 1, line: tab.line, editSeq: tab.editSeq },
     ]

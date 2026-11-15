@@ -99,6 +99,10 @@ export function useChatEvents(
       }, OTHER_ACTIVITY_DELAY_MS)
     }
 
+    let reconnected = false
+    // 重连补的全量也要走同一道串行闸，并且限频：
+    // 连接秒断秒连时不能每 2 秒抓一次完整消息窗。
+    let lastOpenRefresh = 0
     ;(async () => {
       while (!stopped) {
         try {
@@ -129,11 +133,27 @@ export function useChatEvents(
             // 增量事件到此为止，不触发全量拉取
             if (isIncrementalEvent(event.type)) return
             schedule(sid)
-          }, controller.signal)
+            },
+            controller.signal,
+            () => {
+              // 刚连上。除了第一次，说明之前断过：断线期间的流式增量已经丢了。
+              // 补数据复用 schedule 的串行闸 + 80ms 合并，并且 3 秒内不重复。
+              if (!reconnected) return
+              const sid = currentRef.current
+              if (!sid) return
+              const now = Date.now()
+              if (now - lastOpenRefresh < 3000) return
+              lastOpenRefresh = now
+              schedule(sid)
+            },
+          )
         } catch {
-          if (stopped) return
-          await new Promise((resolve) => window.setTimeout(resolve, 2000))
+          // 连不上：下面统一退避，不在这里刷新
         }
+        if (stopped) return
+        reconnected = true
+        // 正常 EOF 也要退避：后端发完头就断时不能紧贴着重连。
+        await new Promise((resolve) => window.setTimeout(resolve, 2000))
       }
     })()
 

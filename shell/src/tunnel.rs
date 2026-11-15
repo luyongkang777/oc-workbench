@@ -249,7 +249,10 @@ fn keep_alive(config: TunnelConfig, generation: u64) {
                             thread::sleep(Duration::from_secs(2));
                         }
                         // 接管：杀掉旧进程（它可能已经不可用，也可能只是残留），自己重建。
-                        proc::kill_pid(existing);
+                        // 先复核它确实是 ssh：PID 在那 20 秒里可能被系统复用。
+                        if proc::is_ssh(existing) {
+                            proc::kill_pid(existing);
+                        }
                         thread::sleep(proc::RELEASE_GRACE);
                         continue;
                     }

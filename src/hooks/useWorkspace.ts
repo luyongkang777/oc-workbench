@@ -81,21 +81,21 @@ export function useWorkspace(options: {
    * 否则两个窗口各恢复一次就会互相覆盖 root.txt，来回打架。
    */
   const applyRoot = useCallback(
-    (input: string, opts?: { persist?: boolean }) => {
+    (input: string, opts?: { persist?: boolean }): boolean => {
       const persist = opts?.persist !== false
       // 手输/粘贴/外壳下发的路径先抹平：引号、正反斜杠、/c/ 风格、file://、尾斜杠。
       const path = normalizeRootPath(input)
-      if (!path) return
+      if (!path) return false
 
       // 同一目录：只补刷新持久化，不清掉正在看的文件（选同一文件夹/重试都会走到这）。
       if (normKey(rootRef.current) === normKey(path)) {
         commitProjects(upsertProject(projectsRef.current, path, { lastUsed: Date.now() }))
         if (persist) rememberRoot(path)
-        return
+        return true
       }
 
       if (cb.current.hasDirtyTabs() && !window.confirm('有文件还没保存，切换项目会丢弃修改，继续？')) {
-        return
+        return false
       }
 
       let next = upsertProject(projectsRef.current, path, { lastUsed: Date.now() })
@@ -110,6 +110,7 @@ export function useWorkspace(options: {
 
       // 每个项目都是自己的界面：恢复它上次停在哪个文件、哪个视图
       cb.current.onProjectSwitched(target?.state)
+      return true
     },
     [rootRef, commitProjects, rememberRoot],
   )

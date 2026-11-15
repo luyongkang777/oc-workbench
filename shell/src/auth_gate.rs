@@ -24,19 +24,18 @@ pub enum LoginOutcome {
 }
 
 /// 检查 `?t=<token>`；`base` 参与签名，让 cookie 与实例绑定。
-pub fn login_from_query(url: &str, base: &str, now: u64) -> LoginOutcome {
+///
+/// `expected` 由调用方显式传入（生产是 settings.json 里的 remoteToken）。
+/// 不在这里读全局的 cached_token()：测试才能不碰用户的真实配置。
+pub fn login_from_query(url: &str, base: &str, expected: &str, now: u64) -> LoginOutcome {
     let Some(token) = query_param(url, "t") else {
         return LoginOutcome::Ignore;
     };
-    if token.is_empty() || token != remote_auth::cached_token() {
+    if token.is_empty() || token != expected {
         return LoginOutcome::Rejected;
     }
     let exp = now + MAX_AGE_SECS;
-    LoginOutcome::Accepted(remote_auth::sign_session(
-        remote_auth::cached_token(),
-        base,
-        exp,
-    ))
+    LoginOutcome::Accepted(remote_auth::sign_session(expected, base, exp))
 }
 
 /// 构造 Set-Cookie 头。`Path` 限定在前缀下，避免实例之间互相覆盖。
@@ -101,25 +100,25 @@ mod tests {
     #[test]
     fn 没有t就忽略() {
         assert!(matches!(
-            login_from_query("/api/info", "/u/abc", 0),
+            login_from_query("/api/info", "/u/abc", "unit-token", 0),
             LoginOutcome::Ignore
         ));
     }
 
     #[test]
     fn 错误的t被拒() {
-        let token = remote_auth::cached_token().to_string();
-        let wrong = if token == "deadbeef" { "cafe" } else { "deadbeef" };
+        let token = "unit-token";
+        let wrong = "deadbeef";
         assert!(matches!(
-            login_from_query(&format!("/?t={wrong}"), "/u/abc", 0),
+            login_from_query(&format!("/?t={wrong}"), "/u/abc", token, 0),
             LoginOutcome::Rejected
         ));
     }
 
     #[test]
     fn 正确的t签发cookie且绑定实例() {
-        let token = remote_auth::cached_token().to_string();
-        match login_from_query(&format!("/?t={token}"), "/u/abc", 1_000) {
+        let token = "unit-token";
+        match login_from_query(&format!("/?t={token}"), "/u/abc", token, 1_000) {
             LoginOutcome::Accepted(value) => {
                 assert!(remote_auth::verify_session(&token, "/u/abc", &value, 1_000));
                 // 同一份 cookie 拿到别的实例上必须失败

@@ -113,12 +113,16 @@ fn configured() -> bool {
     };
     text.lines().any(|line| {
         let t = line.trim();
-        // 大小写不敏感，容忍 `Host tiku other` 这种一行多个别名
-        t.len() > 4
-            && t[..4].eq_ignore_ascii_case("host")
-            && t[4..]
-                .split_whitespace()
-                .any(|name| name.eq_ignore_ascii_case(HOST_ALIAS))
+        // 按空白切第一个词比较，不能对 &str 做 t[..4] 字节切片：
+        // 中文注释（如 "# 我的服务器"）第 4 字节会落在汉字中间，直接 panic；
+        // 带 BOM 的文件首行也永远匹配不上。
+        let mut words = t.split_whitespace();
+        match words.next() {
+            Some(first) if first.trim_start_matches('\u{feff}').eq_ignore_ascii_case("Host") => {
+                words.any(|name| name.eq_ignore_ascii_case(HOST_ALIAS))
+            }
+            _ => false,
+        }
     })
 }
 

@@ -128,7 +128,8 @@ const SESSION_PATH = '/local/account/session'
  *
  * 远程模式下页面挂在 /u/<实例ID>/ 下，所有内部接口（/local/*、/api/*）都要带这个前缀，
  * 否则请求会落到网关的默认 location 变成 404 —— 表现就是「登录成功但会话永远存不下来」。
- * 这里内联一份（不 import base.ts：主仓库那份没有 base 模块）。
+ * 前缀推导和 base.ts 的 computeBase 等价。这里内联是为了让 gateway.ts 保持零依赖
+ * （会被 node --test 直接跑），改规则时两处必须一起改。
  */
 function localApi(path: string): string {
   const base = window.location.pathname.replace(/\/index\.html?$/i, '/').replace(/\/+$/, '')

@@ -31,6 +31,7 @@ func newAPIServer(t *testing.T) (*server, *fakeReloader) {
 		auth:     NewAuthenticator("api-test-secret"),
 		limiter:  newLimiter(6),
 		regLimit: newLimiter(10),
+		claimLimit: newLimiter(30),
 		nginx:    fr,
 		enroll:   "test-enroll",
 	}, fr

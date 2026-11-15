@@ -23,6 +23,7 @@ type server struct {
 	auth     *Authenticator
 	limiter  *limiter // 登录：5 分钟 6 次失败即锁
 	regLimit *limiter // 注册 / 设备登记 / 配对：5 分钟 10 次（每次尝试都计数）
+	claimLimit *limiter // 认领设备：5 分钟 30 次（NAT 后面可能有几台机器）
 	nginx    deviceReloader
 	enroll   string
 	dataDir  string
@@ -88,6 +89,7 @@ func main() {
 		auth:     NewAuthenticator(secret),
 		limiter:  newLimiter(6),
 		regLimit: newLimiter(10),
+		claimLimit: newLimiter(30),
 		nginx:    NewNginxDevices(o.nginxConf),
 		enroll:   enroll,
 		dataDir:  o.dataDir,

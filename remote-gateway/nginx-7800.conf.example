@@ -1,0 +1,52 @@
+# 部署参考：/www/server/panel/vhost/nginx/remote-web-7800.conf
+# 从生产服务器导出的真实配置（内容相同，只把过时注释改成了符合当前实现的说法）。
+# 放进 nginx 的 vhost 目录；设备段由网关自动写 ocw-devices.inc，不用手改。
+
+# ─────────────────────────────────────────────────────────────
+# 远程访问单入口（specs/remote-access）
+#   公网 :7800 → nginx → 127.0.0.1:17801 → SSH 反向隧道 → 本机 17800
+#
+# 设计约束（别改）：
+#   1) 设备入口必须过 auth_request（登录 + 这台设备归你）。网关持有设备
+#      remoteToken（生成入口 ?t= 要用），所以网关被拿下等于所有设备入口暴露。
+#   2) proxy_pass 结尾不能带斜杠。带了会把前缀剥掉，后端再剥一次就成 404。
+#   3) Host 必须改写成本地回环：后端 host_allowed() 只认 127.0.0.1:<本地端口>，
+#      而 nginx 的 $host 不带端口，直接透传会被 403。
+# ─────────────────────────────────────────────────────────────
+server {
+    listen 7800;
+    listen [::]:7800;
+    server_name _;
+
+    access_log off;
+    client_max_body_size 64m;
+
+    # 设备入口的账号校验：nginx auth_request 的内部子请求（网关判断「登录了吗 / 这台是你的吗」）
+    location = /_gw_auth {
+        internal;
+        proxy_pass http://127.0.0.1:17900/portal/api/authcheck;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # 门户：登录 / 我的设备 / 配对（Go 网关，127.0.0.1:17900）
+    location / {
+        proxy_pass http://127.0.0.1:17900;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+
+    # 各设备入口由网关自动生成（/u/<id>/ → 127.0.0.1:<回环端口>）
+    include /www/server/panel/vhost/nginx/ocw-devices.inc;
+
+    # 实例地址不带尾斜杠时补一次，否则页面里的相对资源会按错基准解析
+    location ~ ^/u/([^/]+)$ {
+        return 301 /u/$1/$is_args$args;
+    }
+}

@@ -23,6 +23,7 @@ fn start_test_server(base: Option<String>, token: &str) -> u16 {
         backend: Arc::new(RwLock::new(backend)),
         token: token.to_string(),
         base: String::new(),
+        remote_token: token.to_string(),
         port: 0,
         last_error: Arc::new(Mutex::new(None)),
     })
@@ -35,8 +36,22 @@ fn start_test_server_with_error(token: &str, error: Option<&str>) -> u16 {
         backend: Arc::new(RwLock::new(None)),
         token: token.to_string(),
         base: String::new(),
+        remote_token: token.to_string(),
         port: 0,
         last_error: Arc::new(Mutex::new(error.map(|text| text.to_string()))),
+    })
+    .expect("本地服务应能启动")
+}
+
+/// 带路径前缀启动：测「前缀剥离」与「前缀部署下裸路径一律 404」。
+fn start_test_server_with_base(token: &str, base: &str) -> u16 {
+    start(Ctx {
+        backend: Arc::new(RwLock::new(None)),
+        token: token.to_string(),
+        base: base.to_string(),
+        remote_token: token.to_string(),
+        port: 0,
+        last_error: Arc::new(Mutex::new(None)),
     })
     .expect("本地服务应能启动")
 }
@@ -111,6 +126,87 @@ fn api_without_token_is_403() {
         ureq::Error::Status(403, _) => {}
         other => panic!("期望 403，实际 {other:?}"),
     }
+}
+
+#[test]
+fn base_prefix_routes_and_blocks_bare_paths() {
+    let token = "unit-test-token";
+    let base = "/u/unit1234";
+    let port = start_test_server_with_base(token, base);
+    let host = format!("127.0.0.1:{port}");
+
+    // 不认裸路径：前缀部署后 / 和 /api/* 都不能从根进来
+    let bare_root = raw_get(port, &host, "/");
+    assert!(bare_root.starts_with("HTTP/1.1 404"), "裸根应 404：{bare_root}");
+    let bare_api = raw_get(port, &host, "/api/info");
+    assert!(bare_api.starts_with("HTTP/1.1 404"), "裸 API 应 404：{bare_api}");
+
+    // 带前缀的根能拿到 index
+    let prefixed = raw_get(port, &host, &format!("{base}/"));
+    assert!(prefixed.starts_with("HTTP/1.1 200"), "带前缀应 200：{prefixed}");
+
+    // 带前缀 + token 能过鉴权（后端为空 → 502，说明已进到代理层）
+    let api = raw_request(port, "GET", &host, &format!("{base}/api/info"), &[("x-oc-token", token)]);
+    assert!(api.starts_with("HTTP/1.1 502"), "带前缀+token 应进代理层（502）：{api}");
+}
+
+#[test]
+fn entry_token_sets_cookie_and_bad_token_is_forbidden() {
+    let token = "unit-test-token";
+    let base = "/u/unit1234";
+    let port = start_test_server_with_base(token, base);
+    let host = format!("127.0.0.1:{port}");
+
+    let ok = raw_get(port, &host, &format!("{base}/?t={token}"));
+    assert!(ok.starts_with("HTTP/1.1 302"), "带对的 t 应 302：{ok}");
+    let lower = ok.to_lowercase();
+    assert!(lower.contains("set-cookie: oc_sess="), "应下发 cookie：{ok}");
+    assert!(lower.contains("httponly"), "cookie 应 HttpOnly：{ok}");
+    assert!(
+        lower.contains(&format!("path={base}/")),
+        "cookie Path 应限定在前缀下：{ok}"
+    );
+
+    let bad = raw_get(port, &host, &format!("{base}/?t=deadbeef"));
+    assert!(bad.starts_with("HTTP/1.1 403"), "错误 t 应 403：{bad}");
+
+    let forged = raw_request(
+        port,
+        "GET",
+        &host,
+        &format!("{base}/api/info"),
+        &[("cookie", "oc_sess=1.9999999999.deadbeef")],
+    );
+    assert!(forged.starts_with("HTTP/1.1 403"), "伪造 cookie 应 403：{forged}");
+}
+
+#[test]
+fn cookie_from_entry_token_is_accepted() {
+    let token = "unit-test-token";
+    let base = "/u/unit1234";
+    let port = start_test_server_with_base(token, base);
+    let host = format!("127.0.0.1:{port}");
+    let resp = raw_get(port, &host, &format!("{base}/?t={token}"));
+    let cookie = resp
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if !name.eq_ignore_ascii_case("set-cookie") {
+                return None;
+            }
+            let pair = value.trim().split(';').next()?;
+            let (key, val) = pair.split_once('=')?;
+            (key == "oc_sess").then(|| val.to_string())
+        })
+        .expect("响应里应有 oc_sess");
+    let api = raw_request(
+        port,
+        "GET",
+        &host,
+        &format!("{base}/api/info"),
+        &[("cookie", &format!("oc_sess={cookie}"))],
+    );
+    assert!(api.starts_with("HTTP/1.1 502"), "cookie 应换到代理层（502）：{api}");
 }
 
 #[test]
@@ -473,6 +569,7 @@ fn fixed_port_is_bound_exactly() {
         backend: Arc::new(RwLock::new(None)),
         token: "t-fixed".to_string(),
         base: String::new(),
+        remote_token: "t-fixed".to_string(),
         port: wanted,
         last_error: Arc::new(Mutex::new(None)),
     })
@@ -492,6 +589,7 @@ fn busy_fixed_port_fails_with_clear_error() {
         backend: Arc::new(RwLock::new(None)),
         token: "t-busy".to_string(),
         base: String::new(),
+        remote_token: "t-busy".to_string(),
         port: busy,
         last_error: Arc::new(Mutex::new(None)),
     })

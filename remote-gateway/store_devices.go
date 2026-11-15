@@ -152,12 +152,6 @@ func (d *DB) ReleaseDevice(id string, owner int64) bool {
 // ReleaseDevice 只清 owner、保留端口，而端口池只有 17801~17840：
 // 任意注册用户可以连发 40 个假设备把池子占满，之后所有人登记都报「端口池已满」。
 // 给运维一个显式命令（-mode rmdevice）来清理。
-
-// DeleteDevice 彻底删掉一台设备（连带释放回环端口）。
-//
-// ReleaseDevice 只清 owner、保留端口，而端口池只有 17801~17840：
-// 任意注册用户可以连发 40 个假设备把池子占满，之后所有人登记都报「端口池已满」。
-// 给运维一个显式命令（-mode rmdevice）来清理。
 func (d *DB) DeleteDevice(id string) bool {
 	ok := false
 	_ = d.withWriteLock(func() error {

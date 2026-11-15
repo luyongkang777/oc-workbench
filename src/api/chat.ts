@@ -1,5 +1,5 @@
-import { withBase } from './base.ts'
-/** 会话与事件流（T5）。认证 token 从 window.__OC_TOKEN 读，和 client.ts 一致。 */
+import { authToken, withBase } from './base.ts'
+/** 会话与事件流（T5）。认证 token 统一走 base.ts 的 authToken()。 */
 
 /**
  * 会话上暂存的回滚边界（服务端 session.revert）。
@@ -8,18 +8,6 @@ import { withBase } from './base.ts'
  * commit 才真正删掉这条及其之后的消息。工作台用 stage 做「回撤预览」，
  * 用户改完重新发送时由服务端（或我们显式 commit）落地。
  */
-/**
- * 手机视口判断（api 层保持零依赖：这个文件会被 node --test 直接跑）。
- * 阈值与 src/hooks/useMobileLayout.ts 的 MOBILE_MAX_WIDTH(800) / MOBILE_MAX_HEIGHT(520) 一致。
- */
-function mobileViewport(): boolean {
-  if (typeof window === 'undefined') return false
-  const w = window.innerWidth
-  const h = window.innerHeight
-  if (!Number.isFinite(w) || w <= 0) return false
-  if (w <= 800) return true
-  return Number.isFinite(h) && h > 0 && h <= 520
-}
 
 export type SessionRevert = {
   messageID: string
@@ -216,15 +204,12 @@ export type ModelInfo = {
   limit?: { context?: number; output?: number }
 }
 
-function token(): string {
-  return (window as unknown as { __OC_TOKEN?: string }).__OC_TOKEN ?? ''
-}
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   // dev 模式走 Vite 代理（cookie 由代理注入），这时没有 token；
   // 别发空的 x-oc-token，否则会被上游当成带了错误凭据。
-  const current = token()
+  const current = authToken()
   if (current) headers.set('x-oc-token', current)
   if (init?.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
@@ -249,7 +234,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 const MAX_PAGES = 12
 /** 一页固定 50 条（不是 limit）：limit 只决定「显示多少」，取大一页能把分页次数压到 1~2 次。 */
 const PAGE_SIZE = 50
-const MOBILE_MAX_PAGES = 12
 
 export async function listSessions(limit = 20, root?: string): Promise<SessionInfo[]> {
   const matches: SessionInfo[] = []
@@ -258,7 +242,7 @@ export async function listSessions(limit = 20, root?: string): Promise<SessionIn
   let cursor: string | undefined
   // 一页固定 50 条：远程下每页是一次公网往返，取大一页能少翻几次。
   const pageSize = Math.max(limit, PAGE_SIZE)
-  const maxPages = mobileViewport() ? MOBILE_MAX_PAGES : MAX_PAGES
+  const maxPages = MAX_PAGES
 
   for (let page = 0; page < maxPages; page += 1) {
     const params = new URLSearchParams({ limit: String(pageSize), order: 'desc', parentID: 'null' })
@@ -388,16 +372,16 @@ export const LEGACY_PLACEHOLDER_TITLE = '工作台会话'
 /**
  * 会话里的第一条用户消息（纯文本）。用来给没有标题的会话起名。
  *
- * 消息列表是最新在前、单页上限 200 条，所以必须沿 cursor 一路翻到最早那页：
+ * 消息列表是最新在前、单页上限 200 条，所以要沿 cursor 一路翻到最早那页：
  * 页内越靠后越早，取最早一页里最后一条 user 文本。
- * 只翻 maxPages 页：超长会话全翻一遍要几十个请求，而越早的消息越能代表主题，
- * 翻到第 4 页时拿到的已经足够起名。
+ * 页大小 × 页数 = 能回溯的条数（200 × 4 = 800）。调小页大小必须同步放大页数，
+ * 否则长会话会拿「中段某条消息」当首条，还把错标题写回服务端。
  */
 export async function firstUserText(sessionID: string, maxPages = 4): Promise<string> {
   let cursor: string | undefined
   let earliest = ''
   for (let page = 0; page < maxPages; page += 1) {
-    // 起名只需要首条用户消息，50 条足够，别拉 200 条
+    // 起名要翻到最早那页，所以用满单页上限；为了省 150 条把可回溯条数砍掉不值得
     const result = await listMessagePage(sessionID, cursor, TITLE_PAGE_LIMIT)
     if (result.messages.length === 0) break
     for (let i = result.messages.length - 1; i >= 0; i -= 1) {
@@ -427,8 +411,8 @@ export function titleFromText(text: string, max = 24): string {
 
 /** 服务端单页上限是 200，传更大会 400。 */
 const MESSAGE_PAGE_LIMIT = 200
-/** 起名只要首条用户消息：单页 50 条就够，少传 150 条。 */
-const TITLE_PAGE_LIMIT = 50
+/** 起名必须回溯到第一条用户消息，页大小也取上限：压小它等于把可回溯条数砍掉。 */
+const TITLE_PAGE_LIMIT = 200
 /** 一次最多翻多少页：200 × 50 = 一万条，够长会话用，也防病理会话把内存吃光。 */
 const MAX_MESSAGE_PAGES = 50
 
@@ -790,12 +774,15 @@ export function isIncrementalEvent(type: string | undefined): boolean {
 export async function subscribeEvents(
   onEvent: (event: StreamEvent) => void,
   signal: AbortSignal,
+  onOpen?: () => void,
 ): Promise<void> {
   const headers = new Headers()
-  const current = token()
+  const current = authToken()
   if (current) headers.set('x-oc-token', current)
   const res = await fetch(withBase('/api/event'), { headers, signal })
   if (!res.ok || !res.body) throw new Error(`事件流连接失败：${res.status}`)
+  // 连上了才回调：调用方用它判断「这次重连需不需要全量对齐」。
+  onOpen?.()
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

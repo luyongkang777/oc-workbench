@@ -2,18 +2,26 @@ import { useEffect, useState } from 'react'
 
 import { listSessions, type SessionInfo } from '../api/chat'
 import { runningDirectories, sameSet, type SessionLike } from '../components/projectStatus.ts'
+import { isRemoteHost } from '../api/auth'
 
 /**
  * 轮询间隔。
  *
  * 只查一个接口（全局最新 60 条会话），所以项目/会话再多也不会变成 N 个请求。
  *
- * 远程访问（手机走公网 + ssh 隧道）时单个请求要 60~90ms，1.5 秒一轮是纯浪费；
- * 4 秒既不耽误「点发送后灯变黄」，又能把后台请求砍掉三分之二。
+ * 远程访问（手机走公网 + ssh 隧道）时单个请求要 60~90ms，本地那套频率是纯浪费；
+ * 远程降到 4 秒 / 空闲 10 秒，桌面端保持原来的 1.5 秒。
  */
-const POLL_MS = 4000
-/** 全空闲时的间隔：没人跑就没人盯灯，10 秒一次足够。 */
-const IDLE_POLL_MS = 10_000
+const LOCAL_POLL_MS = 1500
+const LOCAL_IDLE_MS = 1500
+const REMOTE_POLL_MS = 4000
+const REMOTE_IDLE_MS = 10_000
+
+/** 按「本机 / 远程页面」和「有没有会话在跑」选间隔。 */
+function intervalMs(idle: boolean): number {
+  if (isRemoteHost()) return idle ? REMOTE_IDLE_MS : REMOTE_POLL_MS
+  return idle ? LOCAL_IDLE_MS : LOCAL_POLL_MS
+}
 
 /** 与 projectStatus 的 SessionLike 对齐，多带标题和 id（标签栏要用）。 */
 export type LiveSession = SessionLike & { id?: string; title?: string }
@@ -67,7 +75,7 @@ export function useSessionLights(connected: boolean, projectCount: number): Sess
 
     // 自适应间隔：有会话在跑（含子会话）就勤查，全空闲就放慢。
     // 手机上常驻页面时，空闲期的请求量能降到原来的 1/4。
-    const schedule = (delay = POLL_MS) => {
+    const schedule = (delay = intervalMs(false)) => {
       if (alive) timer = window.setTimeout(tick, delay)
     }
 
@@ -95,7 +103,7 @@ export function useSessionLights(connected: boolean, projectCount: number): Sess
         }
         setStatus((prev) => (sameStatus(prev, next) ? prev : next))
         // 空闲时放宽到 IDLE_POLL_MS；一旦有会话在跑就回到 POLL_MS。
-        schedule(nextDirs.size > 0 ? POLL_MS : IDLE_POLL_MS)
+        schedule(intervalMs(nextDirs.size === 0))
         return
       } catch {
         // 单次失败沿用上一次结果，等下一轮；连续失败也不影响界面可用

@@ -101,12 +101,13 @@ type Authenticator struct {
 	// revoked 是「已退出登录」的 token 指纹。会话是自包含签名的（服务端不存会话表），
 	// 不吊销的话「退出」只是删掉本地副本 —— 同一张 token 还能再用 7 天。
 	// 明文 HTTP 下 token 很容易被同网段抓走，所以退出必须真的让它失效。
-	mu      sync.Mutex
-	revoked map[string]int64 // 指纹 -> token 自身的过期时间
+	mu        sync.Mutex
+	revoked   map[string]int64 // 指纹 -> token 自身的过期时间
+	lastSweep time.Time
 }
 
 func NewAuthenticator(secret string) *Authenticator {
-	return &Authenticator{secret: secret, revoked: map[string]int64{}}
+	return &Authenticator{secret: secret, revoked: map[string]int64{}, lastSweep: time.Now()}
 }
 
 // tokenKey token 指纹：只存哈希，不存原值（内存 dump 也拿不到可用的票）。
@@ -115,25 +116,50 @@ func tokenKey(value string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// Revoke 让一张 token 立刻失效。exp 用于以后清理。
+// revokedMax 是吊销表的硬上限。
+//
+// 这个表只有「退出登录」会写，正常规模是几十条；上限是给匿名入口兜底的：
+// /portal/logout 和 /portal/api/logout 不需要登录，不设限谁都能把内存撑爆。
+const revokedMax = 4096
+
+// revokedSweep 是全表清理的间隔。清理不能放在插入路径上：每次插入都扫全表
+// 会变成 O(n)，而且全程持锁，会把所有登录态请求一起卡住。
+const revokedSweep = 30 * time.Second
+
+// Revoke 让一张 token 立刻失效。
+//
+// **只接受签名正确、且过期时间在合理范围内的 token**。调用方（/portal/logout、
+// /portal/api/logout）不校验身份，所以验签必须在这里做：否则匿名请求塞进来的
+// 任意字符串都会被当成「吊销记录」，既能无限增长，又会把锁占满。
 func (a *Authenticator) Revoke(value string) {
-	parts := strings.Split(value, ".")
-	if len(parts) != 3 {
+	_, exp, ok := a.verified(value)
+	if !ok {
 		return
 	}
-	exp, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
+	now := time.Now().Unix()
+	// 过期时间超过正常 TTL 的直接拒收：exp 参与签名，正常签不出这种值。
+	// 已知偏差：本机时钟回拨超过 60 秒时，退出可能被这里放过（窗口极窄，
+	// 用这点偏差换「匿名请求不能塞表」是划算的）。
+	if exp < now || exp > now+int64(sessionTTL/time.Second)+60 {
 		return
 	}
+
+	key := tokenKey(value)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	now := time.Now().Unix()
-	for k, until := range a.revoked {
-		if until < now {
-			delete(a.revoked, k)
+	if time.Since(a.lastSweep) >= revokedSweep {
+		for k, until := range a.revoked {
+			if until < now {
+				delete(a.revoked, k)
+			}
 		}
+		a.lastSweep = time.Now()
 	}
-	a.revoked[tokenKey(value)] = exp
+	if _, exists := a.revoked[key]; !exists && len(a.revoked) >= revokedMax {
+		// 表满且没有可清理的：宁可这一次退出不生效，也不让内存继续涨。
+		return
+	}
+	a.revoked[key] = exp
 }
 
 func (a *Authenticator) isRevoked(value string) bool {
@@ -154,18 +180,27 @@ func (a *Authenticator) Make(uid int64) string {
 	return fmt.Sprintf("%d.%d.%s", uid, exp, a.sign(uid, exp))
 }
 
-// Read 返回用户 id；签名不对或过期返回 0。
-func (a *Authenticator) Read(value string) int64 {
+// verified 解析并校验签名，不管有没有被吊销。
+func (a *Authenticator) verified(value string) (uid, exp int64, ok bool) {
 	parts := strings.Split(value, ".")
 	if len(parts) != 3 {
-		return 0
+		return 0, 0, false
 	}
 	uid, err1 := strconv.ParseInt(parts[0], 10, 64)
 	exp, err2 := strconv.ParseInt(parts[1], 10, 64)
-	if err1 != nil || err2 != nil || exp < time.Now().Unix() {
-		return 0
+	if err1 != nil || err2 != nil || uid <= 0 {
+		return 0, 0, false
 	}
 	if subtle.ConstantTimeCompare([]byte(parts[2]), []byte(a.sign(uid, exp))) != 1 {
+		return 0, 0, false
+	}
+	return uid, exp, true
+}
+
+// Read 返回用户 id；签名不对或过期返回 0。
+func (a *Authenticator) Read(value string) int64 {
+	uid, exp, ok := a.verified(value)
+	if !ok || exp < time.Now().Unix() {
 		return 0
 	}
 	if a.isRevoked(value) {

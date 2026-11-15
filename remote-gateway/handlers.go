@@ -31,12 +31,9 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isAdmin := u.Role == "admin"
-	var invites []Invite
-	if isAdmin {
-		invites = s.db.ListInvites()
-	}
 	devices := s.db.DevicesOf(u.ID)
-	fmt.Fprint(w, devicesPage(u.Username, isAdmin, devices, probeAll(devices), invites, r.URL.Query().Get("ok"), r.URL.Query().Get("err")))
+	// invites 是旧邀请码面板的参数，门户已改开放注册，这里不再查表。
+	fmt.Fprint(w, devicesPage(u.Username, isAdmin, devices, probeAll(devices), nil, r.URL.Query().Get("ok"), r.URL.Query().Get("err")))
 }
 
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -84,18 +81,26 @@ func (s *server) handlePair(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = r.ParseForm()
 	code := strings.TrimSpace(r.PostFormValue("code"))
-	deviceID, found := s.db.TakePair(code)
+	// 先只查不删：确认设备存在、归属没冲突，再真正消费配对码。
+	// 否则输错一次（或设备还没登记）就白烧一个码，得回本机重新生成。
+	peekID, found := s.db.PeekPair(code)
 	if !found {
 		http.Redirect(w, r, "/?err="+queryEscape("配对码无效或已过期（5 分钟内有效）"), http.StatusSeeOther)
 		return
 	}
-	dev, exists := s.db.DeviceByID(deviceID)
+	dev, exists := s.db.DeviceByID(peekID)
 	if !exists {
 		http.Redirect(w, r, "/?err="+queryEscape("这台电脑还没登记，先在电脑上运行 pair.ps1"), http.StatusSeeOther)
 		return
 	}
 	if dev.OwnerID != 0 && dev.OwnerID != u.ID {
 		http.Redirect(w, r, "/?err="+queryEscape("这台电脑已被其他人绑定，请先让原主解绑"), http.StatusSeeOther)
+		return
+	}
+	// 校验都过了才消费；并发下只有一个请求能拿到这个码。
+	deviceID, taken := s.db.TakePair(code)
+	if !taken || deviceID != peekID {
+		http.Redirect(w, r, "/?err="+queryEscape("配对码已被使用，请重新生成"), http.StatusSeeOther)
 		return
 	}
 	s.db.ClaimDevice(deviceID, u.ID)

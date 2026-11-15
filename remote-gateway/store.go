@@ -40,8 +40,6 @@ type Pair struct {
 }
 
 // Invite 注册邀请码（当前注册流程已改为开放注册，保留代码供以后切回邀请制）。
-
-// Invite 注册邀请码（当前注册流程已改为开放注册，保留代码供以后切回邀请制）。
 type Invite struct {
 	Code      string `json:"code"`
 	ExpiresAt int64  `json:"expires_at"`
@@ -102,9 +100,6 @@ func (d *DB) reloadLocked() error {
 	d.Users, d.Devices, d.Pairs, d.Invites = tmp.Users, tmp.Devices, tmp.Pairs, tmp.Invites
 	return nil
 }
-
-// saveLocked 原子落盘：先写临时文件再改名，避免断电留下半个 JSON。
-// nil 切片统一成空数组（否则序列化成 null，读的时候要到处兜底）。
 
 // saveLocked 原子落盘：先写临时文件再改名，避免断电留下半个 JSON。
 // nil 切片统一成空数组（否则序列化成 null，读的时候要到处兜底）。

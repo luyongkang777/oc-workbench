@@ -6,9 +6,6 @@
 //!   * 每台机器一个 `remoteToken`，天然做到「凭据与实例绑定」——
 //!     A 的 cookie 拿不到 B 的实例，因为签名 key 不同。
 
-// T1 只建基础设施，签名函数到 T6（cookie 登录）才接入调用点。
-// 接入后删除下面这一行，让真的死代码重新暴露出来。
-#![allow(dead_code)]
 
 use std::sync::OnceLock;
 

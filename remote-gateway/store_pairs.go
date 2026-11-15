@@ -26,8 +26,6 @@ func (d *DB) PutPair(code, deviceID string, ttl time.Duration) error {
 }
 
 // TakePair 取出并作废一个配对码。
-
-// TakePair 取出并作废一个配对码。
 func (d *DB) TakePair(code string) (string, bool) {
 	var deviceID string
 	found := false
@@ -41,6 +39,26 @@ func (d *DB) TakePair(code string) (string, bool) {
 				deviceID, found = p.DeviceID, true
 				d.Pairs = append(d.Pairs[:i], d.Pairs[i+1:]...)
 				return d.saveLocked()
+			}
+		}
+		return nil
+	})
+	return deviceID, found
+}
+
+// PeekPair 只查不删：校验通过后再 TakePair，避免用户输错一次就白烧一个码。
+func (d *DB) PeekPair(code string) (string, bool) {
+	var deviceID string
+	found := false
+	_ = d.withWriteLock(func() error {
+		if err := d.reloadLocked(); err != nil {
+			return err
+		}
+		now := time.Now().Unix()
+		for _, p := range d.Pairs {
+			if p.Code == code && p.ExpiresAt >= now {
+				deviceID, found = p.DeviceID, true
+				return nil
 			}
 		}
 		return nil

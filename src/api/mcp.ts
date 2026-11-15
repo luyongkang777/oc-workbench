@@ -1,4 +1,4 @@
-import { withBase } from './base.ts'
+import { authToken, withBase } from './base.ts'
 /**
  * MCP 服务器列表（`GET /api/mcp`）。
  *
@@ -15,9 +15,6 @@ export type McpServerRecord = {
   status?: { status?: string; error?: string }
 }
 
-function token(): string {
-  return (window as unknown as { __OC_TOKEN?: string }).__OC_TOKEN ?? ''
-}
 
 /** 单次请求上限：服务端若卡在探测远端 MCP，界面不能永远停在「检测中」。 */
 const REQUEST_TIMEOUT_MS = 8000
@@ -26,7 +23,7 @@ async function call<T>(path: string): Promise<T> {
   const headers = new Headers()
   // dev 模式走 Vite 代理（cookie 由代理注入），这时没有 token；
   // 别发空的 x-oc-token，否则会被上游当成带了错误凭据。
-  const current = token()
+  const current = authToken()
   if (current) headers.set('x-oc-token', current)
 
   const controller = new AbortController()

@@ -183,8 +183,9 @@ export default function App() {
     (targetRoot: string) => {
       const tab = tabs.activeTab
       if (!tab) return
-      applyRoot(targetRoot)
-      // applyRoot 会清空标签；这个文件现在相对新工作区就是它自己的相对路径，补开回来
+      // applyRoot 可能因为「有未保存文件、用户点了取消」而什么都没做：
+      // 这时不能再把标签补开回来，否则会把外部 root 的相对路径当当前工作区打开。
+      if (!applyRoot(targetRoot)) return
       tabs.reopenTab(tab)
     },
     [tabs, applyRoot],

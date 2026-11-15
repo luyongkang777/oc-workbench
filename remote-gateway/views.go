@@ -168,10 +168,3 @@ func devicesPage(username string, isAdmin bool, devices []Device, probed map[str
 	return page("我的设备 · OpenCode 工作台", body)
 }
 
-func pairPage(code, deviceName string) string {
-	body := `<h1>配对码</h1>
-<p class="sub">` + esc(deviceName) + `</p>
-<div class="card"><div class="code">` + esc(code) + `</div>
-<p class="sub" style="margin:12px 0 0">5 分钟内有效。手机登录后输入这 8 位数字即可绑定这台电脑。</p></div>`
-	return page("配对码 · OpenCode 工作台", body)
-}

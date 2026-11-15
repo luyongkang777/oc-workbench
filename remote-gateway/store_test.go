@@ -256,6 +256,31 @@ func TestPairExpires(t *testing.T) {
 	}
 }
 
+// PeekPair 的核心承诺是「只查不删」：peek 两次后 take 仍要成功。
+func TestPeekPairDoesNotConsume(t *testing.T) {
+	db := newTestDB(t)
+	if err := db.PutPair("87654321", "dev-b", time.Minute); err != nil {
+		t.Fatalf("PutPair: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if id, ok := db.PeekPair("87654321"); !ok || id != "dev-b" {
+			t.Fatalf("第 %d 次 peek 应拿到 dev-b：id=%q ok=%v", i+1, id, ok)
+		}
+	}
+	if id, ok := db.TakePair("87654321"); !ok || id != "dev-b" {
+		t.Fatalf("peek 之后 take 仍应成功：id=%q ok=%v", id, ok)
+	}
+	if _, ok := db.PeekPair("87654321"); ok {
+		t.Fatal("take 之后不该再 peek 到")
+	}
+	if err := db.PutPair("11113333", "dev-c", -time.Second); err != nil {
+		t.Fatalf("PutPair: %v", err)
+	}
+	if _, ok := db.PeekPair("11113333"); ok {
+		t.Fatal("过期码不该被 peek 到")
+	}
+}
+
 // PutPair 会顺手清掉过期的，避免 Pairs 无限增长
 func TestPutPairPrunesExpired(t *testing.T) {
 	db := newTestDB(t)

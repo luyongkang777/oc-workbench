@@ -61,6 +61,11 @@ pub struct Ctx {
     /// 设了前缀后，所有请求都必须带前缀；不带的一律 404，
     /// 避免根路径把界面暴露出去，也避免「以为设了、其实没生效」的误判。
     pub base: String,
+    /// 本机持久化的远程凭据（settings.json 的 remoteToken）。
+    ///
+    /// 入口 `?t=` 校验和设备 cookie 签名都用它。显式放进 Ctx 是为了让测试
+    /// 可以注入，不必读写用户真实的 settings.json。
+    pub remote_token: String,
     /// 最近一次连接失败的原因；连上后清空。
     ///
     /// 只读地暴露给页面（`GET /api/state`）：换台机器最常见的问题是
@@ -436,7 +441,7 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
     // 远程入口：`<base>/?t=<remoteToken>` 换一个签名 cookie。
     // 浏览器拿不到 IPC 下发的 token，这条路是给手机/外部浏览器用的。
     if path == "/" || path == "/index.html" {
-        match crate::auth_gate::login_from_query(&url, &ctx.base, now_secs()) {
+        match crate::auth_gate::login_from_query(&url, &ctx.base, &ctx.remote_token, now_secs()) {
             crate::auth_gate::LoginOutcome::Accepted(value) => {
                 // 用 fragment（`#`）而不是 query 传递凭据：浏览器不会把 `#` 后面
                 // 发给服务器，否则服务端又看到 `?t=` 再 302 一次，直接死循环
@@ -602,7 +607,7 @@ fn token_allowed(request: &tiny_http::Request, ctx: &Ctx) -> bool {
         }
         // 远程实例：localStorage 里存的是持久化的 remoteToken，手机存不住 cookie 时靠它。
         // 桌面（base 为空）**不认** remoteToken——不能把「每次启动随机」的门禁降级成持久凭据。
-        if !ctx.base.is_empty() && value == crate::remote_auth::cached_token() {
+        if !ctx.base.is_empty() && value == ctx.remote_token {
             return true;
         }
     }
@@ -615,7 +620,7 @@ fn token_allowed(request: &tiny_http::Request, ctx: &Ctx) -> bool {
         return false;
     };
     crate::remote_auth::verify_session(
-        crate::remote_auth::cached_token(),
+        &ctx.remote_token,
         &ctx.base,
         &value,
         now_secs(),
@@ -655,10 +660,10 @@ pub(crate) fn json_error(
     respond_json(request, status, body)
 }
 
-/// `GET /api/state`：外壳自己的只读状态。
+/// GET /api/state：外壳自己的只读状态。
 ///
-/// 和 `/api/reconnect` 的区别：这里**不做任何认证**，只把后台线程已经算出来的结果
-/// 回给页面，所以断开态下每秒轮询也不会额外生成配对链接。
+/// 不看凭据（凭据校验在 handle() 入口统一做，见 token_allowed），只把后台线程
+/// 已经算出来的结果回给页面，所以断开态下每秒轮询也不会额外生成配对链接。
 fn shell_state(request: tiny_http::Request, ctx: &Ctx) {
     if !request.method().as_str().eq_ignore_ascii_case("GET") {
         let _ = json_error(request, 405, "只支持 GET /api/state");

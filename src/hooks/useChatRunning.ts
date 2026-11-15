@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react'
+import { isRemoteHost } from '../api/auth'
 import { getSession, isSessionBusy } from '../api/chat'
 import { pageVisible } from '../api/visibility'
 
 /** 连续查询失败多少次后放弃跟踪（网络断开/令牌过期时别一直打）。 */
 const MAX_FAILURES = 5
 /**
- * 轮询间隔：800ms 在本地几乎无感，但远程访问（手机走公网 + ssh 隧道）
- * 每个请求要 60~90ms，800ms 一轮等于常驻在发请求。2000ms 对「发送/停止」
- * 按钮的切换完全够用，请求量降到原来的 40%。
+ * 轮询间隔：本地 800ms 几乎无感；远程（手机走公网 + ssh 隧道）每个请求
+ * 60~90ms，800ms 一轮等于常驻发请求，2s 对「发送/停止」按钮完全够用。
  */
-const POLL_MS = 2000
+const LOCAL_POLL_MS = 800
+const REMOTE_POLL_MS = 2000
+
+/** 只有远程页面才降速，桌面端保持原有手感。 */
+function pollMs(): number {
+  return isRemoteHost() ? REMOTE_POLL_MS : LOCAL_POLL_MS
+}
 
 /**
  * 「某个会话正在生成」的状态。
@@ -57,7 +63,7 @@ export function useChatRunning(connected: boolean, currentID: string | null) {
         failures += 1
         if (alive && failures >= MAX_FAILURES) setRunningID(null)
       }
-    }, POLL_MS)
+    }, pollMs())
     return () => {
       alive = false
       window.clearInterval(timer)

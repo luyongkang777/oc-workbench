@@ -108,11 +108,23 @@ export function useDeviceStrip(): DeviceStripState {
     }
   }, [load])
 
+
+  // 定时器存 ref：连点两台设备时，前一次的 2 秒复位不能把后一次的状态清掉。
+  const giveUpRef = useRef<number | null>(null)
+  const settleRef = useRef<number | null>(null)
   const switchTo = useCallback(
     (id: string) => {
       const target = devices.find((dev) => dev.id === id)
       if (!target || id === currentId) return
+      if (giveUpRef.current !== null) window.clearTimeout(giveUpRef.current)
+      if (settleRef.current !== null) window.clearTimeout(settleRef.current)
       setSwitching(id)
+      // 导航可能被桌面端白名单拦掉、或网关请求挂住；不复位就会把整条设备条
+      // 永久锁死（按钮全 disabled），只能重启。给一个上限，到点放开重试。
+      giveUpRef.current = window.setTimeout(() => {
+        giveUpRef.current = null
+        setSwitching('')
+      }, 15_000)
       const host = getGatewayUrl()
       const token = getGatewayToken()
       void (async () => {
@@ -128,7 +140,17 @@ export function useDeviceStrip(): DeviceStripState {
             // 刷新失败就用手里的旧 URL，至少还有一次机会
           }
         }
+        if (giveUpRef.current !== null) {
+          window.clearTimeout(giveUpRef.current)
+          giveUpRef.current = null
+        }
+        if (settleRef.current !== null) window.clearTimeout(settleRef.current)
         window.location.href = deviceUrl(host, { ...target, url })
+        // 导航如果被拦，页面还在：稍等再放开，别让用户以为界面卡死。
+        settleRef.current = window.setTimeout(() => {
+          settleRef.current = null
+          setSwitching('')
+        }, 2000)
       })()
     },
     [devices, currentId],

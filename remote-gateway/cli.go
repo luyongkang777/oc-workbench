@@ -127,7 +127,10 @@ func cliRmDevice(db *DB, srv *server, o *options) {
 
 func cliSyncNginx(db *DB, srv *server) {
 	ok, msg := srv.nginx.Apply(db.AllDevices())
-	fmt.Println(ok, msg)
+	if !ok {
+		log.Fatalf("nginx 更新失败: %s", msg)
+	}
+	fmt.Println("nginx 已更新:", msg)
 }
 
 func cliSeed(db *DB, srv *server, o *options) {

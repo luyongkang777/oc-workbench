@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -149,7 +150,7 @@ type claimReq struct {
 
 // apiClaim 让「exe 登录账号」这一步顺手把这台电脑认领到当前账号下。
 //
-// 以前要靠 pair.ps1 生成 6 位配对码再在门户里输入；但 exe 本身就是一台电脑，
+// 以前要靠 pair.ps1 生成 8 位配对码再在门户里输入；但 exe 本身就是一台电脑，
 // 它自己带着 remoteToken（所有权证明），登录后直接认领才符合直觉。
 func (s *server) apiClaim(w http.ResponseWriter, r *http.Request) {
 	uid := s.bearerID(r)
@@ -178,10 +179,28 @@ func (s *server) apiClaim(w http.ResponseWriter, r *http.Request) {
 		name = id
 	}
 
+	// 已经是自己的设备：幂等返回，不占限流额度（打开账号面板每次都会 claim 一次）。
+	if existing, ok := s.db.DeviceByID(id); ok && existing.OwnerID == uid &&
+		subtle.ConstantTimeCompare([]byte(existing.Token), []byte(token)) == 1 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":    existing.ID,
+			"name":  existing.Name,
+			"port":  existing.Port,
+			"owner": u.Username,
+		})
+		return
+	}
+	// 认领会分配回环端口（池里只有 40 个）并触发一次 nginx reload，必须限流。
+	if !s.claimLimit.reserve("claim:" + clientIP(r)) {
+		writeErr(w, http.StatusTooManyRequests, "认领太频繁，5 分钟后再试")
+		return
+	}
+
 	// 设备已存在时，请求里的 token 必须和库里一致：token 就是所有权证明，
 	// 否则任意登录用户只要知道 id 就能把别人的设备抢到自己名下（双向 DoS）。
 	// 新设备（首次登记）还没有记录，允许任意 token 建立归属。
-	if existing, ok := s.db.DeviceByID(id); ok && existing.Token != token {
+	if existing, ok := s.db.DeviceByID(id); ok &&
+		subtle.ConstantTimeCompare([]byte(existing.Token), []byte(token)) != 1 {
 		writeErr(w, http.StatusForbidden, "设备令牌不匹配，不能认领这台电脑")
 		return
 	}

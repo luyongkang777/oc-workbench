@@ -1131,7 +1131,7 @@ fn claim_is_expired(token: &str, path: &Path) -> bool {
 /// 进程是否还活着（Windows：能拿到进程句柄就是在跑）。
 ///
 /// 只做一次 `OpenProcess` + `CloseHandle`，不读目标进程内存。
-fn pid_is_running(pid: u32) -> bool {
+pub(crate) fn pid_is_running(pid: u32) -> bool {
     #[cfg(windows)]
     {
         // PROCESS_QUERY_LIMITED_INFORMATION = 0x1000

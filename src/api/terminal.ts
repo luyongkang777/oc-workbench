@@ -1,4 +1,4 @@
-import { withBase } from './base.ts'
+import { authToken, withBase } from './base.ts'
 import { WORKBENCH_SOURCE } from './chat'
 
 /** 终端（T6）：在指定会话下创建一次性 PTY，轮询 snapshot 拿输出。 */
@@ -9,9 +9,6 @@ export type TerminalSnapshot = {
   exitCode?: number
 }
 
-function token(): string {
-  return (window as unknown as { __OC_TOKEN?: string }).__OC_TOKEN ?? ''
-}
 
 function loc(root: string): string {
   return `location%5Bdirectory%5D=${encodeURIComponent(root)}`
@@ -19,7 +16,7 @@ function loc(root: string): string {
 
 async function req(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
-  const current = token()
+  const current = authToken()
   if (current) headers.set('x-oc-token', current)
   if (init?.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')

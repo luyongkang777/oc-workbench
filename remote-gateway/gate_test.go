@@ -21,6 +21,8 @@ func newTestServerForGate(t *testing.T) *server {
 func resetUsedTickets() {
 	usedTickets.mu.Lock()
 	usedTickets.used = map[string]int64{}
+	// 置零 = 「很久没清理过」，让下一次 consume 立刻走清理分支。
+	usedTickets.lastSweep = time.Time{}
 	usedTickets.mu.Unlock()
 }
 
@@ -107,6 +109,11 @@ func TestTicketStorePrunesExpired(t *testing.T) {
 
 	usedTickets.consume("old", now-10) // exp 已经过去
 	usedTickets.consume("new", now+600)
+	// 清理是低频的（每分钟一次）：把间隔拨回去，再写一条来触发清理分支。
+	usedTickets.mu.Lock()
+	usedTickets.lastSweep = time.Time{}
+	usedTickets.mu.Unlock()
+	usedTickets.consume("trigger", now+600)
 
 	usedTickets.mu.Lock()
 	_, hasOld := usedTickets.used["old"]

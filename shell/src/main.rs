@@ -162,6 +162,7 @@ fn start_local(token: &str) -> Result<String, String> {
     let port = server::start(server::Ctx {
         backend: backend.clone(),
         token: token.to_string(),
+        remote_token: remote_auth::cached_token().to_string(),
         // 远程模式必须固定端口：隧道与网关 nginx 都写死 17800。
         port: remote_auth::remote_port(),
         base: base.clone(),
@@ -196,7 +197,8 @@ fn start_local(token: &str) -> Result<String, String> {
     append_log(&format!(
         "[boot] 本地服务端口 {port}（后端连接在后台进行，失败每 5 秒重试）\n"
     ));
-    // base 为空时结果与旧版完全一致。
+    // 防御性分支：ensure_base() 现在保证非空；将来若改成「按需启用远程」，
+    // 这里要能退回纯本地地址。
     if base.is_empty() {
         return Ok(format!("http://127.0.0.1:{port}/"));
     }
@@ -258,10 +260,16 @@ fn run() -> Result<(), String> {
     let token = server::new_token();
     let url = resolve_url(&token)?;
 
-    // 远程访问凭据（持久化，跨重启不变）。日志落在 gui-error.log，方便复制到手机。
+    // 远程访问凭据（持久化，跨重启不变）。日志会被复制出去排障，
+    // 所以只打前 8 位；完整值留在 settings.json 里。
     let remote_token = remote_auth::cached_token();
+    let token_hint: String = remote_token.chars().take(8).collect();
+    let url_hint = url
+        .split_once("?t=")
+        .map(|(head, _)| format!("{head}?t=***"))
+        .unwrap_or_else(|| url.clone());
     append_log(&format!(
-        "[remote] 凭据 token={remote_token}\n[remote] 本地入口 {url}\n"
+        "[remote] 凭据 token={token_hint}…（完整值见 settings.json）\n[remote] 本地入口 {url_hint}\n"
     ));
 
     // IPC 回调里只入队 + 用 proxy 唤醒事件循环，真正的 evaluate_script 在主循环做
@@ -291,7 +299,7 @@ fn run() -> Result<(), String> {
     let nav_origin = local_origin.clone();
     let ipc_origin = local_origin.clone();
     // 账号面板点「打开另一台电脑」要跳到公网网关，必须放行（否则静默无反应）。
-    let gateway_origin = update::gateway_url();
+    // 注意不能在这里快照：gatewayUrl 是登录后才写进 settings.json 的。
     let token_sent = Arc::new(AtomicBool::new(false));
 
     let mut builder = WebViewBuilder::new()
@@ -300,10 +308,11 @@ fn run() -> Result<(), String> {
             // 允许本站、空白页与 data/about 这类内部页；只拦外部导航。
             // 不能拦得太死：F5 刷新、渲染进程崩溃自愈都会触发导航，
             // 拦掉它们等于让整个工作台在重载后不可用。
-            let gateway_ok = match &gateway_origin {
-                Some(gw) => target == *gw || target.starts_with(&format!("{gw}/")),
-                None => false,
-            };
+            // 每次导航都重新读：启动时 gatewayUrl 往往还是空的，
+            // 快照下来会让「刚登录第一次点设备」被永久拦掉。
+            let gateway_ok = update::gateway_url()
+                .map(|gw| target == gw || target.starts_with(&format!("{gw}/")))
+                .unwrap_or(false);
             let allowed = target.is_empty()
                 || target == nav_origin
                 || target.starts_with(&format!("{nav_origin}/"))

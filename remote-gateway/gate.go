@@ -34,23 +34,38 @@ const ticketTTL = 10 * time.Minute
 // 之前注释写「一次性票据」但没有任何记录：同一个 URL 在 10 分钟内可以反复换取
 // 7 天会话。票据会出现在 nginx access log / 浏览器历史里，所以必须真正一次性。
 type ticketStore struct {
-	mu   sync.Mutex
-	used map[string]int64 // ticket -> 过期时间
+	mu        sync.Mutex
+	used      map[string]int64 // ticket -> 过期时间
+	lastSweep time.Time
 }
 
-var usedTickets = &ticketStore{used: map[string]int64{}}
+// usedTicketMax / usedTicketSweep：和吊销表同一套逻辑 —— 清理放到低频路径，
+// 插入只写不扫。票据要已登录才能生成，风险比吊销表低，但别留无界增长。
+const (
+	usedTicketMax   = 8192
+	usedTicketSweep = time.Minute
+)
 
-// consume 标记票据已用；已用过返回 false。顺手清掉过期的条目。
+var usedTickets = &ticketStore{used: map[string]int64{}, lastSweep: time.Now()}
+
+// consume 标记票据已用；已用过返回 false。过期条目每分钟清一次。
 func (t *ticketStore) consume(ticket string, exp int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now().Unix()
-	for key, until := range t.used {
-		if until < now {
-			delete(t.used, key)
+	if time.Since(t.lastSweep) >= usedTicketSweep {
+		for key, until := range t.used {
+			if until < now {
+				delete(t.used, key)
+			}
 		}
+		t.lastSweep = time.Now()
 	}
 	if _, ok := t.used[ticket]; ok {
+		return false
+	}
+	if len(t.used) >= usedTicketMax {
+		// 表满：拒绝新票据。宁可让一个合法入口打不开，也不能让「用过」的记录被挤掉。
 		return false
 	}
 	t.used[ticket] = exp

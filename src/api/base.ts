@@ -35,3 +35,21 @@ export function withBase(url: string, pathname: string = window.location.pathnam
   )
   return internal ? `${base}${url}` : url
 }
+
+/**
+ * 请求要带的 x-oc-token。
+ *
+ * 两个来源：外壳经 IPC 下发的本次启动令牌（__OC_TOKEN），以及远程入口
+ * 存进 localStorage 的持久凭据。手机浏览器常存不住 cookie，缺了第二条
+ * 会让聊天 / SSE / 终端在 403 上无限重连。
+ */
+export function authToken(): string {
+  if (typeof window === 'undefined') return ''
+  const injected = (window as unknown as { __OC_TOKEN?: unknown }).__OC_TOKEN
+  if (typeof injected === 'string' && injected) return injected
+  try {
+    return window.localStorage.getItem(remoteTokenKey()) ?? ''
+  } catch {
+    return ''
+  }
+}

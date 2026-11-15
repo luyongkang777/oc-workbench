@@ -1,10 +1,10 @@
-# 把本机登记到远程访问网关，显示 6 位配对码。
+﻿# 把本机登记到远程访问网关，显示 8 位配对码。
 #
 # 用法：右键「使用 PowerShell 运行」，或者
 #   powershell -ExecutionPolicy Bypass -File scripts\pair.ps1
 #
 # 成功后：
-#   * 屏幕会显示 6 位配对码（5 分钟有效）
+#   * 屏幕会显示 8 位配对码（5 分钟有效）
 #   * settings.json 里多一个 relayPort（隧道脚本按它连）
 # 然后在手机/浏览器里登录网关，输入这个码，就把这台电脑绑到你的账号下。
 
@@ -72,7 +72,7 @@ if ($resp.bound) {
     Write-Host "================ 配对码 ================" -ForegroundColor Green
     Write-Host ("                 {0}" -f $resp.code) -ForegroundColor Yellow
     Write-Host "=======================================" -ForegroundColor Green
-    Write-Host "5 分钟内有效。手机打开 $($config.url) 登录后输入这 6 位数字。" -ForegroundColor Cyan
+    Write-Host "5 分钟内有效。手机打开 $($config.url) 登录后输入这 8 位数字。" -ForegroundColor Cyan
 }
 Write-Host ""
 Write-Host "回环端口：$($resp.port)（已写入 settings.json 的 relayPort，隧道脚本会自动用）" -ForegroundColor Gray

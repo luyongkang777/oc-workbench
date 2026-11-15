@@ -38,6 +38,9 @@ func deviceBlock(id string, port int) string {
         proxy_set_header Connection        $connection_upgrade;`, port)
 
 	return fmt.Sprintf(`
+    # 少尾斜杠（手输/复制漏斜杠）跳到带斜杠的路径，否则落到 location / 变 404
+    location = /u/%[1]s { return 301 /u/%[1]s/$is_args$args; }
+
     # 静态资源：开缓冲才能 gzip + 长缓存（文件名带 hash）
     location ^~ /u/%[1]s/assets/ {
 %[2]s
@@ -51,6 +54,8 @@ func deviceBlock(id string, port int) string {
     }
 
     location ^~ /u/%[1]s/ {
+        # 入口 URL 带 ?t=<设备凭据>，不写 access_log 就会把凭据记进日志
+        access_log off;
         # exe 的 iframe 导航带不了 Authorization 头，跨源也拿不到 SameSite cookie：
         # 先把 ?tk= 换成账号 cookie，再回设备页面。
         if ($arg_tk) {

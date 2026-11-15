@@ -1,4 +1,4 @@
-import { remoteTokenKey, withBase } from './base.ts'
+import { authToken, withBase } from './base.ts'
 export type FsEntry = { path: string; type: 'directory' | 'file' }
 
 /** 单次请求的最长等待时间：后端卡住时不能让 UI 永远转圈。 */
@@ -15,21 +15,6 @@ function locationQuery(root: string): string {
   return `location[directory]=${encodeURIComponent(root)}`
 }
 
-/**
- * 外壳经 IPC 下发到 window.__OC_TOKEN 的本次启动令牌（见 api/auth.ts）。
- * Vite dev 模式下没有令牌，退化成空串。
- */
-function ocToken(): string {
-  const injected = (window as unknown as { __OC_TOKEN?: unknown }).__OC_TOKEN
-  if (typeof injected === 'string' && injected) return injected
-  // 浏览器/远程访问没有 IPC：凭据由入口 `?t=` 存进 localStorage。
-  // 不能只靠 cookie —— 手机浏览器（尤其微信内置）经常存不住，表现为 /api 全 403。
-  try {
-    return window.localStorage.getItem(remoteTokenKey()) ?? ''
-  } catch {
-    return ''
-  }
-}
 
 /** 把非 2xx 的响应压成一句短消息：JSON 只取 error/message，整体不超过 200 字符。 */
 async function errorText(res: Response): Promise<string> {
@@ -66,7 +51,7 @@ async function request(
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
   const headers = new Headers(init?.headers)
-  const token = ocToken()
+  const token = authToken()
   // 空令牌不发头：dev 模式下 /api 由 Vite 代理，不经过外壳的 token 校验。
   if (token) headers.set('x-oc-token', token)
   else headers.delete('x-oc-token')
