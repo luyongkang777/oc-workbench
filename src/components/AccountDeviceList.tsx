@@ -1,4 +1,4 @@
-import type { GatewayDevice } from '../api/gateway'
+import type { GatewayDevice, TunnelStatus } from '../api/gateway'
 
 /** 在线/离线文案：在线显示「在线」，离线显示最后一次登记时间。 */
 function whenText(dev: GatewayDevice): string {
@@ -30,6 +30,7 @@ export default function AccountDeviceList({
   busy,
   error,
   claimHint,
+  tunnel,
   logout,
   openDevice,
   refresh,
@@ -39,6 +40,7 @@ export default function AccountDeviceList({
   busy: boolean
   error: string
   claimHint: string
+  tunnel: TunnelStatus | null
   logout: () => void
   openDevice: (dev: GatewayDevice) => Promise<void>
   refresh: () => void
@@ -54,6 +56,17 @@ export default function AccountDeviceList({
 
       {error ? <div className="account-error">{error}</div> : null}
       {claimHint ? <div className="account-error">{claimHint}</div> : null}
+      {/*
+        * 本机通道状态：设备显示「离线」时，多数是这台电脑的 ssh 隧道没建起来
+        * （没配 ssh 别名、密钥没配对、服务器端口被占）。以前这些原因只写在
+        * tunnel.log 里，用户完全看不到，只能看到一个灰灯。
+        */}
+      {tunnel?.error ? (
+        <div className="account-error">本机通道未建立：{tunnel.error}</div>
+      ) : null}
+      {tunnel && !tunnel.error && !tunnel.running && tunnel.relayPort > 0 ? (
+        <div className="account-hint">本机通道正在连接…</div>
+      ) : null}
 
       <div className="account-list">
         {devices.length === 0 && !busy ? (

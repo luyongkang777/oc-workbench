@@ -50,6 +50,7 @@ export default function AccountPanel({ open, onClose, onOpenDevice }: Props) {
             busy={s.busy}
             error={s.error}
             claimHint={s.claimHint}
+            tunnel={s.tunnel}
             logout={s.logout}
             openDevice={s.openDevice}
             refresh={s.refresh}

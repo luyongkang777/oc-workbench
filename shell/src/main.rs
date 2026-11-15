@@ -30,6 +30,7 @@ mod purge;
 mod auth_gate;
 mod tunnel;
 mod tunnel_proc;
+mod tunnel_status;
 mod remote_auth;
 mod account;
 mod remoteapi;

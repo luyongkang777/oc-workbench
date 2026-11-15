@@ -57,11 +57,15 @@ pub fn handle(mut request: Request, path: &str, _url: &str) {
         respond_json(request, 200, device_json());
         return;
     }
-    // 隧道端口：登录认领后网关会把分给这台设备的回环端口回给页面，
-    // 页面转手存到这里 —— exe 随即按它重建隧道，不需要用户再跑脚本。
+    // 隧道：GET 查状态（界面用来显示「为什么没连上」），POST 交回环端口。
+    // 端口是登录认领时网关给的，页面转手存到这里，exe 随即重建隧道。
     if path.ends_with("/tunnel") {
+        if request.method().as_str() == "GET" {
+            respond_json(request, 200, crate::tunnel::status_json());
+            return;
+        }
         if request.method().as_str() != "POST" {
-            respond_json(request, 405, "{\"error\":\"只支持 POST\"}".to_string());
+            respond_json(request, 405, "{\"error\":\"只支持 GET / POST\"}".to_string());
             return;
         }
         let mut body = String::new();

@@ -210,6 +210,27 @@ export async function setTunnelPort(port: number): Promise<void> {
   }
 }
 
+/** 本机隧道的状态（给界面显示「为什么没连上」）。 */
+export type TunnelStatus = {
+  running: boolean
+  pid: number
+  host: string
+  relayPort: number
+  localPort: number
+  /** ssh 失败的原始原因，已经由外壳翻译成人话；正常时为 null。 */
+  error: string | null
+}
+
+export async function tunnelStatus(): Promise<TunnelStatus | null> {
+  try {
+    const res = await fetch(localApi('/local/account/tunnel'), { cache: 'no-store' })
+    if (!res.ok) return null
+    return (await res.json()) as TunnelStatus
+  } catch {
+    return null
+  }
+}
+
 // ---------- 请求 ----------
 
 async function request<T>(base: string, path: string, init?: RequestInit, token?: string): Promise<T> {

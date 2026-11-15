@@ -162,24 +162,57 @@ fn keep_alive(config: TunnelConfig, generation: u64) {
                 CHILD_PID.store(child.id(), Ordering::SeqCst);
                 proc::remember_pid(child.id());
                 backoff = RETRY_MIN;
-                let status = child.wait();
+                // 不能「进程起来就清错误」：ssh 失败时也是先起来再退出（DNS 解析失败、
+                // 端口被占都是秒退），那样错误会在「有」和「没有」之间每 5 秒翻转，
+                // 界面根本看不清原因。改成「活过 3 秒才算连上」，连上才清。
+                let mut early_exit = None;
+                for _ in 0..6 {
+                    thread::sleep(Duration::from_millis(500));
+                    if !still_current(generation) {
+                        proc::kill_pid(child.id());
+                        return;
+                    }
+                    match child.try_wait() {
+                        Ok(None) => {}
+                        Ok(Some(status)) => {
+                            early_exit = Some(status);
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if early_exit.is_none() {
+                    crate::tunnel_status::set_error(None);
+                }
+                // try_wait 已经收割过时不能再 wait（不同平台行为不一致），直接用观察到的状态。
+                let status = match early_exit {
+                    Some(status) => Ok(status),
+                    None => child.wait(),
+                };
                 CHILD_PID.store(0, Ordering::SeqCst);
                 proc::forget_pid();
                 if !still_current(generation) {
                     return;
                 }
                 // 常见原因：服务器上该端口已被别的 ssh 占着、密钥没配好、网络断了。
-                // 具体报错在 tunnel.log 里（stderr 直接重定向过去）。
+                // 具体报错在 tunnel.log 里（stderr 直接重定向过去），这里转成人话给界面。
+                let detail = crate::tunnel_status::last_log_line().unwrap_or_default();
                 let reason = match status {
                     Ok(code) => format!("{code}"),
                     Err(err) => format!("等待失败：{err}"),
                 };
+                crate::tunnel_status::set_error(Some(crate::tunnel_status::describe_failure(
+                    &detail,
+                    &config.host,
+                    reason.as_str(),
+                )));
                 crate::append_log(&format!(
                     "[tunnel] ssh 退出（{reason}），{} 秒后重连\n",
                     backoff.as_secs()
                 ));
             }
             Err(err) => {
+                crate::tunnel_status::set_error(Some(format!("启动 ssh 失败：{err}")));
                 crate::append_log(&format!("[tunnel] 启动 ssh 失败：{err}\n"));
             }
         }
@@ -195,4 +228,21 @@ fn keep_alive(config: TunnelConfig, generation: u64) {
         }
         backoff = (backoff * 2).min(RETRY_MAX);
     }
+}
+
+/// 给界面的隧道状态（`GET /local/account/tunnel`）。
+///
+/// running = ssh 子进程在不在；error = 最近一次失败的人话原因。
+pub fn status_json() -> String {
+    let (host, relay, local) = match CURRENT.lock() {
+        Ok(guard) => match guard.as_ref() {
+            Some(cfg) => (cfg.host.clone(), cfg.relay_port, cfg.local_port),
+            None => (String::new(), 0, 0),
+        },
+        Err(poisoned) => match poisoned.into_inner().as_ref() {
+            Some(cfg) => (cfg.host.clone(), cfg.relay_port, cfg.local_port),
+            None => (String::new(), 0, 0),
+        },
+    };
+    crate::tunnel_status::status_json(&host, relay, local, CHILD_PID.load(Ordering::SeqCst))
 }

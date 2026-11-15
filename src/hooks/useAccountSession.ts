@@ -14,7 +14,9 @@ import {
   getGatewayUser,
   saveGatewaySession,
   setGatewayUrl,
+  tunnelStatus,
   type GatewayDevice,
+  type TunnelStatus,
 } from '../api/gateway'
 
 /**
@@ -40,6 +42,8 @@ export function useAccountSession(open: boolean, onOpenDevice: (url: string, nam
   const [error, setError] = useState('')
   const [claimHint, setClaimHint] = useState('')
   const [editBase, setEditBase] = useState(false)
+  // 本机隧道状态：没有它的时候，「设备离线」只能靠用户自己去翻 tunnel.log。
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null)
 
   // 登录后把这台电脑登记到当前账号下（exe 自己就是一台电脑，不该再让用户去扫码配对）
   const claimSelf = useCallback(async (tk: string, host: string) => {
@@ -88,6 +92,22 @@ export function useAccountSession(open: boolean, onOpenDevice: (url: string, nam
     },
     [claimSelf],
   )
+
+  /** 拉一次本机隧道状态。失败（老版本 exe 没有这个接口）就当没有。 */
+  const refreshTunnel = useCallback(async () => {
+    setTunnel(await tunnelStatus())
+  }, [])
+
+  // 面板打开时轮询隧道状态：建隧道是异步的，失败原因往往几秒后才出现
+  // （ssh 退出 -> 重试）。不用很勤，8 秒一次足够看清「为什么离线」。
+  useEffect(() => {
+    if (!open || !token) return
+    void refreshTunnel()
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refreshTunnel()
+    }, 8000)
+    return () => window.clearInterval(timer)
+  }, [open, token, refreshTunnel])
 
   useEffect(() => {
     if (open && token) void loadDevices(token, getGatewayUrl())
@@ -185,6 +205,7 @@ export function useAccountSession(open: boolean, onOpenDevice: (url: string, nam
     busy,
     error,
     claimHint,
+    tunnel,
     editBase,
     setEditBase,
     submitLogin,
