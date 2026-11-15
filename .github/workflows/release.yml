@@ -102,12 +102,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ver = '${{ steps.ver.outputs.version }}'
+          # RELEASE_NOTES.md 顶部的 HTML 注释是写给维护者看的，但 Release 正文是
+          # 原样展示的，会把「发版前改这里」也贴出来。latest.json 那边
+          # package-release.mjs 已经剥过注释，这里同样先剥再发。
+          $notes = (Get-Content RELEASE_NOTES.md -Raw) -replace '(?s)<!--.*?-->', ''
+          Set-Content -Path release/notes.md -Value $notes.Trim() -Encoding utf8NoBOM
           gh release create $env:GITHUB_REF_NAME `
             "release/oc-workbench-$ver-win64.exe" `
             "release/latest.json" `
             "release/oc-workbench-$ver-win64.zip" `
             --title "OpenCode 工作台 $env:GITHUB_REF_NAME" `
-            --notes-file RELEASE_NOTES.md
+            --notes-file release/notes.md
 
       - name: 回读发布结果
         shell: pwsh
