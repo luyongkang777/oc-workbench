@@ -1,0 +1,4 @@
+{
+  "url": "http://<网关IP>:7800",
+  "enroll": "<从服务器 /var/lib/ocw-gateway/enroll 抄过来的 64 位 hex>"
+}
