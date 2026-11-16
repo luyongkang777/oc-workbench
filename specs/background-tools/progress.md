@@ -2,7 +2,7 @@
 
 ## 当前任务
 
-**B1 已完成（待提交）**
+**B1 已发布（v1.7.0）**
 
 ## 记录
 
@@ -18,11 +18,22 @@
   - `src/styles/panels.css`：`.chat-send.ghost` 中性色（和「停止」的红区分）。
   - `package.json`：加 `verify:background`。
   - 新增 `scripts/verify-background.mjs`（16 条断言）。
+- 2026-11-16 **独立审查（子智能体，只看 diff）**：REVIEW 中 | 🔴0 🟡3 | Comment。
+  三条 🟡 全部已处理：
+  1. 没有阻塞工具时点它会假提示「已把工具挪到后台」——文案改成条件句
+     「已请求后台化：有卡住的命令会转到后台继续跑，你可以接着输入」。
+  2. 验收脚本兜底选「任意标签页」会把开发者正在用的浏览器导航走并改 localStorage——
+     改成找不到 5273 页面直接报错退出。
+  3. Ctrl+B 用合成 KeyboardEvent 只能证明 handler 逻辑，真实按键通道未覆盖——已在脚本里注明边界。
+- 2026-11-16 **v1.7.0 已发布**：CI 绿（release run 43799675876），
+  Release 三资产齐全（非 draft / 非 prerelease），`latest.json` 的
+  version/url/sha256/size/notes 与 exe 资产逐项对齐；Gitea 镜像已同步。
 
 ## 验证
 
 - `node node_modules/typescript/bin/tsc --noEmit` → 0 错误。
 - `npm.cmd test` → pass 484 / fail 0。
+- `cargo test --release`（shell/）→ 229 passed / 0 failed。
 - dev + Edge CDP（`node scripts/verify-background.mjs 9233`）→ **16/16 PASS**：
   idle 无按钮、running 有按钮、点击出成功提示、Ctrl+B 在 body 上被接管、
   输入框里的 Ctrl+B 不被接管、手机 390/320 不横向溢出且输入框宽度够。
@@ -38,4 +49,4 @@ REVIEW: 中 | 🔴0 🟡1 🟢4 | 结论: Approve
 - 🟢 提示不自动消失：与「压缩成功」提示一致，发下一条消息时清掉。
 - 🟢 Ctrl+B 只在 running 时接管，idle 时不影响浏览器的默认行为。
 - 🟢 手机端 `.chat-send` 的 `margin-left:auto` 让「后台+停止」靠右，视觉可接受。
-- 🟢 服务端 204 无 body，`backgroundSession` 拿不到条数，提示文案已按「已请求」写，不虚报。
+- 🟢 服务端 204 无 body，`backgroundSession` 拿不到条数，提示文案已按条件句写，不虚报。
