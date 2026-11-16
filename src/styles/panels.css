@@ -1216,6 +1216,18 @@ body.resizing .col-resizer::after {
   border-color: var(--danger-weak-hover);
 }
 
+/* 「后台」按钮：把阻塞的工具挪走，用中性色和「停止」的红区分开 */
+.chat-send.ghost {
+  background: var(--bg-control);
+  border: 1px solid var(--line-2);
+  color: var(--text-1);
+}
+
+.chat-send.ghost:hover {
+  background: var(--bg-hover);
+  border-color: var(--line-2);
+}
+
 /* 头部按钮的宽度分配：会话名要留够宽度看清标题，模型占中间剩余，新会话不缩。
    分屏之后一列只有几百 px，「会话名 96px + 模型 64px」是最低可用线。 */
 .chat-session-toggle {

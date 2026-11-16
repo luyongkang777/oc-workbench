@@ -16,6 +16,8 @@ type Props = {
   onDraftChange: (value: string) => void
   onSend: () => void
   onStop: () => void
+  /** 把前台阻塞的工具挪到后台（只在生成中可用） */
+  onBackground: () => void
   onBuiltin: (name: string) => void
   onPickAgent: (id: string) => void
   onAddFiles: (files: File[]) => void
@@ -41,6 +43,7 @@ export default function ChatInput({
   onDraftChange,
   onSend,
   onStop,
+  onBackground,
   onBuiltin,
   onPickAgent,
   onAddFiles,
@@ -377,9 +380,19 @@ export default function ChatInput({
           disabled={!connected}
         />
         {running ? (
-          <button type="button" className="chat-send stop" onClick={onStop} title="停止生成">
-            停止
-          </button>
+          <>
+            <button
+              type="button"
+              className="chat-send ghost"
+              onClick={onBackground}
+              title="把正在跑的命令挪到后台，立刻解锁继续输入（Ctrl+B）"
+            >
+              后台
+            </button>
+            <button type="button" className="chat-send stop" onClick={onStop} title="停止生成">
+              停止
+            </button>
+          </>
         ) : (
           <button type="button" className="chat-send" onClick={onSend} disabled={!canSend}>
             {busy ? '发送中' : '发送'}

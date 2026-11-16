@@ -52,6 +52,7 @@ import {
 import { clearDraft, loadDraft, saveDraft, type StoredDraft } from '../api/draft'
 import { pageVisible } from '../api/visibility'
 import {
+  backgroundSession,
   cancelForm,
   clearRevert,
   commitRevert,
@@ -1346,6 +1347,28 @@ export default function Chat({
     }
   }
 
+  /**
+   * 后台化：把卡住前台的工具调用挪走，会话立刻解锁。
+   *
+   * 服务端只回 204（空闲时也是 204 的 no-op），拿不到「挪走了几条」；
+   * 当前没有阻塞工具时点它什么都「不会发生」，所以文案必须是条件句
+   * （有命令才会转后台），不能写成「已挪走 N 条」。
+   */
+  async function moveToBackground() {
+    const id = currentID
+    if (!id || !runningApi.running) return
+    setError(null)
+    try {
+      await backgroundSession(id)
+      setNotice({
+        tone: 'ok',
+        text: '已请求后台化：有卡住的命令会转到后台继续跑，你可以接着输入',
+      })
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
   /** 停止当前回复：只有后端确认中断才清状态，否则保留「停止」让用户能重试。 */
   async function stop() {
     if (!currentID || !runningApi.running) return
@@ -1364,6 +1387,23 @@ export default function Chat({
       setError((err as Error).message)
     }
   }
+
+  // Ctrl+B：把前台阻塞的工具挪到后台（对齐 TUI 的 session.background）。
+  // 输入框里的 Ctrl+B 是「光标左移」，所以只在焦点不在可编辑元素时才接管。
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!runningApi.running) return
+      if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return
+      if (event.key !== 'b' && event.key !== 'B') return
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || target?.isContentEditable) return
+      event.preventDefault()
+      void moveToBackground()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [runningApi.running, currentID])
 
   /** 提表单：成功后模型继续跑；失败把错误抛回表单，让它恢复可提交状态。 */
   async function answerForm(form: FormInfo, answer: Record<string, unknown>) {
@@ -1673,6 +1713,7 @@ export default function Chat({
           setDraft(value)
         }}
         onSend={() => void send()}
+        onBackground={() => void moveToBackground()}
         onStop={() => void stop()}
         onBuiltin={(name) => void runBuiltin(name)}
         onPickAgent={(id) => void pickAgent(id)}

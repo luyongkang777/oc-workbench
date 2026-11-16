@@ -613,6 +613,16 @@ export async function compactSession(sessionID: string): Promise<void> {
 }
 
 /**
+ * 把当前会话里正在前台阻塞的工具调用挪到后台观察（TUI 的 Ctrl+B）。
+ *
+ * 服务端回 204 且没有 body，空闲时同样是 204 的 no-op —— 所以拿不到
+ * 「挪走了几条」，调用方只能按「请求通了」给提示，别虚报数量。
+ */
+export async function backgroundSession(sessionID: string): Promise<void> {
+  await call(`/api/session/${encodeURIComponent(sessionID)}/background`, { method: 'POST' })
+}
+
+/**
  * 暂存一次回撤：把 messageID 这条消息（含它之后的所有消息）标成「待回滚」。
  *
  * 只标记、不删除——服务端保留原消息，可以 clear 取消，适合做「回撤预览」。
