@@ -64,6 +64,15 @@ export type Turn = {
    * （例如「Nothing to compact yet」），这种也要在历史里留一条，别静默吞掉。
    */
   summaryError?: string
+  /**
+   * 这一轮模型调用失败的原因。
+   *
+   * 服务端把失败写成一条 `type: 'idle'` 的消息（`outcome: 'failed'`），
+   * 以前这里直接 `continue` 跳过，于是界面上就是「发出去之后永远没有回复」——
+   * 用户完全不知道发生了什么，只能凭感觉重发。现在挂到本轮上，由渲染层
+   * 显示一条失败说明（自动重投也会同时启动）。
+   */
+  failure?: { message: string; type?: string; status?: number }
 }
 
 const DETAIL_LIMIT = 90
@@ -151,7 +160,30 @@ function buildTurns(ordered: ChatMessage[]): TurnGroup {
   const ids: string[][] = []
 
   for (const message of ordered) {
-    if (message.type === 'idle') continue
+    if (message.type === 'idle') {
+      // 一轮的结局。失败的要说出来（成功的仍然不占位置）。
+      // 认 `outcome: 'failed'` 为主；老服务端只有 error 没有 outcome，也照收。
+      if (message.outcome === 'failed' || (message.error && message.outcome !== 'interrupted')) {
+        const turn = turns[turns.length - 1]
+        if (turn && !turn.failure) {
+          const text = message.error?.message?.trim() ?? ''
+          const type = message.error?.type?.trim() ?? ''
+          turn.failure = {
+            message: text || type || '模型调用失败（服务端没有给出原因）',
+            ...(type ? { type } : {}),
+            ...(typeof message.error?.status === 'number' ? { status: message.error.status } : {}),
+          }
+          // 失败也是一轮的终点：没有 completed 的回复不该继续显示「思考中」
+          if (turn.endedAt === undefined) turn.endedAt = message.time?.created
+        }
+      } else {
+        // 后来又成功了（服务端自己重试成功、或用户重发后跑通）：
+        // 之前挂上的失败说明必须撤掉，否则界面会一直说「这一轮没跑完」。
+        const turn = turns[turns.length - 1]
+        if (turn) delete turn.failure
+      }
+      continue
+    }
 
     if (message.type === 'compaction') {
       // 压缩节点：正文在 message.summary，content 是空的。
@@ -217,6 +249,18 @@ function buildTurns(ordered: ChatMessage[]): TurnGroup {
         turn.endedAt = message.time.completed
       }
     }
+    /*
+     * 这一轮已经有输出了：之前挂的失败说明必须撤掉。
+     *
+     * 服务端会自己重试（重投同一个消息 id），重试成功时这一轮里先有 failed 的
+     * idle、后有正常回复。不撤掉的话，界面上会同时出现「这一轮没有跑完」和完整
+     * 回答，看着像坏了。
+     */
+    if (turn.failure) {
+      const parts = Array.isArray(message.content) ? message.content : []
+      if (done || parts.length > 0) delete turn.failure
+    }
+
     let blockIndex = 0
     const nextKey = () => `${message.id}:${blockIndex++}`
 
@@ -454,6 +498,10 @@ export function sameTurn(a: Turn, b: Turn): boolean {
   // 摘要消息只有这一段正文：内容变了必须重渲染
   if (a.summary !== b.summary || a.summaryAt !== b.summaryAt) return false
   if (a.summaryError !== b.summaryError) return false
+  // 失败原因是流式结束后才补上的：漏比就永远显示不出来
+  if (a.failure?.message !== b.failure?.message) return false
+  if (a.failure?.type !== b.failure?.type) return false
+  if (a.failure?.status !== b.failure?.status) return false
   // 时间戳变化也要重渲染：结束时间是在流式过程中才补上的，漏比就永远显示不出来
   if (a.startedAt !== b.startedAt || a.endedAt !== b.endedAt) return false
 

@@ -26,6 +26,15 @@ import { computeSessionStats } from './sessionStats'
 import SessionStatsBar from './SessionStatsBar'
 import type { StreamEvent } from '../api/chat'
 import { useChatEvents } from '../hooks/useChatEvents'
+import { useChatAutoRetry } from '../hooks/useChatAutoRetry'
+import { newMessageID, sendPromptWithRetry } from '../api/chatRetry'
+import {
+  DEFAULT_RETRY_ATTEMPTS,
+  isRetryableError,
+  retryDelay,
+  retryNoticeText,
+  shouldGiveUp,
+} from './retryPolicy'
 import { useChatForms } from '../hooks/useChatForms'
 import { useChatModels } from '../hooks/useChatModels'
 import { usePurge } from '../hooks/usePurge'
@@ -75,7 +84,6 @@ import {
   renameSession,
   replyForm,
   runSessionCommand,
-  sendPrompt,
   stageRevert,
   switchAgent,
   titleFromText,
@@ -142,6 +150,14 @@ type ChatNotice = {
   /** 提示条上的操作按钮（回撤后的「取消回撤」用它） */
   action?: { label: string; onClick: () => void }
 }
+
+/**
+ * 一轮对话失败后最多重试几次。
+ *
+ * 3~8 是硬边界（见 retryPolicy）：低于 3 扛不住一次网络抖动，
+ * 高于 8 用户等不下去、而且多半不是抖动而是真的坏了。
+ */
+const RETRY_ATTEMPTS = DEFAULT_RETRY_ATTEMPTS
 
 /** 首次进入会话先拉几页（每页 200 条），剩下的往上滚时续拉。 */
 const INITIAL_MESSAGE_PAGES = 5
@@ -761,6 +777,34 @@ export default function Chat({
 
   useChatEvents(connected, currentID, refreshSession, applyStream, reloadSessions)
 
+  /**
+   * 模型调用失败的自动重投（第二层，见 sendWithRetry 的注释）。
+   *
+   * 服务端把失败写成一条 idle 消息，界面上就是「发出去之后没有回复」。
+   * 这里盯住当前会话的消息，一旦停在失败态就按同一个 message id 重投。
+   *
+   * suspended：正在压缩 / 用户点了停止 / 正在回撤时先不插手——那些操作
+   * 本身就在改这一轮，自动重投会把它们的效果盖掉。
+   */
+  useChatAutoRetry({
+    sessionID: currentID,
+    messages,
+    connected,
+    maxAttempts: RETRY_ATTEMPTS,
+    suspended: compacting || busy,
+    onStatus: (status) => {
+      if (!status) {
+        setNotice((prev) => (prev?.tone === 'info' ? null : prev))
+        return
+      }
+      setNotice(status)
+    },
+    onRetried: (sessionID) => {
+      runningApi.start(sessionID)
+      void reloadMessages(sessionID)
+    },
+  })
+
   // 兜底：事件偶尔会漏（SSE 重连的空档、别的客户端建会话时没有可识别的事件），
   // 30 秒强制对一次列表。页面在后台时不查，省掉没意义的请求。
   useEffect(() => {
@@ -1266,6 +1310,50 @@ export default function Chat({
     await loadSession(sessionID)
   }
 
+  /**
+   * 把一条消息投递出去，投递本身失败就按退避重试。
+   *
+   * 和「模型调用失败自动重投」是两层：
+   *   - 这一层管**投递**：网络抖动、服务刚重启、请求挂住，此时服务端还没收下消息，
+   *     重投是唯一能把话送到的办法；
+   *   - 下一层（useChatAutoRetry）管**模型调用**：服务端收下了但调用失败，
+   *     它写一条失败消息，那一层再按同样的 id 重投。
+   *
+   * 两层共用一个 message id，所以不管在哪一层重试，用户的话都只会出现一次。
+   * 不可恢复的错误（模型不存在、密钥错）一次都不重试，立刻把原因交给用户。
+   */
+  async function sendWithRetry(
+    sessionID: string,
+    text: string,
+    files: PromptFile[],
+    messageID: string,
+  ): Promise<void> {
+    let failures = 0
+    for (;;) {
+      try {
+        await sendPromptWithRetry(sessionID, text, files, messageID, { maxAttempts: 1 })
+        // 重试过就别把「正在重试」留在屏幕上
+        if (failures > 0) setNotice(null)
+        return
+      } catch (err) {
+        failures += 1
+        const message = (err as Error).message
+        // 用户切走了 / 不可恢复的失败：不重试
+        if (currentRef.current !== sessionID) throw err
+        if (!isRetryableError(err) || shouldGiveUp(failures, RETRY_ATTEMPTS)) throw err
+        const delayMs = retryDelay(failures)
+        setNotice({
+          tone: 'info',
+          text: retryNoticeText(failures, RETRY_ATTEMPTS),
+          detail: `${Math.max(1, Math.round(delayMs / 1000))} 秒后重发（${message}）`,
+        })
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs))
+        // 等这会儿用户可能已经切走或发了别的：别再往旧会话里塞
+        if (currentRef.current !== sessionID) throw err
+      }
+    }
+  }
+
   async function send() {
     const text = draft.trim()
     const files = attachments
@@ -1319,15 +1407,18 @@ export default function Chat({
     const sessionID = await ensureSession()
     if (!sessionID) return
     setBusy(true)
+    // 只发 uri：source 里再带一份同样的 data URL 会把请求体翻倍，
+    // 外壳 10MB 上限下 4MB 以上的非图片附件必被 413 拒
+    const promptFiles: PromptFile[] = files.map((file) => ({
+      uri: file.dataUrl,
+      name: file.name,
+    }))
+    // 这一条消息的 id 在整轮重试里保持不变：服务端按 id 幂等，
+    // 重投不会把用户的话发两遍，但会重新调度模型调用。
+    const messageID = newMessageID()
     try {
       await applyPendingRevert(sessionID)
-      // 只发 uri：source 里再带一份同样的 data URL 会把请求体翻倍，
-      // 外壳 10MB 上限下 4MB 以上的非图片附件必被 413 拒
-      const promptFiles: PromptFile[] = files.map((file) => ({
-        uri: file.dataUrl,
-        name: file.name,
-      }))
-      await sendPrompt(sessionID, text, promptFiles)
+      await sendWithRetry(sessionID, text, promptFiles, messageID)
       // 会话是刚建的：占位键和真会话键都清掉（建会话那一下会把草稿搬到新键上）
       markDraftCleared(keyAtSend)
       markDraftCleared(draftKeyOf(root, sessionID, tabID))
@@ -1339,9 +1430,18 @@ export default function Chat({
         watchTitle(sessionID)
       }
       runningApi.start(sessionID)
+      setNotice(null)
       await reloadMessages(sessionID)
     } catch (err) {
-      setError((err as Error).message)
+      // 发送失败时草稿和附件必须留着：以前清空草稿再失败，用户要重打一遍。
+      // 这里什么都没清，输入框原样保留，点一次就能再发。
+      const message = (err as Error).message
+      setError(message)
+      setNotice({
+        tone: 'fail',
+        text: '消息没有发出去',
+        detail: '草稿和附件都还在，检查连接后可以直接再发一次',
+      })
     } finally {
       setBusy(false)
     }

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { BALANCE_REFRESH_EVENT } from '../api/balance'
 import { isIncrementalEvent, subscribeEvents, type StreamEvent } from '../api/chat'
+import { retryDelay } from '../components/retryPolicy'
 
 /**
  * 事件合并窗口：只有「需要全量对账」的事件才走这里。
@@ -101,6 +102,11 @@ export function useChatEvents(
     }
 
     let reconnected = false
+    /**
+     * 连续断线次数：只用来决定下一次重连等多久（退避），
+     * 连上就不再累加。上限回绕是为了别让数字无限涨（它只影响延迟档位）。
+     */
+    let reconnectCount = 0
     // 重连补的全量也要走同一道串行闸，并且限频：
     // 连接秒断秒连时不能每 2 秒抓一次完整消息窗。
     let lastOpenRefresh = 0
@@ -143,7 +149,9 @@ export function useChatEvents(
             },
             controller.signal,
             () => {
-              // 刚连上。除了第一次，说明之前断过：断线期间的流式增量已经丢了。
+              // 刚连上：退避计数清零，下一次断线重新从 0.8 秒开始。
+              reconnectCount = 0
+              // 除了第一次，说明之前断过：断线期间的流式增量已经丢了。
               // 补数据复用 schedule 的串行闸 + 80ms 合并，并且 3 秒内不重复。
               if (!reconnected) return
               const sid = currentRef.current
@@ -160,7 +168,13 @@ export function useChatEvents(
         if (stopped) return
         reconnected = true
         // 正常 EOF 也要退避：后端发完头就断时不能紧贴着重连。
-        await new Promise((resolve) => window.setTimeout(resolve, 2000))
+        //
+        // 节奏交给 retryPolicy：连续断线时从 0.8 秒退到 8 秒封顶。
+        // 原来固定 2 秒，服务重启期间会一直以固定频率敲门；
+        // 而第一次断线时 2 秒又偏慢，用户能看到一段明显的事件真空。
+        await new Promise((resolve) => window.setTimeout(resolve, retryDelay(reconnectCount)))
+        reconnectCount += 1
+        if (reconnectCount > 20) reconnectCount = 0
       }
     })()
 

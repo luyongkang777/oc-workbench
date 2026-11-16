@@ -463,3 +463,43 @@ test('sameTurn：结束时间补上必须重渲染，否则界面上永远看不
   const done = groupTurns([assistant([{ type: 'text', text: 'a' }], { created: 10, completed: 50 })])[0]
   assert.equal(sameTurn(running, done), false)
 })
+
+test('失败结局挂在那一轮上：界面上要能看见「没跑完」', () => {
+  // 消息接口是倒序（最新在前），这里也按倒序给
+  const turns = groupTurns([
+    { id: 'i1', type: 'idle', outcome: 'failed', error: { type: 'provider.rate_limit', message: '429', status: 429 }, time: { created: 20 } },
+    { id: 'u1', type: 'user', text: '问一句', time: { created: 10 } },
+  ])
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].failure?.message, '429')
+  assert.equal(turns[0].failure?.status, 429)
+})
+
+test('服务端自己重试成功：失败说明必须撤掉', () => {
+  const turns = groupTurns([
+    { id: 'a1', type: 'assistant', content: [{ type: 'text', text: '回答了' }], time: { created: 30 } },
+    { id: 'i1', type: 'idle', outcome: 'failed', error: { message: '429' }, time: { created: 20 } },
+    { id: 'u1', type: 'user', text: '问一句', time: { created: 10 } },
+  ])
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].failure, undefined, '有输出就不该再显示失败')
+  assert.equal(turns[0].texts[0], '回答了')
+})
+
+test('连续失败：保留第一条失败原因，重试进度由提示条负责', () => {
+  const turns = groupTurns([
+    { id: 'i2', type: 'idle', outcome: 'failed', error: { message: '第二次' }, time: { created: 30 } },
+    { id: 'i1', type: 'idle', outcome: 'failed', error: { message: '第一次' }, time: { created: 20 } },
+    { id: 'u1', type: 'user', text: '问一句', time: { created: 10 } },
+  ])
+  assert.equal(turns[0].failure?.message, '第一次')
+})
+
+test('成功结局不占位置，也不产生失败说明', () => {
+  const turns = groupTurns([
+    { id: 'i1', type: 'idle', outcome: 'succeeded', time: { created: 30 } },
+    { id: 'a1', type: 'assistant', content: [{ type: 'text', text: '好的' }], time: { created: 20 } },
+    { id: 'u1', type: 'user', text: '问一句', time: { created: 10 } },
+  ])
+  assert.equal(turns[0].failure, undefined)
+})

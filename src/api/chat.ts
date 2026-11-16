@@ -139,11 +139,22 @@ export type ChatMessage = {
    */
   summary?: string
   /**
+   * 一轮的最终结局。只有 `type: 'idle'` 的消息带这个字段。
+   *
+   * 模型调用失败不是抛异常，而是**正常写一条 idle 消息**就收工：
+   * `{ type: 'idle', outcome: 'failed', error: {...} }`。
+   * 不看它就只能看到「发出去了但永远没回复」。
+   */
+  outcome?: 'succeeded' | 'failed' | 'interrupted'
+  /**
    * 压缩失败原因。服务端可能回 200 但消息带 error
    * （例如 `compaction.unavailable / Nothing to compact yet`），
    * 不看这个字段就会把失败当成成功。
+   *
+   * idle 消息上的 error 是**本轮模型调用失败的原因**（status / retryAfterMs
+   * 都要留着，重试判定和退避时长都靠它们）。
    */
-  error?: { type?: string; message?: string }
+  error?: { type?: string; message?: string; status?: number; retryAfterMs?: number }
 }
 
 /** 表单选项（question 工具里的一个可选项）。 */

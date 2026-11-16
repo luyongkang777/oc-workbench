@@ -4,6 +4,7 @@ import { pageVisible } from '../api/visibility'
 import MarkdownText, { type OpenFile } from './MarkdownText'
 import { useTurnWindow } from './useTurnWindow'
 import { copyText } from './clipboard'
+import { isRetryableFailure } from './retryPolicy'
 import { isImageFile, messageFilePreview } from './attachments'
 import { parseFilePath } from './fileLinks'
 import {
@@ -340,6 +341,20 @@ const TurnView = memo(
             </div>
           )
         })}
+
+        {turn.failure ? (
+          <div className="chat-msg-error" role="alert">
+            <span className="chat-msg-error-title">这一轮没有跑完</span>
+            <span className="chat-msg-error-reason">{turn.failure.message}</span>
+            <span className="chat-msg-error-hint">
+              {/* 只给结论，不承诺「正在重试」：有些情况（已经拿到部分回复）不会重投，
+                  重试进度由聊天区底部的提示条负责，那里才知道真实状态 */}
+              {isRetryableFailure(turn.failure)
+                ? '可以直接重新发送；临时故障恢复后也会自动重试'
+                : '这类错误重试也不会好，请检查模型或配置后重新发送'}
+            </span>
+          </div>
+        ) : null}
 
         {/* 纯压缩摘要轮没有提问也没有回复段，标题上已经有时间，别再补一条结束行 */}
         {stamp?.end && (turn.user !== undefined || turn.blocks.length > 0) ? (

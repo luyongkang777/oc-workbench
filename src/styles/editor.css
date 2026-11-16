@@ -843,6 +843,42 @@
   color: var(--danger);
 }
 
+/*
+ * 这一轮模型调用失败。
+ *
+ * 服务端把失败写成一条 idle 消息，以前整条被跳过，用户看到的就是
+ * 「发出去之后永远没有回复」。这条说明要和普通回复明显区分：
+ * 左边一条红边、标题是结论、下面是真实原因、最后一行才是「会重试」。
+ */
+.chat-msg-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 6px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--danger);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.chat-msg-error-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.chat-msg-error-reason {
+  font-size: 12px;
+  color: var(--text-1);
+  /* 服务端的原因可能很长（带整个响应体），别把行撑爆 */
+  word-break: break-word;
+}
+
+.chat-msg-error-hint {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
 .chat-body {
   flex: 1;
   min-height: 0;
