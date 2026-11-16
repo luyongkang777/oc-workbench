@@ -225,6 +225,46 @@ const after = await (
 ).json()
 check('删除条目并保存后该页为空', after.local.items.length === 0, `剩 ${after.local.items.length} 条`)
 
+// 9) 关闭 → 外部写入（等价于 AI 的 rules_add）→ 重新打开必须看到新条目。
+// 这条防的是「面板只在挂载时拉一次」：工作台启动后写入的规则会永远显示不出来。
+await session.eval(`document.querySelector('.rules-close').click()`)
+await sleep(400)
+const beforeReopen = await session.eval(`document.querySelectorAll('.rules-item').length`)
+const current = await (
+  await fetch(`${ORIGIN}/local/rules/status?directory=${encodeURIComponent(ROOT)}`)
+).json()
+const seeded = await (
+  await fetch(`${ORIGIN}/local/rules/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      scope: 'local',
+      directory: ROOT,
+      items: [...current.local.items, { title: '刷新测试', text: '外部写入后重新打开应能看到' }],
+    }),
+  })
+).json()
+await session.eval(`document.querySelector('button[aria-label="强制规则：全局与当前目录"]').click()`)
+await sleep(900)
+await session.eval(`[...document.querySelectorAll('.rules-tab')].find(b=>b.textContent.includes('当前目录')).click()`)
+await sleep(700)
+const afterReopen = await session.eval(`document.querySelectorAll('.rules-item').length`)
+check(
+  '重新打开面板能读到外部写入的条目',
+  afterReopen === seeded.local.items.length && afterReopen > beforeReopen,
+  `${beforeReopen} → ${afterReopen}`,
+)
+// 清理刚写入的测试条目
+await fetch(`${ORIGIN}/local/rules/save`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    scope: 'local',
+    directory: ROOT,
+    items: seeded.local.items.filter((i) => i.title !== '刷新测试'),
+  }),
+})
+
 // Esc 用 JS 在 window 上派发：面板监听的就是 window keydown。
 // CDP 的 Input.dispatchKeyEvent 在刚保存完的重渲染窗口里偶尔丢失（实测两次），
 // 用 JS 派发测的是同一个处理函数，判定更稳。

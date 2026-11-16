@@ -25,7 +25,7 @@ type Tab = 'local' | 'global'
  *   3. AI 也能写：会话里说「加一条规则」，模型会用 rules_add 写进同一份文件。
  */
 export default function RulesPanel({ controller, directory, open, onClose }: Props) {
-  const { status, loading, saving, error, save } = controller
+  const { status, loading, saving, error, save, reload } = controller
   const [tab, setTab] = useState<Tab>('local')
   const [drafts, setDrafts] = useState<RuleDraft[]>([])
   const [message, setMessage] = useState<string | null>(null)
@@ -78,6 +78,13 @@ export default function RulesPanel({ controller, directory, open, onClose }: Pro
   useEffect(() => {
     if (!directory) setTab('global')
   }, [directory])
+
+  // 每次打开面板都回读一次磁盘真值。不这么做的话，工作台启动之后
+  // 用 rules_add / 另一个窗口写入的规则在面板里永远看不到（会显示成空列表）。
+  useEffect(() => {
+    if (!open) return
+    void reload()
+  }, [open, reload])
 
   useEffect(() => {
     if (!open) return
