@@ -29,6 +29,8 @@ mod gitbundle;
 mod projects;
 mod projects_api;
 mod purge;
+mod rules;
+mod rules_store;
 mod auth_gate;
 mod tunnel;
 mod tunnel_proc;

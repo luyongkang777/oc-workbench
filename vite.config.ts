@@ -4,6 +4,7 @@ import { localBalancePlugin } from './scripts/dev-local-balance.mjs'
 import { localFsPlugin } from './scripts/dev-local-fs.mjs'
 import { localGitPlugin } from './scripts/dev-local-git.mjs'
 import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
+import { localRulesPlugin } from './scripts/dev-local-rules.mjs'
 import { localRemotePlugin } from './scripts/dev-local-remote.mjs'
 import { exec } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -92,6 +93,8 @@ export default defineConfig(async ({ command, isPreview }) => {
       localGitPlugin(),
       localRemotePlugin(),
       localPurgePlugin(),
+      // 强制规则的读写：规则正文落盘位置与插件共用，dev 只补接口
+      localRulesPlugin(),
       localBalancePlugin(),
       localFsPlugin(),
     ],

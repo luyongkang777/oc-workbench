@@ -11,6 +11,7 @@ import { useAppEffects } from './hooks/useAppEffects'
 import { useConnection } from './hooks/useConnection'
 import { useFileTabs } from './hooks/useFileTabs'
 import { useMobileLayout } from './hooks/useMobileLayout'
+import { useRules } from './hooks/useRules'
 import { useSessionLights } from './hooks/useSessionLights'
 import { useTheme } from './hooks/useTheme'
 import { useUiLayout } from './hooks/useUiLayout'
@@ -51,6 +52,8 @@ export default function App() {
   /** 会话列表里点 ⧉ 要把某条会话开到标签栏：seq 递增保证同一个 id 也能触发 */
   const [tabRequest, setTabRequest] = useState<{ sessionID: string; seq: number } | null>(null)
   const [accountOpen, setAccountOpen] = useState(false)
+  /** 强制规则面板（顶栏齿轮）：没有开关，只有两级正文 */
+  const [rulesOpen, setRulesOpen] = useState(false)
   // 文件树刷新信号：窗口重新获得焦点或点「刷新」时自增
   const [treeSeq, setTreeSeq] = useState(0)
   // 一次性提示（例如打开链接失败），4 秒后自动消失
@@ -184,6 +187,9 @@ export default function App() {
   // 会话状态：一次轮询同时喂顶栏项目灯、会话列表灯和标签栏的灯
   const lights = useSessionLights(connected, projects.length)
 
+  // 强制规则：目录规则跟当前项目走，切项目会自动重读
+  const rules = useRules(root, connected)
+
   const openInTab = useCallback((sessionID: string) => {
     setTabRequest((prev) => ({ sessionID, seq: (prev?.seq ?? 0) + 1 }))
   }, [])
@@ -288,6 +294,9 @@ export default function App() {
     tabRequest,
     openInTab,
     lights,
+    rules,
+    rulesOpen,
+    setRulesOpen,
     notice,
     treeSeq,
     bumpTree,

@@ -42,6 +42,7 @@ export type IconName =
   | 'gauge'
   | 'layers'
   | 'plug'
+  | 'shield'
 
 // 每个图标的几何（只有 path 数据，公共属性在 sprite 的 <g> 上）
 const PATHS: Record<IconName, string> = {
@@ -80,6 +81,8 @@ const PATHS: Record<IconName, string> = {
   // MCP 读数：插头（两个脚 + 插身 + 一条线）
   plug: 'M9 3v5 M15 3v5 M6 8h12v2.5a6 6 0 0 1-6 6 6 6 0 0 1-6-6V8Z M12 16.5V21',
   layers: 'M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6 M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+  // 强制规则：盾牌 + 中间一道对勾（= 已生效）
+  shield: 'M12 3.2 20 6v6.2c0 4.2-3.2 7.3-8 8.6-4.8-1.3-8-4.4-8-8.6V6l8-2.8Z M9 12.2l2.2 2.2 4-4.2',
 }
 
 /**

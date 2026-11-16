@@ -7,6 +7,7 @@ import type { SubagentMode } from './components/subagent'
 import type { ResolvedTheme, ThemePref } from './components/theme'
 import type { GatewayDevice } from './api/gateway'
 import type { SessionLights } from './hooks/useSessionLights'
+import type { RulesController } from './hooks/useRules'
 import type { MobilePane } from './hooks/useMobileLayout'
 
 /**
@@ -85,6 +86,11 @@ export type AppContextValue = {
   tabRequest: { sessionID: string; seq: number } | null
   openInTab: (sessionID: string) => void
   lights: SessionLights
+
+  // 强制规则（全局 + 当前目录）：没有开关，只有正文
+  rules: RulesController
+  rulesOpen: boolean
+  setRulesOpen: (next: boolean | ((cur: boolean) => boolean)) => void
 
   // 杂项
   notice: { text: string; id: number } | null

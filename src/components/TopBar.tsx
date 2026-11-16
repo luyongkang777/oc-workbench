@@ -26,6 +26,10 @@ export type TopBarProps = {
   themePref: ThemePref
   theme: ResolvedTheme
   onCycleTheme: () => void
+  rulesOpen: boolean
+  onToggleRules: () => void
+  /** 规则覆盖情况的短描述，直接做按钮 title */
+  rulesTitle: string
   accountOpen: boolean
   onToggleAccount: () => void
   gitOpen: boolean
@@ -66,6 +70,15 @@ export default function TopBar(props: TopBarProps) {
           aria-label="切换主题（跟随系统 / 暗色 / 浅白，Ctrl+Shift+L）"
         >
           <Icon name={themeIcon(props.themePref, props.theme)} size={15} />
+        </button>
+        <button
+          type="button"
+          className={`topbar-iconbtn${props.rulesOpen ? ' auto' : ''}`}
+          onClick={props.onToggleRules}
+          title={props.rulesTitle}
+          aria-label="强制规则：全局与当前目录"
+        >
+          <Icon name="shield" size={15} />
         </button>
         <button
           type="button"

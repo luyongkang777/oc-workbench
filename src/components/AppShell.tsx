@@ -11,11 +11,13 @@ import GitPanel from './GitPanel'
 import { IconDefs } from './Icon'
 import MobileNav from './MobileNav'
 import ReviewPanel from './ReviewPanel'
+import RulesPanel from './RulesPanel'
 import SubagentPanel from './SubagentPanel'
 import Terminal from './Terminal'
 import TopBar from './TopBar'
 import WelcomePane from './WelcomePane'
 import { isRemoteHost } from '../api/auth'
+import { coverageText } from '../api/rules'
 
 /**
  * 主界面的全部布局与 JSX。
@@ -79,12 +81,18 @@ export default function AppShell() {
     tabRequest,
     openInTab,
     lights,
+    rules,
+    rulesOpen,
+    setRulesOpen,
     notice,
     treeSeq,
     bumpTree,
     handleTopbarMouseDown,
     remoteBack,
   } = c
+
+  // 规则按钮的 title：说明哪几级在生效（规则没有开关，不说「开/关」）
+  const rulesCoverage = coverageText(rules.status)
 
   return (
     <div className="app" data-mobile={mobile ? '1' : undefined}>
@@ -103,6 +111,9 @@ export default function AppShell() {
         themePref={themePref}
         theme={theme}
         onCycleTheme={() => setThemePref((cur) => nextThemePref(cur))}
+        rulesOpen={rulesOpen}
+        onToggleRules={() => setRulesOpen((v) => !v)}
+        rulesTitle={rulesCoverage}
         accountOpen={accountOpen}
         onToggleAccount={() => setAccountOpen((v) => !v)}
         gitOpen={gitOpen}
@@ -122,6 +133,14 @@ export default function AppShell() {
       />
 
       {notice ? <div className="app-notice">{notice.text}</div> : null}
+
+      {/* 强制规则面板：独立于项目，没选目录时也能编辑全局规则 */}
+      <RulesPanel
+        controller={rules}
+        directory={root}
+        open={rulesOpen}
+        onClose={() => setRulesOpen(false)}
+      />
 
       {root ? (
         <div
