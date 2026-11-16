@@ -248,3 +248,91 @@ test('备份轮转真的删得掉（留 10 份，不能越堆越多）', async (
     await rm(env.home, { recursive: true, force: true })
   }
 })
+
+test('本机没有顶层 model 时，首次设默认模型能写进去（曾经 500）', async () => {
+  const env = await makeHome()
+  try {
+    // 另一台电脑的现场：默认模型显示「未设置」，选任意模型都会被自检判成「动了别的配置」
+    await writeFile(env.file, JSON.stringify({ provider: {}, instructions: ['./rules/a.md'] }), 'utf8')
+    saveConfig((config) => {
+      config.model = 'deepseek/deepseek-chat'
+    })
+    const disk = JSON.parse(await readFile(env.file, 'utf8'))
+    assert.equal(disk.model, 'deepseek/deepseek-chat')
+    assert.deepEqual(disk.instructions, ['./rules/a.md'])
+  } finally {
+    env.restore()
+    await rm(env.home, { recursive: true, force: true })
+  }
+})
+
+test('自检仍然拦住其它顶层键被改、以及删掉 model', async () => {
+  const env = await makeHome()
+  try {
+    const original = JSON.stringify({ model: 'a/b', provider: {}, mcp: { servers: {} } })
+    await writeFile(env.file, original, 'utf8')
+    assert.throws(() => saveConfig((config) => { config.mcp = 'broken' }), /自检失败/)
+    assert.throws(() => saveConfig((config) => { delete config.model }), /自检失败/)
+    assert.equal(await readFile(env.file, 'utf8'), original, '两次被拦都要保持原文件')
+  } finally {
+    env.restore()
+    await rm(env.home, { recursive: true, force: true })
+  }
+})
+
+test('model 为 null 这种旧值也能纠正成字符串（下拉显示未设置却存不进去）', async () => {
+  const env = await makeHome()
+  try {
+    // 读取侧把 null 当「未设置」，写回侧若按「类型不能变」拒绝，用户就永远设不上默认模型
+    await writeFile(env.file, JSON.stringify({ model: null, provider: {} }), 'utf8')
+    saveConfig((config) => {
+      config.model = 'deepseek/deepseek-chat'
+    })
+    const disk = JSON.parse(await readFile(env.file, 'utf8'))
+    assert.equal(disk.model, 'deepseek/deepseek-chat')
+  } finally {
+    env.restore()
+    await rm(env.home, { recursive: true, force: true })
+  }
+})
+
+test('已有字符串 model 换成另一个模型', async () => {
+  const env = await makeHome()
+  try {
+    await writeFile(env.file, JSON.stringify({ model: 'a/b', provider: {}, instructions: [] }), 'utf8')
+    saveConfig((config) => {
+      config.model = 'c/d'
+    })
+    const disk = JSON.parse(await readFile(env.file, 'utf8'))
+    assert.equal(disk.model, 'c/d')
+    assert.deepEqual(disk.instructions, [])
+  } finally {
+    env.restore()
+    await rm(env.home, { recursive: true, force: true })
+  }
+})
+
+test('model 为 null 时保存 provider 不能被拦（没碰 model）', async () => {
+  const env = await makeHome()
+  try {
+    // 这条是回归防线：曾经把「写回后 model 必须是字符串」当成无条件要求，
+    // 结果只要配置里是 "model": null，保存/删除 provider 全部 500。
+    await writeFile(env.file, JSON.stringify({ model: null, provider: {}, mcp: { servers: {} } }), 'utf8')
+    saveConfig((config) =>
+      upsertProvider(config, {
+        id: 'x',
+        name: 'X',
+        baseURL: 'https://x/v1',
+        apiKey: 'sk-1234567890abcdef',
+        models: [],
+      }),
+    )
+    const disk = JSON.parse(await readFile(env.file, 'utf8'))
+    assert.equal(disk.provider.x.options.baseURL, 'https://x/v1')
+    assert.equal(disk.model, null, '没碰的 model 要保持原样')
+    assert.deepEqual(disk.mcp, { servers: {} })
+  } finally {
+    env.restore()
+    await rm(env.home, { recursive: true, force: true })
+  }
+})

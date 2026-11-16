@@ -92,6 +92,38 @@ function topLevelKeys(value) {
     .sort((left, right) => left[0].localeCompare(right[0]))
 }
 
+/**
+ * 写回自检口径：除 provider 外的顶层键必须一字未动。
+ *
+ * 唯一例外是顶层 `model`（默认模型）：账号同步和面板「默认模型」本来就要写它，
+ * 而新电脑上这个键通常不存在 —— 一律拒绝会让首次设默认模型永远 500；
+ * `"model": null` 这类「键在但不是字符串」的旧值也要能纠正（读取侧把 null 当未设置）。
+ * 但「没碰它」必须放行：只保存 provider 时 model 根本没改，哪怕原值是 null/object 也不能拦，
+ * 否则保存/删除/账号同步整条主流程会被一条没动的旧值卡死。
+ * 规则：类型原样 → 放行；真要改 → 必须是字符串；删掉 → 拦；其余顶层键仍须一字未动。
+ */
+function guardAllows(before, after) {
+  // 比较前统一排序：调用方即使传了未排序的 map 迭代结果，也不会被误判成「改了配置」。
+  const rest = (keys) =>
+    keys
+      .filter(([key]) => key !== 'model')
+      .slice()
+      .sort((left, right) => left[0].localeCompare(right[0]))
+  if (JSON.stringify(rest(before)) !== JSON.stringify(rest(after))) return false
+  const modelType = (keys) => {
+    const hit = keys.find(([key]) => key === 'model')
+    return hit ? hit[1] : null
+  }
+  const old = modelType(before)
+  const next = modelType(after)
+  // after 没有 model：除非 before 也没有，否则算「删了它」→ 拦
+  if (next === null) return old === null
+  // 类型没变 → 没碰它（哪怕原值是 null/object 这种坏形态）
+  if (old === next) return true
+  // 要改 → 只能是字符串（新建，或从 null/number/object 纠正过来）
+  return next === 'string'
+}
+
 function rotateBackups(file) {
   const dir = path.dirname(file)
   const base = path.basename(file)
@@ -135,7 +167,7 @@ export function saveConfig(mutate) {
   // 一旦以后有人把自检挪到 mutate 之后就会读到改过的值（隐性 bug 温床）。
   const next = structuredClone(value)
   mutate(next)
-  if (JSON.stringify(before) !== JSON.stringify(topLevelKeys(next))) {
+  if (!guardAllows(before, topLevelKeys(next))) {
     throw httpError(500, '自检失败：写回会改动 provider 以外的配置，已放弃保存')
   }
 

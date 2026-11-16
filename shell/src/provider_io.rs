@@ -87,7 +87,7 @@ pub(crate) fn lock_save() -> MutexGuard<'static, ()> {
     SAVE_LOCK.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
-/// 顶层键快照：用来做「写前后除 provider 外一字未动」的自检。
+/// 顶层键快照：用来做「写前后除 provider / 默认模型外一字未动」的自检。
 pub(crate) fn top_level_keys(value: &Value) -> Vec<(String, String)> {
     let Some(map) = value.as_object() else {
         return Vec::new();
@@ -99,6 +99,53 @@ pub(crate) fn top_level_keys(value: &Value) -> Vec<(String, String)> {
         .collect();
     keys.sort_by(|left, right| left.0.cmp(&right.0));
     keys
+}
+
+/// 写回自检口径：除 `provider` 外，顶层键必须一字未动。
+///
+/// 顶层 `model`（默认模型）是唯一允许动的键：
+///
+/// - 账号同步 / 面板「默认模型」本来就要写它；
+/// - 新电脑上这个键通常**不存在**，一律判「动了别人的配置」会让首次设默认模型永远 500；
+/// - 已经存在但**不是字符串**（`"model": null` 最常见）也要能纠正 ——
+///   读取侧把 null 当「未设置」，若这里拒绝，界面显示未设置却怎么也存不进去。
+///
+/// 但**「没碰它」必须放行**：只保存一条 provider 时 model 根本没被改，
+/// 哪怕磁盘上写的是 `null`/对象这种坏值也不能拦 —— 否则保存/删除/账号同步
+/// 整条主流程全被一条没动的旧值卡死（第一版就踩了这个回归）。
+///
+/// 所以：类型原样返回 → 放行；真要改 → 必须是字符串；删掉 → 拦。
+/// 其余任何顶层键多一个、少一个、类型变了都不行。
+pub(crate) fn guard_allows(before: &[(String, String)], after: &[(String, String)]) -> bool {
+    // 入参按约定来自 top_level_keys（已排序），这里再排一次：将来若有调用点
+    // 直接传 map 的迭代结果，顺序不同也会被误判成「改了配置」。
+    let rest = |keys: &[(String, String)]| -> Vec<(String, String)> {
+        let mut rest: Vec<(String, String)> = keys
+            .iter()
+            .filter(|(key, _)| key != "model")
+            .cloned()
+            .collect();
+        rest.sort_by(|left, right| left.0.cmp(&right.0));
+        rest
+    };
+    if rest(before) != rest(after) {
+        return false;
+    }
+    let model_type = |keys: &[(String, String)]| -> Option<String> {
+        keys.iter()
+            .find(|(key, _)| key == "model")
+            .map(|(_, kind)| kind.clone())
+    };
+    match (model_type(before), model_type(after)) {
+        (None, None) => true,
+        // 类型没变 → 没碰它（哪怕原值是 null/object 这种坏形态）
+        (Some(old), Some(new)) if old == new => true,
+        // 要改 → 只能是字符串（新建，或从 null/number/object 纠正过来）
+        (Some(_), Some(new)) => new == "string",
+        (None, Some(new)) => new == "string",
+        // 删掉顶层 model 不该由这里做
+        (Some(_), None) => false,
+    }
 }
 
 pub(crate) fn type_of(value: &Value) -> String {

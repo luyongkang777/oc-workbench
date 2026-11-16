@@ -1,6 +1,7 @@
 //! 第三方 API（provider）配置的读取与写回。
 //!
-//! 只碰 `~/.config/opencode/opencode.json` 的 `provider` 一段：
+//! 只碰 `~/.config/opencode/opencode.json` 的 `provider` 一段，外加顶层
+//! `model`（默认模型，账号同步要用）：
 //!
 //! ```json
 //! { "provider": { "deepseek": { "name": "...", "npm": "@ai-sdk/openai-compatible",
@@ -13,9 +14,9 @@
 //!
 //!   1. 读原文 → 解析成 `Value`
 //!   2. 备份成 `opencode.json.bak-<时间戳>`（只保留最近 10 份）
-//!   3. 只改 `provider.<id>`（或删掉它）
+//!   3. 只改 `provider.<id>`（或删掉它），以及顶层 `model`
 //!   4. 写临时文件 → 改名（原子）
-//!   5. **写前后自检**：除 `provider` 外的顶层键必须全在、类型不变；
+//!   5. **写前后自检**：除 `provider` 与 `model` 外的顶层键必须全在、类型不变；
 //!      丢了就回滚报错，不留下半死状态。
 //!
 //! 文件本身不是合法 JSON 时直接拒绝写（409）——拿默认值覆盖会把用户手改的
@@ -181,7 +182,8 @@ where
 
     let next = Value::Object(map);
     let after = crate::provider_io::top_level_keys(&next);
-    if before != after {
+    // 口径见 provider_io::guard_allows：只有顶层 model 允许新增/改值。
+    if !crate::provider_io::guard_allows(&before, &after) {
         return Err((
             500,
             "自检失败：写回会改动 provider 以外的配置，已放弃保存".to_string(),
