@@ -1,6 +1,6 @@
 [package]
 name = "oc-workbench-shell"
-version = "1.8.3"
+version = "1.9.0"
 edition = "2021"
 description = "OpenCode 工作台桌面外壳（tao + wry / WebView2）"
 publish = false
@@ -12,7 +12,9 @@ path = "src/main.rs"
 [dependencies]
 tao = "0.37"
 wry = "0.57"
-serde_json = "1"
+# preserve_order：保存 opencode.json 时按文件里原有顺序写回，
+# 否则 BTreeMap 会把顶层键全部按字母序重排，git diff 看着像改了一大片。
+serde_json = { version = "1", features = ["preserve_order"] }
 tiny_http = "0.12"
 ureq = { version = "2", default-features = false, features = ["native-tls", "json"] }
 # ureq 的 native-tls feature 只提供「impl TlsConnector」，不会自动装进 Agent——
