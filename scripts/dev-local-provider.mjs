@@ -32,6 +32,20 @@ import { providerQuota } from './dev-local-provider-quota.mjs'
 export { configPath, maskKey, readStatus, saveConfig, upsertProvider, removeProvider } from './dev-local-provider-store.mjs'
 export { pickModelIds, pickModelOptions } from './dev-local-provider-models.mjs'
 
+/**
+ * 前端把掩码原样传回来（用户没改 key）：按同一个 id 从磁盘读回真 key。
+ *
+ * 与 Rust 的 `is_masked` + `read_key_for` 同口径。这个函数在 9f0d511 拆分时漏掉了，
+ * 导致 dev 里「获取模型 / 保存」直接 500（`resolveKey is not defined`），
+ * 只有 exe 里能用 —— 真机验收时才发现。
+ */
+function resolveKey(map) {
+  const apiKey = String(map.apiKey ?? '').trim()
+  if (!isMasked(apiKey)) return apiKey
+  const id = String(map.id ?? '').trim()
+  return id ? keyFromDisk(apiKey, id) : ''
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://127.0.0.1')
   const action = url.pathname.split('/').pop()
