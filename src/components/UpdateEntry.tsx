@@ -3,7 +3,6 @@ import { isMobileViewport } from '../hooks/useMobileLayout'
 import { getAuthState, subscribeAuth } from '../api/auth'
 import { Icon } from './Icon'
 import {
-  applyUpdate,
   checkUpdate,
   getUpdateConfig,
   saveUpdateSource,
@@ -23,8 +22,11 @@ import {
   cliTag,
   formatBytes,
 } from './cliState'
+import { useUpdateTask } from '../hooks/useUpdateTask'
+import UpdateProgressBlock from './UpdateProgressBlock'
+import { applyButtonText, taskActive, type UpdateTask } from './updateProgressFormat'
 
-type Phase = 'checking' | 'ready' | 'applying' | 'restarting'
+type Phase = 'checking' | 'ready'
 
 /** 顶栏提示点要不要亮：有新版本且用户没跳过它。 */
 function badgeOf(result: UpdateCheck): string | null {
@@ -47,6 +49,9 @@ function formatSize(bytes: number): string {
  *
  * 检查逻辑放在这一层而不是弹窗里：弹窗关掉会卸载，检查结果（有没有新版）
  * 需要留在按钮上，否则每次都要重新检查才知道。
+ *
+ * 更新任务（下载/校验/重启）也放在这一层：关掉面板不该丢进度，重新打开
+ * 要看得到同一个任务，而不是重新检查一遍把它覆盖掉。
  */
 export default function UpdateEntry({ version }: { version: string }) {
   const [open, setOpen] = useState(false)
@@ -54,6 +59,13 @@ export default function UpdateEntry({ version }: { version: string }) {
   // OpenCode CLI 的状态：顶栏要直接显示它的版本号，缺了还要能一眼看出来
   const [cli, setCli] = useState<CliStatus | null>(null)
   const alive = useRef(true)
+  // 更新成功后停止一切检查：本次进程内不再提示「有新版本」
+  const settledRef = useRef(false)
+
+  const { task, start: startUpdate, settled } = useUpdateTask(() => {
+    settledRef.current = true
+    setLatest(null)
+  })
 
   /** 读一次 CLI 状态。`latest=false` 时外壳连发布列表都不查，只有本机信息。 */
   const refreshCli = useCallback(
@@ -92,6 +104,9 @@ export default function UpdateEntry({ version }: { version: string }) {
     if (auth.status !== 'ready') return
     // 手机上更新的是 Windows 客户端，检查没有意义；这条请求在公网链路上要 2~3 秒
     if (isMobileViewport()) return
+    // 这次进程已经把新版本装上去了：不再检查，否则会拿旧的内存版本号
+    // 跟刚装上的同一个版本比，反复提示「有新版本」。
+    if (settledRef.current) return
     let cancelled = false
     let timer = 0
 
@@ -101,9 +116,10 @@ export default function UpdateEntry({ version }: { version: string }) {
 
     const scheduleSilent = () => {
       timer = window.setTimeout(() => {
+        if (settledRef.current) return
         checkUpdate()
           .then((result) => {
-            if (!cancelled && alive.current) {
+            if (!cancelled && alive.current && !settledRef.current) {
               setLatest(badgeOf(result))
               // 只有真查过才记时间：失败时下次启动还能再试
               window.localStorage.setItem(SILENT_STAMP_KEY, String(Date.now()))
@@ -138,12 +154,19 @@ export default function UpdateEntry({ version }: { version: string }) {
     ? `OpenCode CLI ${cli.version ? `v${cli.version}` : '未安装'}${cli.path ? ` · ${cli.path}` : ''}`
     : 'OpenCode CLI 状态未知'
 
+  const handleResult = useCallback((result: UpdateCheck) => {
+    if (settledRef.current) return
+    setLatest(badgeOf(result))
+  }, [])
+
+  const badge = settled ? null : latest
+
   return (
     <div className="update-entry">
       <button
         type="button"
-        className={`update-chip${latest ? ' fresh' : ''}`}
-        title={`${latest ? `有新版本 v${latest}` : '检查更新'} · ${cliHint}`}
+        className={`update-chip${badge ? ' fresh' : ''}`}
+        title={`${badge ? `有新版本 v${badge}` : '检查更新'} · ${cliHint}`}
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -155,15 +178,19 @@ export default function UpdateEntry({ version }: { version: string }) {
             {cliTag(cli)}
           </span>
         ) : null}
-        {latest ? <span className="update-dot" /> : null}
+        {taskActive(task) ? <span className="update-dot busy" title="正在更新" /> : null}
+        {badge ? <span className="update-dot" /> : null}
       </button>
       {open ? (
         <UpdateDialog
           version={version}
           cli={cli}
           refreshCli={refreshCli}
+          task={task}
+          settled={settled}
+          startUpdate={startUpdate}
           onClose={() => setOpen(false)}
-          onResult={(result) => setLatest(badgeOf(result))}
+          onResult={handleResult}
         />
       ) : null}
     </div>
@@ -174,16 +201,26 @@ function UpdateDialog({
   version,
   cli,
   refreshCli,
+  task,
+  settled,
+  startUpdate,
   onClose,
   onResult,
 }: {
   version: string
   cli: CliStatus | null
   refreshCli: (remote?: boolean, latest?: boolean) => Promise<CliStatus | null>
+  task: UpdateTask
+  settled: boolean
+  startUpdate: (version: string | null) => Promise<void>
   onClose: () => void
   onResult: (result: UpdateCheck) => void
 }) {
-  const [phase, setPhase] = useState<Phase>('checking')
+  // 失败或已就绪时不再从 checking 起步：effect 会直接跳过检查，
+  // phase 停在 checking 就等于把所有按钮都禁用（只剩关闭）。
+  const [phase, setPhase] = useState<Phase>(() =>
+    task.phase === 'failed' || settled ? 'ready' : 'checking',
+  )
   const [info, setInfo] = useState<UpdateCheck | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [source, setSource] = useState('')
@@ -206,6 +243,8 @@ function UpdateDialog({
   }, [])
 
   const runCheck = useCallback(async () => {
+    // 更新已就绪/已完成：不再检查（内存里还是旧版本号，再查只会自我提示）
+    if (settled) return
     setPhase('checking')
     setError(null)
     try {
@@ -221,11 +260,14 @@ function UpdateDialog({
       setError((err as Error).message)
       setPhase('ready')
     }
-  }, [onResult])
+  }, [onResult, settled])
 
   useEffect(() => {
+    // 更新任务已经在跑（用户关掉面板又打开）：直接显示进度，别再检查一次把它盖掉。
+    // 失败后也不自动重查：那次失败的原因要留在界面上，等用户自己点重试。
+    if (taskActive(task) || task.phase === 'failed' || settled) return
     void runCheck()
-  }, [runCheck])
+  }, [runCheck, settled, task.phase])
 
   // 打开面板就同步一次 CLI 状态（外壳带 10 分钟缓存，不会每次点都外联）
   useEffect(() => {
@@ -243,12 +285,12 @@ function UpdateDialog({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (phase === 'applying' || phase === 'restarting') return
+      if (taskActive(task)) return
       onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, phase])
+  }, [onClose, task])
 
   /** 跳过这个版本（只影响提示，不阻止手动更新）。 */
   async function skipThis(version: string) {
@@ -298,21 +340,6 @@ function UpdateDialog({
     }
   }
 
-  async function startUpdate() {
-    if (phase === 'applying' || phase === 'restarting') return
-    setPhase('applying')
-    setError(null)
-    try {
-      await applyUpdate()
-      if (!alive.current) return
-      setPhase('restarting')
-    } catch (err) {
-      if (!alive.current) return
-      setError((err as Error).message)
-      setPhase('ready')
-    }
-  }
-
   /** 下载并安装/更新 OpenCode CLI。请求会阻塞到装完（约 1~5 分钟）。 */
   async function startCliInstall() {
     if (cliBusy) return
@@ -349,10 +376,12 @@ function UpdateDialog({
   const configured = info?.configured ?? true
   const isSkipped = info?.skipped ?? false
   const autoCheck = localAuto ?? info?.autoCheck ?? true
-  const busy = phase === 'checking' || phase === 'applying' || phase === 'restarting'
+  const applying = taskActive(task)
+  const busy = phase === 'checking' || applying
   const cliAutoValue = cliAuto ?? cli?.autoUpdate ?? true
   const cliBusyNow = cliBusy || (cli?.busy ?? false)
   const cliBar = cliProgress(cli)
+  const shownError = error ?? (task.phase === 'failed' ? task.error : null)
 
   return (
     <div className="update-mask" role="presentation" onClick={() => (busy ? undefined : onClose())}>
@@ -369,7 +398,7 @@ function UpdateDialog({
             type="button"
             className="update-close"
             onClick={onClose}
-            disabled={phase === 'applying' || phase === 'restarting'}
+            disabled={applying}
             title="关闭"
             aria-label="关闭"
           >
@@ -394,7 +423,7 @@ function UpdateDialog({
             </div>
           ) : null}
 
-          {info?.newer && latest && phase === 'ready' ? (
+          {info?.newer && latest && phase === 'ready' && !applying && !settled ? (
             <div className="update-skiprow">
               {isSkipped ? (
                 <button type="button" className="update-link" onClick={() => void unskip()}>
@@ -410,17 +439,16 @@ function UpdateDialog({
           ) : null}
 
           {info?.notes ? <div className="update-notes">{info.notes}</div> : null}
-          {error ? <div className="update-error">{error}</div> : null}
+          {shownError ? <div className="update-error">{shownError}</div> : null}
 
-          {phase === 'checking' ? <div className="update-hint">正在检查…</div> : null}
-          {phase === 'applying' ? (
-            <div className="update-hint">正在下载并校验，完成后窗口会自动重启…</div>
-          ) : null}
-          {phase === 'restarting' ? (
-            <div className="update-hint ready">更新包已就绪，正在重启到新版本…</div>
+          {/* 检查中：不确定进度条；下载/校验/重启：真实进度或不确定进度条 */}
+          <UpdateProgressBlock task={task} checking={phase === 'checking'} />
+
+          {settled && !applying ? (
+            <div className="update-hint ready">更新包已就绪：重启后生效，本次不再检查新版本。</div>
           ) : null}
 
-          {(!configured || editingSource) && phase !== 'applying' ? (
+          {(!configured || editingSource) && !applying ? (
             <div className="update-source">
               <div className="update-source-title">
                 {configured ? '更换更新源' : '还没有配置更新源'}
@@ -453,16 +481,20 @@ function UpdateDialog({
             <input
               type="checkbox"
               checked={autoCheck}
-              disabled={busy}
+              disabled={busy || settled}
               onChange={(event) => void toggleAuto(event.target.checked)}
             />
             <span className="update-auto-title">启动时自动检查更新</span>
             <span className="update-auto-hint">
-              {autoCheck ? '最多每 6 小时静默检查一次' : '只在点开这个面板时检查'}
+              {settled
+                ? '本次更新已完成，不再检查'
+                : autoCheck
+                  ? '最多每 6 小时静默检查一次'
+                  : '只在点开这个面板时检查'}
             </span>
           </label>
 
-          {configured && info?.source && phase === 'ready' && !editingSource ? (
+          {configured && info?.source && phase === 'ready' && !editingSource && !applying ? (
             <div className="update-source-now" title={info.source}>
               <span className="update-source-url">更新源：{info.source}</span>
               <button
@@ -558,18 +590,30 @@ function UpdateDialog({
         </div>
 
         <footer className="update-actions">
-          <button type="button" className="update-btn" onClick={() => void runCheck()} disabled={busy}>
-            {phase === 'checking' ? '检查中…' : '检查更新'}
+          <button
+            type="button"
+            className="update-btn"
+            onClick={() => void runCheck()}
+            disabled={busy || settled}
+            title={settled ? '更新包已就绪，重启后生效' : undefined}
+          >
+            {settled ? '已就绪' : phase === 'checking' ? '检查中…' : '检查更新'}
           </button>
           <span className="update-spacer" />
           <button
             type="button"
             className="update-btn primary"
-            onClick={() => void startUpdate()}
-            disabled={busy || !info?.newer}
-            title={info?.newer ? `更新到 v${latest}` : '没有可用更新'}
+            onClick={() => void startUpdate(latest)}
+            disabled={busy || settled || (!info?.newer && task.phase !== 'failed')}
+            title={
+              task.phase === 'failed'
+                ? '重新下载并安装这个版本'
+                : info?.newer
+                  ? `更新到 v${latest}`
+                  : '没有可用更新'
+            }
           >
-            {phase === 'applying' ? '下载中…' : phase === 'restarting' ? '重启中…' : '立即更新'}
+            {applyButtonText(task)}
           </button>
         </footer>
       </div>

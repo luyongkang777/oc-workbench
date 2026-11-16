@@ -24,7 +24,7 @@
 //! 没配置就不联网，也不会偷偷发请求。
 
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -556,6 +556,22 @@ pub fn check() -> CheckResult {
 ///
 /// 先写 `.part` 再改名：中途断网/被拦不会留下一个「看起来能用」的半截 exe。
 pub fn download(manifest: &Manifest, dir: &Path) -> Result<PathBuf, String> {
+    download_with(manifest, dir, &mut |stage, done, total| {
+        if stage == "verifying" {
+            crate::update_progress::set(crate::update_progress::Stage::Verifying, done, total);
+        } else {
+            crate::update_progress::bump(done, total);
+        }
+    })
+}
+
+/// 真正的下载实现。`on_progress(stage, done, total)` 每读一块回调一次，
+/// 校验开始前再回调一次 `verifying` —— 测试可以传空闭包，不去碰全局进度。
+fn download_with(
+    manifest: &Manifest,
+    dir: &Path,
+    on_progress: &mut dyn FnMut(&'static str, u64, u64),
+) -> Result<PathBuf, String> {
     let safe_version: String = manifest
         .version
         .chars()
@@ -577,6 +593,14 @@ pub fn download(manifest: &Manifest, dir: &Path) -> Result<PathBuf, String> {
         other => format!("下载失败：{other}"),
     })?;
 
+    // 总量优先用清单声明的 size；没有就问 Content-Length；都拿不到就交给
+    // 前端画不确定进度条（绝不编一个假的百分比）。
+    let declared = response
+        .header("content-length")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    let total = if manifest.size > 0 { manifest.size } else { declared };
+
     let limit = if manifest.size > 0 {
         manifest.size
     } else {
@@ -584,15 +608,31 @@ pub fn download(manifest: &Manifest, dir: &Path) -> Result<PathBuf, String> {
     }
     .min(MAX_DOWNLOAD);
 
+    // 分块读：每读一块把进度写进全局，页面就能看到真实百分比。
+    // 不用 std::io::copy —— 它是一次调用，中途没有任何回调点。
     let mut reader = response.into_reader().take(limit + 1);
     let mut file = fs::File::create(&part_path).map_err(|err| format!("建临时文件失败：{err}"))?;
-    let copied = std::io::copy(&mut reader, &mut file).map_err(|err| format!("写文件失败：{err}"))?;
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut copied: u64 = 0;
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|err| format!("下载读取出错：{err}"))?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|err| format!("写文件失败：{err}"))?;
+        copied += read as u64;
+        if copied > limit {
+            drop(file);
+            let _ = fs::remove_file(&part_path);
+            return Err(format!("下载体积超过清单声明（>{limit} 字节），已丢弃"));
+        }
+        on_progress("downloading", copied, total);
+    }
     drop(file);
 
-    if copied > limit {
-        let _ = fs::remove_file(&part_path);
-        return Err(format!("下载体积超过清单声明（>{limit} 字节），已丢弃"));
-    }
     if manifest.size > 0 && copied != manifest.size {
         let _ = fs::remove_file(&part_path);
         return Err(format!(
@@ -601,6 +641,7 @@ pub fn download(manifest: &Manifest, dir: &Path) -> Result<PathBuf, String> {
         ));
     }
 
+    on_progress("verifying", copied, total);
     let actual = sha256_file(&part_path)?;
     if actual != manifest.sha256 {
         let _ = fs::remove_file(&part_path);
@@ -777,6 +818,8 @@ pub fn apply_now(target_exe: &Path) -> Result<String, String> {
     if APPLYING.swap(true, Ordering::SeqCst) {
         return Err("已经有一个更新在进行中".to_string());
     }
+    crate::update_progress::reset();
+    crate::update_progress::set(crate::update_progress::Stage::Checking, 0, 0);
     let result = (|| {
         let source = source().ok_or_else(|| "还没有配置更新源".to_string())?;
         let manifest = fetch_manifest(&source)?;
@@ -789,8 +832,13 @@ pub fn apply_now(target_exe: &Path) -> Result<String, String> {
         spawn_script(&prepared, target_exe)?;
         Ok(manifest.version)
     })();
-    if result.is_err() {
-        APPLYING.store(false, Ordering::SeqCst);
+    match &result {
+        // 成功：进度条拉满并停在「正在重启」，页面再等 0.9 秒就被换掉。
+        Ok(_) => crate::update_progress::finish(),
+        Err(err) => {
+            APPLYING.store(false, Ordering::SeqCst);
+            crate::update_progress::fail(err.clone());
+        }
     }
     result
 }
@@ -810,6 +858,7 @@ fn method_is(request: &Request, want: Method) -> bool {
 pub fn handle(request: Request, path: &str, _url: &str) {
     match path {
         "/local/update/check" => check_endpoint(request),
+        "/local/update/progress" => progress_endpoint(request),
         "/local/update/apply" => apply_endpoint(request),
         "/local/update/source" => source_endpoint(request),
         "/local/update/skip" => skip_endpoint(request),
@@ -834,6 +883,22 @@ fn check_endpoint(request: Request) {
     }
     let body = check().to_json();
     json_respond(request, 200, body);
+}
+
+/// 下载进度（只读）：前端在 apply 期间轮询它画进度条。
+///
+/// 单独一条接口而不是把进度塞进 check 的响应里 —— 检查随时可能被再点一次，
+/// 下载进度不能被它覆盖。
+fn progress_endpoint(request: Request) {
+    if !method_is(&request, Method::Get) {
+        json_respond(
+            request,
+            405,
+            serde_json::json!({ "error": "只支持 GET" }).to_string(),
+        );
+        return;
+    }
+    json_respond(request, 200, crate::update_progress::to_json());
 }
 
 fn apply_endpoint(request: Request) {
@@ -1136,6 +1201,58 @@ fn skip_endpoint(request: Request) {
 mod tests {
     use super::*;
 
+    /// 本地起一个 HTTP 服务返回固定字节，验证：分块回调次数、最后的 done 等于总大小、
+    /// 落盘内容与源一致、校验阶段被通知。真实网络的下载路径就靠这条守着。
+    #[test]
+    fn download_reports_progress_and_verifies_bytes() {
+        let mut body: Vec<u8> = (0..(64 * 1024 * 3 + 1234))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        // download 会检查 MZ 头，测试数据也必须是「PE」
+        body[0] = b'M';
+        body[1] = b'Z';
+        let digest = sha256_hex(&body);
+
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("起本地 HTTP 服务");
+        let port = server.server_addr().to_ip().expect("拿到端口").port();
+        let server_bytes = body.clone();
+        let handle = std::thread::spawn(move || {
+            if let Ok(request) = server.recv() {
+                let _ = request.respond(tiny_http::Response::from_data(server_bytes));
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!("oc-update-dl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let manifest = Manifest {
+            version: "9.9.9".to_string(),
+            url: format!("http://127.0.0.1:{port}/pkg.exe"),
+            sha256: digest,
+            size: body.len() as u64,
+            notes: String::new(),
+        };
+
+        let mut calls: Vec<(&'static str, u64, u64)> = Vec::new();
+        let saved = download_with(&manifest, &dir, &mut |stage, done, total| {
+            calls.push((stage, done, total));
+        })
+        .expect("下载应成功");
+        let _ = handle.join();
+
+        assert!(calls.len() >= 2, "分块下载至少要有几次进度回调：{calls:?}");
+        assert_eq!(
+            calls.last().map(|(stage, _, _)| *stage),
+            Some("verifying"),
+            "校验阶段必须被通知到"
+        );
+        let last_done = calls.iter().map(|(_, done, _)| *done).max().unwrap_or(0);
+        assert_eq!(last_done, body.len() as u64, "最后进度要等于文件大小");
+        assert_eq!(fs::read(&saved).unwrap(), body, "落盘内容必须与源字节一致");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn parses_minimal_manifest() {
         let short_hash =
@@ -1417,12 +1534,15 @@ mod tests {
             size: payload.len() as u64,
             notes: String::new(),
         };
-        let path = download(&good, &dir).expect("正常下载应成功");
+        // 用 download_with + 空回调：不碰全局进度，避免与状态机测试并发互踩
+        let path = download_with(&good, &dir, &mut |_, _, _| {})
+            .expect("正常下载应成功");
         assert_eq!(std::fs::read(&path).unwrap(), payload);
 
         let mut bad = good.clone();
         bad.sha256 = "0".repeat(64);
-        let err = download(&bad, &dir).expect_err("哈希不符必须失败");
+        let err = download_with(&bad, &dir, &mut |_, _, _| {})
+            .expect_err("哈希不符必须失败");
         assert!(err.contains("SHA256"), "{err}");
 
         let leftovers: Vec<String> = std::fs::read_dir(&dir)

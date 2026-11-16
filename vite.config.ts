@@ -4,6 +4,7 @@ import { localBalancePlugin } from './scripts/dev-local-balance.mjs'
 import { localFsPlugin } from './scripts/dev-local-fs.mjs'
 import { localGitPlugin } from './scripts/dev-local-git.mjs'
 import { localProviderPlugin } from './scripts/dev-local-provider.mjs'
+import { localUpdatePlugin } from './scripts/dev-local-update.mjs'
 import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
 import { localRulesPlugin } from './scripts/dev-local-rules.mjs'
 import { localRemotePlugin } from './scripts/dev-local-remote.mjs'
@@ -99,6 +100,8 @@ export default defineConfig(async ({ command, isPreview }) => {
       localBalancePlugin(),
       // 第三方 API 接入：provider 读写 + 拉 /models，dev 只补接口
       localProviderPlugin(),
+      // 工作台自身的更新：dev 里没有外壳，补一份模拟实现（不替换 exe）
+      localUpdatePlugin(),
       localFsPlugin(),
     ],
     server: {

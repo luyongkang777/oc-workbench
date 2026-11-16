@@ -50,6 +50,7 @@ mod remote_auth;
 mod account;
 mod remoteapi;
 mod update;
+mod update_progress;
 mod winenc;
 mod shellprobe;
 mod server;

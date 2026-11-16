@@ -42,6 +42,38 @@ export async function applyUpdate(): Promise<{ ok: boolean; version: string }> {
   )
 }
 
+/** 更新进行到哪一步（与 `shell/src/update_progress.rs` 的 Stage 对齐）。 */
+export type UpdateStage =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'restarting'
+  | 'failed'
+
+/** 下载进度。apply 期间轮询这个接口画进度条。 */
+export type UpdateProgress = {
+  active: boolean
+  stage: UpdateStage
+  /** 已下载字节 */
+  done: number
+  /** 总字节；0 表示未知 */
+  total: number
+  /** 0~100；总量未知时为 null（界面画不确定进度条） */
+  percent: number | null
+  error: string | null
+}
+
+/**
+ * 读下载进度。
+ *
+ * 单独一条接口，**不和 check 混在一起**：检查更新随时可能被再触发一次，
+ * 下载进度不能被它覆盖掉。
+ */
+export async function getUpdateProgress(): Promise<UpdateProgress> {
+  return localRequest<UpdateProgress>('/local/update/progress', undefined, 10_000)
+}
+
 /** 页面启动时要的设置：要不要自动检查、更新源、跳过的是哪个版本。 */
 export type UpdateConfig = {
   autoCheck: boolean
