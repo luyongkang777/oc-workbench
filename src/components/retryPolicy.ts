@@ -12,10 +12,12 @@
  * 两种都是用户感知到的「对话断了」。这里给出一套统一的重试判定与节奏，
  * 让上层按同一个口径重试，失败到上限才真正把错误抛给用户。
  *
- * 关键前提（已用真实服务验证）：`POST /api/session/{id}/prompt` 带同一个
- * `id`（`msg_` 前缀）重投是**幂等**的——第二次返回同一条消息、
- * `time.created` 不变，不会把用户的话发两遍；带 `resume: true` 重投会真的
- * 重新跑一轮模型调用。所以重试不需要先删消息，也不需要用户重打一遍。
+ * 关键前提（2026-11-16 用 opencode 2.3 实测修正）：`POST /api/session/{id}/prompt`
+ * 带同一个 `id`（`msg_` 前缀）重投是**幂等**的——不会把用户的话发两遍，
+ * 但**也不会再调度模型**：它只把已有消息还回来，带 `resume: true` 也只是
+ * 把这一轮标成 succeeded（实测模型调用次数不变）。
+ * 想真正重跑，必须先 `revert/stage + revert/commit` 删掉失败那一轮
+ * （只删消息、不动文件），再用同一个 id 重发。实现见 `useChatAutoRetry`。
  *
  * 全是纯函数，不碰 window：node 里能直接单测（scripts/retryPolicy.test.mjs）。
  */
@@ -182,6 +184,19 @@ export function isRetryableError(err: unknown): boolean {
 export function retryAfterOf(err: unknown): number | undefined {
   const value = (err as { retryAfterMs?: unknown })?.retryAfterMs
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+/**
+ * 真实失败次数 = max(服务端计数, 本地已排次数 + 1)。
+ *
+ * 服务端计数在「回撤重投」之后会归零（失败消息被删了），只有本地记的
+ * ordered 能反映真实进度；而第一次失败时 ordered 还是 0，所以至少是 1。
+ * 抽成纯函数是为了能单测：这个口径错一次，要么提前放弃、要么永不放弃。
+ */
+export function failureCount(serverAttempts: number, ordered: number): number {
+  const server = Number.isFinite(serverAttempts) ? Math.max(0, Math.floor(serverAttempts)) : 0
+  const local = Number.isFinite(ordered) ? Math.max(0, Math.floor(ordered)) : 0
+  return Math.max(1, server, local + 1)
 }
 
 /**

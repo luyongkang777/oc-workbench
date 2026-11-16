@@ -11,6 +11,7 @@ import {
   DEFAULT_RETRY_ATTEMPTS,
   MAX_RETRY_ATTEMPTS,
   MIN_RETRY_ATTEMPTS,
+  failureCount,
   isRetryableError,
   isRetryableFailure,
   isRetryableText,
@@ -113,6 +114,21 @@ test('retryAfterOf 只认有限正数', () => {
   assert.equal(retryAfterOf({ retryAfterMs: Number.NaN }), undefined)
   assert.equal(retryAfterOf({}), undefined)
   assert.equal(retryAfterOf(null), undefined)
+})
+
+test('失败次数按本地排期记账：回撤让服务端计数归零也不会少算', () => {
+  // 第一次失败：服务端计数 1，本地还没排过重投
+  assert.equal(failureCount(1, 0), 1)
+  // 第二次失败：服务端归零回 1，本地已经排过 1 次
+  assert.equal(failureCount(1, 1), 2)
+  assert.equal(failureCount(1, 4), 5)
+  // 服务端计数更大时以服务端为准（没走过回撤的路径）
+  assert.equal(failureCount(3, 0), 3)
+  assert.equal(failureCount(3, 1), 3)
+  // 非法值兜底成 1，绝不返回 0（否则应该放弃时还在重试）
+  assert.equal(failureCount(0, 0), 1)
+  assert.equal(failureCount(Number.NaN, Number.NaN), 1)
+  assert.equal(failureCount(-2, -3), 1)
 })
 
 test('到上限才放弃：允许真的重试满 maxAttempts 次', () => {

@@ -778,6 +778,22 @@ export default function Chat({
   useChatEvents(connected, currentID, refreshSession, applyStream, reloadSessions)
 
   /**
+   * 本地按回撤边界截断：删掉这条消息以及比它更新的内容。
+   *
+   * reloadMessages 走 mergeMessages，只增不删；服务端通过 revert/commit 删掉的
+   * 那一轮会留在界面上，还会让 pendingRetry 继续把旧的 idle failed 当成现状。
+   * 重投前后都要先截断一次，再让服务端数据合并进来。
+   */
+  const dropFromMessage = useCallback((sessionID: string, boundaryID: string) => {
+    if (currentRef.current !== sessionID) return
+    setMessages((prev) => {
+      const index = prev.findIndex((message) => message.id === boundaryID)
+      // 列表是倒序的（最新在前）：边界及其之前（索引更小）都是这一轮之后产生的
+      return index < 0 ? prev : prev.slice(index + 1)
+    })
+  }, [])
+
+  /**
    * 模型调用失败的自动重投（第二层，见 sendWithRetry 的注释）。
    *
    * 服务端把失败写成一条 idle 消息，界面上就是「发出去之后没有回复」。
@@ -791,7 +807,9 @@ export default function Chat({
     messages,
     connected,
     maxAttempts: RETRY_ATTEMPTS,
-    suspended: compacting || busy,
+    // 用户已经手动暂存了回撤：这时自动重投会把回撤边界一起改乱，先让位
+    // 服务端还在跑（自己被重试救回、或别的客户端接手）时也不要动回撤
+    suspended: compacting || busy || Boolean(revert) || runningApi.running,
     onStatus: (status) => {
       if (!status) {
         setNotice((prev) => (prev?.tone === 'info' ? null : prev))
@@ -799,9 +817,28 @@ export default function Chat({
       }
       setNotice(status)
     },
-    onRetried: (sessionID) => {
+    onRetried: (sessionID, boundaryID) => {
       runningApi.start(sessionID)
+      // 服务端那一轮已经删掉重发了：本地先按同一个边界截断，再合并服务端数据，
+      // 否则界面会残留失败气泡
+      dropFromMessage(sessionID, boundaryID)
       void reloadMessages(sessionID)
+    },
+    // 回撤后没发出去：只把本地对齐到服务端，不启动生成态
+    onResync: (sessionID, boundaryID) => {
+      dropFromMessage(sessionID, boundaryID)
+      void reloadMessages(sessionID)
+    },
+    // 回撤成功但重投没发出去：原文还给输入框，别让用户以为消息丢了。
+    // 输入框已经有内容时不覆盖，**追加**到后面 —— 这一轮在服务端已经删了，
+    // 原文只存在这里，丢掉就不可恢复。已经切走的话写回那个会话的草稿。
+    onRestoreDraft: (sessionID, text) => {
+      if (currentRef.current !== sessionID) {
+        void saveDraft(draftKeyOf(root, sessionID, tabID), { text, files: [] }).catch(() => undefined)
+        return true
+      }
+      setDraft((prev) => (prev.trim() ? `${prev}\n\n${text}` : text))
+      return true
     },
   })
 

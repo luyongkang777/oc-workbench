@@ -177,8 +177,10 @@ async function requestWithRetry(
 /**
  * 发送用户消息（带幂等重试）。
  *
- * `messageID` 必须是调用方生成的固定 `msg_` id：重投时服务端会认成同一条，
- * 不会重复插入用户消息，但会重新调度一轮模型调用（实测 `resume: true` 生效）。
+ * `messageID` 必须是调用方生成的固定 `msg_` id：重投时服务端会认成同一条、
+ * 不会重复插入用户消息。但**它不会重新调度模型**（opencode 2.3 实测：同 id
+ * 重投后模型调用次数不变，只是把这一轮标成 succeeded）。真正重跑要先
+ * `revert/stage + revert/commit` 删掉失败那一轮——见 `useChatAutoRetry`。
  */
 export async function sendPromptWithRetry(
   sessionID: string,
