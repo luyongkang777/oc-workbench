@@ -29,6 +29,22 @@
   Release 三资产齐全（非 draft / 非 prerelease），`latest.json` 的
   version/url/sha256/size/notes 与 exe 资产逐项对齐；Gitea 镜像已同步。
 
+## 真机功能实测（2026-11-16，dev + Edge CDP）
+
+不是只验 UI，是让模型真跑一条 `Start-Sleep -Seconds 90` 看会话到底能不能解锁。
+
+**实验组（点「后台」）**：发 prompt → 12 秒确认仍在 running → 点「后台」→ **2.0 秒**后解锁 →
+立刻能发出下一条消息并收到 OK → 第 3 轮模型汇报「跑完了，退出正常……已收到完成通知，
+退出状态 completed，耗时 90 秒」，后台结果确实回到了对话。
+
+**对照组（全程不点）**：同样的 prompt，running 从 0.5s 一路持续到 **94.9 秒**（命令跑完才结束）。
+
+**结论**：按钮真实价值 = 把这段干等从 94.9s 压到 2.0s（省约 93 秒）。
+模型会把我们注入的合成提示转述成「harness 自己把命令转后台了」——它看不到 UI，
+把「用户请求」理解成 harness 行为，属正常表述，不是 bug。
+
+脚本：`.tmp/test-bg-live.mjs`（实验组）、`.tmp/test-bg-control.mjs`（对照组）。
+
 ## 验证
 
 - `node node_modules/typescript/bin/tsc --noEmit` → 0 错误。
