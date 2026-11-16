@@ -148,6 +148,35 @@ const hasBalance = await evaluate(
 )
 check('DeepSeek 显示真实余额', hasBalance === true, hasBalance ? '' : '（没配 deepseek 时可为空）')
 
+// 4a2. 套餐额度：主行是「剩 N%」，金额明细在 title 里；刷新按钮能重新拉一遍
+const percentLines = await evaluate(`[...document.querySelectorAll('.provider-item-quota')].map((el) => el.textContent)`)
+// 只有 DeepSeek（余额）的干净环境没有百分比可看：跳过而不是误报失败
+if (!Array.isArray(percentLines) || percentLines.length === 0) {
+  process.stdout.write('SKIP  额度行百分比（这台机器没有可查套餐额度的服务商）\n')
+} else {
+  check(
+    '额度行显示剩余百分比',
+    percentLines.some((text) => /剩 \d+%/.test(text || '')),
+    JSON.stringify(percentLines),
+  )
+  // 金额明细挪到 title：悬停能看到原始金额（本次改动的另一半）
+  const detailInTitle = await evaluate(
+    `[...document.querySelectorAll('.provider-item-quota')].some((el) => (el.getAttribute('title') || '').includes('$'))`,
+  )
+  check('金额明细在悬停 title 里', detailInTitle === true)
+}
+
+const refreshBtn = await evaluate(`Boolean(${btnByText('刷新额度')} || ${btnByText('刷新中…')})`)
+check('有刷新额度按钮', refreshBtn === true)
+if (refreshBtn) {
+  await evaluate(`(${btnByText('刷新额度')} || ${btnByText('刷新中…')}).click()`)
+  const refreshed = await waitFor(
+    `document.querySelector('.provider-panel .provider-message')?.textContent.includes('额度已刷新')`,
+    40000,
+  )
+  check('点刷新后提示额度已刷新', Boolean(refreshed), await evaluate(copy()))
+}
+
 // 4b. DeepSeek 官方预设
 await evaluate(
   `[...document.querySelectorAll('.provider-preset')].find((b) => b.textContent.includes('DeepSeek 官方')).click()`,

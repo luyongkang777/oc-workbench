@@ -7,12 +7,12 @@ import {
   presetForBaseURL,
   updateModelLimit,
 } from '../components/providerForm'
-import { creditsText, metersText, nextResetText, quotaText, usageText } from './providerQuotaFormat'
 import { PRESET_ICONS } from '../components/providerPresets'
 import type { ProviderController } from '../hooks/useProviderPanel'
 import type { ProviderSyncController } from '../hooks/useProviderSync'
 import ProviderList from './ProviderList'
 import ProviderModelList from './ProviderModelList'
+import ProviderQuotaBox from './ProviderQuotaBox'
 import ProviderSyncBlock from './ProviderSyncBlock'
 import type { ProviderInfo } from '../api/provider'
 
@@ -49,6 +49,7 @@ export default function ProviderPanel({ controller, sync, open, onClose }: Props
     usage,
     loading,
     busy,
+    quotaBusy,
     message,
     form,
     models,
@@ -60,6 +61,8 @@ export default function ProviderPanel({ controller, sync, open, onClose }: Props
     save,
     remove,
     selectAll,
+    reload,
+    refreshQuota,
     normalizedBase,
   } = controller
 
@@ -75,7 +78,6 @@ export default function ProviderPanel({ controller, sync, open, onClose }: Props
   const providers: ProviderInfo[] = status?.providers ?? []
   // 先取一次再判 kind：直接写 quota[form.id].note 时 TS 收窄不了联合类型
   const currentQuota = form.id ? quota[form.id] : undefined
-  const currentUsage = form.id ? usageText(usage[form.id]) : ''
   const fileError = status?.error ?? ''
   // 删除要两步：这些条目里可能有用户手写的大 provider（几十个模型），
   // 点一下就没了太容易误伤。第一次点变「确认」，第二次才真删。
@@ -114,6 +116,15 @@ export default function ProviderPanel({ controller, sync, open, onClose }: Props
             <div className="provider-section-head">
               <span>已配置（{providers.length}）</span>
               <span className="provider-actions">
+                <button
+                  type="button"
+                  className="provider-btn"
+                  onClick={() => void refreshQuota()}
+                  disabled={quotaBusy || loading}
+                  title="重新查询所有服务商的额度与本机用量"
+                >
+                  {quotaBusy ? '刷新中…' : '刷新额度'}
+                </button>
                 <button type="button" className="provider-btn" onClick={() => edit(null)} disabled={busy}>
                   自定义
                 </button>
@@ -215,72 +226,11 @@ export default function ProviderPanel({ controller, sync, open, onClose }: Props
 
             <ProviderModelList controller={controller} />
 
-            {currentQuota ? (
-              <div className="provider-quota-box">
-                {currentQuota.ok && currentQuota.kind === 'balance' ? (
-                  <span className="provider-quota-line">
-                    {quotaText(currentQuota, usage[form.id])}
-                    {currentUsage ? ` · ${currentUsage}` : ''}
-                  </span>
-                ) : null}
-                {currentQuota.ok && currentQuota.kind === 'meters' ? (
-                  <>
-                    <span className="provider-quota-line" title={nextResetText(currentQuota)}>
-                      {metersText(currentQuota)}
-                      {currentUsage ? ` · ${currentUsage}` : ''}
-                    </span>
-                    {currentQuota.consoleUrl ? (
-                      <button
-                        type="button"
-                        className="provider-btn"
-                        onClick={() => openExternal(currentQuota.consoleUrl)}
-                      >
-                        打开控制台
-                      </button>
-                    ) : null}
-                  </>
-                ) : null}
-                {currentQuota.ok && currentQuota.kind === 'credits' ? (
-                  <>
-                    <span className="provider-quota-line">
-                      {creditsText(currentQuota)}
-                      {currentUsage ? ` · ${currentUsage}` : ''}
-                    </span>
-                    {currentQuota.consoleUrl ? (
-                      <button
-                        type="button"
-                        className="provider-btn"
-                        onClick={() => openExternal(currentQuota.consoleUrl)}
-                      >
-                        打开控制台
-                      </button>
-                    ) : null}
-                  </>
-                ) : null}
-                {currentQuota.ok && currentQuota.kind === 'console' ? (
-                  <>
-                    <span className="provider-quota-line">
-                      {currentQuota.note}
-                      {currentUsage ? `；${currentUsage}` : ''}
-                    </span>
-                    {currentQuota.consoleUrl ? (
-                      <button
-                        type="button"
-                        className="provider-btn"
-                        onClick={() => openExternal(currentQuota.consoleUrl)}
-                      >
-                        打开控制台看额度
-                      </button>
-                    ) : null}
-                  </>
-                ) : null}
-                {currentQuota.ok === false ? (
-                  <span className="provider-quota-line provider-quota-bad">
-                    额度查询失败：{currentQuota.error}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
+            <ProviderQuotaBox
+              quota={currentQuota}
+              usage={form.id ? usage[form.id] : undefined}
+              onOpenConsole={openExternal}
+            />
 
             {message ? <div className="provider-message">{message}</div> : null}
 

@@ -6,14 +6,10 @@ import {
   saveProvider,
   type ProviderStatus,
 } from '../api/provider'
-import {
-  getProviderQuota,
-  getProviderUsage,
-  type ProviderQuota,
-  type ProviderUsage,
-} from '../api/providerQuota'
+import type { ProviderQuota, ProviderUsage } from '../api/providerQuota'
 import { normalizeBaseURL } from '../api/providerFormat'
 import { PROVIDERS_SAVED_EVENT } from './useProviderSync'
+import { useProviderQuota } from './useProviderQuota'
 import {
   applyRemoteModels,
   canFetchModels,
@@ -38,6 +34,8 @@ import type { ProviderInfo } from '../api/provider'
  * 面板只负责画：所有「读、拉模型、保存、删除」都在这儿，失败原因统一落在 `message`。
  * 保存成功后必须**回读一次磁盘真值**——界面显示的是配置文件里的实际内容，
  * 不是「我刚提交的请求」。
+ *
+ * 额度与本机用量单独放在 `useProviderQuota`（网络请求 + 手动刷新自成一块）。
  */
 export type ProviderController = {
   status: ProviderStatus | null
@@ -47,6 +45,8 @@ export type ProviderController = {
   usage: Record<string, ProviderUsage>
   loading: boolean
   busy: boolean
+  /** 正在重新拉额度（与保存/删除的 busy 分开，互不阻塞） */
+  quotaBusy: boolean
   message: string | null
   form: FormState
   models: string[]
@@ -59,6 +59,8 @@ export type ProviderController = {
   save: () => Promise<void>
   remove: (id: string) => Promise<void>
   reload: () => Promise<ProviderStatus | null>
+  /** 手动刷新所有服务商的额度 + 本机用量 */
+  refreshQuota: () => Promise<void>
   toggle: (modelId: string) => void
   /** 全选 / 全不选（模型多的服务商一键处理） */
   selectAll: (checked: boolean) => void
@@ -69,13 +71,21 @@ export type ProviderController = {
 
 export function useProviderPanel(open: boolean, root = ''): ProviderController {
   const [status, setStatus] = useState<ProviderStatus | null>(null)
-  const [quota, setQuota] = useState<Record<string, ProviderQuota>>({})
-  const [usage, setUsage] = useState<Record<string, ProviderUsage>>({})
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const alive = useRef(true)
+
+  const {
+    quota,
+    usage,
+    busy: quotaBusy,
+    loadQuota,
+    loadUsage,
+    drop: dropQuota,
+    refresh: refreshQuotaCore,
+  } = useProviderQuota(root)
 
   useEffect(() => {
     alive.current = true
@@ -101,26 +111,6 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
     }
   }, [])
 
-  /** 拉一轮额度（DeepSeek 走真接口，其它只拿控制台地址）。失败不打扰用户，界面不显示即可。 */
-  const loadQuota = useCallback(async (ids: string[]) => {
-    if (ids.length === 0) return
-    const entries = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          return [id, await getProviderQuota(id)] as const
-        } catch (err) {
-          return [id, { ok: false, error: err instanceof Error ? err.message : '额度查询失败' }] as const
-        }
-      }),
-    )
-    if (!alive.current) return
-    setQuota((cur) => {
-      const next = { ...cur }
-      for (const [id, value] of entries) next[id] = value
-      return next
-    })
-  }, [])
-
   // 打开面板就回读：期间可能有人手改了 opencode.json；顺带刷新额度与本机用量
   useEffect(() => {
     if (!open) return
@@ -129,11 +119,24 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
       if (!alive.current) return
       const ids = (fresh?.providers ?? []).map((item) => item.id)
       void loadQuota(ids)
-      void getProviderUsage(root).then((value) => {
-        if (alive.current) setUsage(value)
-      })
+      void loadUsage()
     })()
-  }, [open, reload, loadQuota, root])
+  }, [open, reload, loadQuota, loadUsage])
+
+  /**
+   * 手动刷新：额度与「本机已用」一起重拉。
+   *
+   * 单独一条 busy 状态（在 useProviderQuota 里），刷新额度时仍可正常保存/删除；
+   * 反过来保存时也不该让刷新按钮灰掉。
+   */
+  const refreshQuota = useCallback(async () => {
+    // 先回读一次配置：面板开着时它可能被账号同步 / 手改 / 另一个窗口改过，
+    // 直接拿 status 快照会漏掉新加的 provider（却照样提示「已刷新」）。
+    const fresh = await reload()
+    const ids = (fresh?.providers ?? status?.providers ?? []).map((item) => item.id)
+    const hint = await refreshQuotaCore(ids)
+    if (hint) setMessage(hint)
+  }, [reload, status, refreshQuotaCore])
 
   const edit = useCallback((info: ProviderInfo | null) => {
     setMessage(null)
@@ -228,31 +231,30 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
     } finally {
       if (alive.current) setBusy(false)
     }
-  }, [busy, form])
+  }, [busy, form, loadQuota])
 
-  const remove = useCallback(async (id: string) => {
-    if (busy) return
-    setBusy(true)
-    setMessage(null)
-    try {
-      const fresh = await removeProvider(id)
-      if (!alive.current) return
-      setStatus(fresh)
-      setForm((cur) => (cur.id === id ? EMPTY_FORM : cur))
-      setQuota((cur) => {
-        const next = { ...cur }
-        delete next[id]
-        return next
-      })
-      setMessage(`已删除 ${id}`)
-      window.dispatchEvent(new Event(PROVIDERS_SAVED_EVENT))
-    } catch (err) {
-      if (!alive.current) return
-      setMessage(err instanceof Error ? err.message : '删除失败')
-    } finally {
-      if (alive.current) setBusy(false)
-    }
-  }, [busy])
+  const remove = useCallback(
+    async (id: string) => {
+      if (busy) return
+      setBusy(true)
+      setMessage(null)
+      try {
+        const fresh = await removeProvider(id)
+        if (!alive.current) return
+        setStatus(fresh)
+        setForm((cur) => (cur.id === id ? EMPTY_FORM : cur))
+        dropQuota(id)
+        setMessage(`已删除 ${id}`)
+        window.dispatchEvent(new Event(PROVIDERS_SAVED_EVENT))
+      } catch (err) {
+        if (!alive.current) return
+        setMessage(err instanceof Error ? err.message : '删除失败')
+      } finally {
+        if (alive.current) setBusy(false)
+      }
+    },
+    [busy, dropQuota],
+  )
 
   const normalizedBase = normalizeBaseURL(form.baseURL)
 
@@ -262,6 +264,7 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
     usage,
     loading,
     busy,
+    quotaBusy,
     message,
     form,
     models: visibleModels(form),
@@ -273,6 +276,7 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
     save,
     remove,
     reload,
+    refreshQuota,
     toggle,
     selectAll,
     limit,

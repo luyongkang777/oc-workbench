@@ -1,4 +1,11 @@
-import { creditsText, metersText, nextResetText, quotaText, usageText } from './providerQuotaFormat'
+import {
+  creditsText,
+  metersText,
+  nextResetText,
+  quotaDetailText,
+  quotaText,
+  usageText,
+} from './providerQuotaFormat'
 import { PRESET_ICONS } from './providerPresets'
 import { presetForBaseURL } from './providerForm'
 import type { ProviderController } from '../hooks/useProviderPanel'
@@ -14,6 +21,7 @@ type Props = {
  * 已配置的 provider 列表：图标 + 名称 + 额度/用量 + 两步删除。
  *
  * 从 ProviderPanel 拆出来（面板主体保持在 300 行内）；数据全来自 controller。
+ * 额度主行只放百分比（一眼看出快用完没有），金额明细与重置时间放 title。
  */
 export default function ProviderList({ controller, pendingDelete, onPendingDelete }: Props) {
   const { status, quota, usage, form, busy, edit, remove } = controller
@@ -26,7 +34,9 @@ export default function ProviderList({ controller, pendingDelete, onPendingDelet
                     const itemQuota = quota[info.id]
                     const balanceLine = quotaText(itemQuota, usage[info.id])
                     const metersLine = metersText(itemQuota) || creditsText(itemQuota)
-                    const resetLine = nextResetText(itemQuota)
+                    const itemTitle =
+                      [quotaDetailText(itemQuota), nextResetText(itemQuota)].filter(Boolean).join(' · ') ||
+                      undefined
                     const usageLine = usageText(usage[info.id])
                     const consoleUrl =
                       itemQuota && itemQuota.ok && itemQuota.kind === 'console' ? itemQuota.consoleUrl : ''
@@ -59,7 +69,7 @@ export default function ProviderList({ controller, pendingDelete, onPendingDelet
                           {balanceLine ? (
                             <span className="provider-item-quota">{balanceLine}</span>
                           ) : metersLine ? (
-                            <span className="provider-item-quota" title={resetLine}>
+                            <span className="provider-item-quota" title={itemTitle}>
                               {metersLine}
                             </span>
                           ) : consoleUrl ? (

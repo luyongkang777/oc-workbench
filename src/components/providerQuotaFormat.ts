@@ -108,10 +108,30 @@ function resetText(iso: string): string {
 }
 
 /**
- * OpenCode 套餐额度：`5小时 $0/12 · 本周 $0.01/30 · 本月 $10.63/60`。
+ * 剩余百分比（0~100，四舍五入）。
  *
- * 只显示「用掉的 / 上限」——剩余量让用户自己减，比 `剩余 $12` 更少歧义
- * （上限会随套餐调整，写死剩余反而更容易过期）。
+ * 上限无效（0、负数、NaN）时返回 null —— **不编数字**：查不到就整段不写，
+ * 而不是显示「剩 0%」让人以为额度耗尽了。
+ */
+export function percentLeft(used: number, limit: number): number | null {
+  if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) return null
+  const left = Math.min(100, Math.max(0, ((limit - used) / limit) * 100))
+  // 不满 100% 的一律向下取整：`本周 $0.01/30` 不能显示成「剩 100%」，
+  // 否则「用过一点」和「完全没用」在界面上分不出来。
+  return left >= 100 ? 100 : Math.floor(left)
+}
+
+/** `5 小时 剩 98%`；上限无效时返回空串（调用方跳过这一段）。 */
+function windowLeft(label: string, used: number, limit: number): string {
+  const percent = percentLeft(used, limit)
+  return percent === null ? '' : `${label} 剩 ${percent}%`
+}
+
+/**
+ * OpenCode 套餐额度：`5 小时 剩 100% · 本周 剩 100% · 本月 剩 82%`。
+ *
+ * 显示「还剩百分之多少」而不是金额：上限会随套餐调整，百分比一眼看出快用完了没有；
+ * 真实金额放在 title 里（`quotaDetailText`），需要算账时再悬停看。
  */
 export function metersText(quota: ProviderQuota | null | undefined): string {
   if (!quota || !quota.ok || quota.kind !== 'meters') return ''
@@ -124,25 +144,66 @@ export function metersText(quota: ProviderQuota | null | undefined): string {
   for (const [key, label] of labels) {
     const window = quota.meters[key]
     if (!window) continue
-    parts.push(`${label} $${money(window.used)}/${money(window.limit)}`)
+    const text = windowLeft(label, window.used, window.limit)
+    if (text) parts.push(text)
   }
   return parts.join(' · ')
 }
 
 /**
- * Command Code 额度：`剩余 $8.50 · 已用 $1.50 · 5 小时 $0.10/1`。
+ * Command Code 额度：`剩余 27% · 5 小时 剩 98% · 本周 剩 45%`。
  *
- * 它的滚动窗口如果接口给了就一并显示（与 CLI 的 `/usage` 一致）。
+ * 总剩余按 `remaining / (remaining + spent)` 算（两者的和 = 本周期总量）；
+ * 滚动窗口按各自上限算，接口给了就一并显示（与 CLI 的 `/usage` 一致）。
  */
 export function creditsText(quota: ProviderQuota | null | undefined): string {
   if (!quota || !quota.ok || quota.kind !== 'credits') return ''
-  const parts = [`剩余 $${money(quota.remaining)}`]
-  if (quota.spent > 0) parts.push(`已用 $${money(quota.spent)}`)
+  const parts: string[] = []
+  const total = percentLeft(quota.spent, quota.remaining + quota.spent)
+  if (total !== null) parts.push(`剩余 ${total}%`)
   for (const window of quota.windows) {
     if (!window.label) continue
-    parts.push(`${window.label} $${money(window.used)}/${money(window.cap)}`)
+    const text = windowLeft(window.label, window.used, window.cap)
+    if (text) parts.push(text)
   }
+  // 新账号（剩余与花费都是 0、也没有窗口）算不出百分比：写「剩余 —」，
+  // 不要回空串 —— 那会让列表上整行额度消失，看起来像没有额度。
+  if (parts.length === 0) return '剩余 —'
   return parts.join(' · ')
+}
+
+/**
+ * 金额明细（给 title 用，主行只显示百分比）。
+ *
+ * 与 `metersText` / `creditsText` 同一批数据，只是换成原始金额，
+ * 让用户在需要核对时悬停就能看到，不占主行位置。
+ */
+export function quotaDetailText(quota: ProviderQuota | null | undefined): string {
+  if (!quota || !quota.ok) return ''
+  if (quota.kind === 'meters') {
+    const parts: string[] = []
+    const labels: Array<[keyof typeof quota.meters, string]> = [
+      ['fiveHour', '5 小时'],
+      ['week', '本周'],
+      ['month', '本月'],
+    ]
+    for (const [key, label] of labels) {
+      const window = quota.meters[key]
+      if (!window) continue
+      parts.push(`${label} $${money(window.used)}/${money(window.limit)}`)
+    }
+    return parts.join(' · ')
+  }
+  if (quota.kind === 'credits') {
+    const parts = [`剩余 $${money(quota.remaining)}`]
+    if (quota.spent > 0) parts.push(`已用 $${money(quota.spent)}`)
+    for (const window of quota.windows) {
+      if (!window.label) continue
+      parts.push(`${window.label} $${money(window.used)}/${money(window.cap)}`)
+    }
+    return parts.join(' · ')
+  }
+  return ''
 }
 
 /** 最近一个重置时间（给 title 用）。 */
