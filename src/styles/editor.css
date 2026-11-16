@@ -387,6 +387,9 @@
   flex-direction: column;
   width: 100%;
   min-height: 0;
+  /* 必须撑满标签栏剩余高度：没有这一条时，空会话（内容只有一行提示）
+     会让 .chat 按内容收缩，输入框就浮在中间而不是贴底。 */
+  flex: 1 1 auto;
 }
 
 .chat-header {

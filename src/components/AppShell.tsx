@@ -10,6 +10,7 @@ import DeviceStrip from './DeviceStrip'
 import GitPanel from './GitPanel'
 import { IconDefs } from './Icon'
 import MobileNav from './MobileNav'
+import ProviderPanel from './ProviderPanel'
 import ReviewPanel from './ReviewPanel'
 import RulesPanel from './RulesPanel'
 import SubagentPanel from './SubagentPanel'
@@ -18,6 +19,8 @@ import TopBar from './TopBar'
 import WelcomePane from './WelcomePane'
 import { isRemoteHost } from '../api/auth'
 import { coverageText } from '../api/rules'
+import { useProviderPanel } from '../hooks/useProviderPanel'
+import { useProviderSync } from '../hooks/useProviderSync'
 
 /**
  * 主界面的全部布局与 JSX。
@@ -84,6 +87,8 @@ export default function AppShell() {
     rules,
     rulesOpen,
     setRulesOpen,
+    providerOpen,
+    setProviderOpen,
     notice,
     treeSeq,
     bumpTree,
@@ -93,6 +98,11 @@ export default function AppShell() {
 
   // 规则按钮的 title：说明哪几级在生效（规则没有开关，不说「开/关」）
   const rulesCoverage = coverageText(rules.status)
+
+  // 第三方 API 接入：状态与动作都在这里，面板只负责画
+  const providers = useProviderPanel(providerOpen, root)
+  // 账号级同步：登录后把 provider/SK/默认模型存到账号，换电脑登录自动拉下来
+  const providerSync = useProviderSync()
 
   return (
     <div className="app" data-mobile={mobile ? '1' : undefined}>
@@ -114,6 +124,8 @@ export default function AppShell() {
         rulesOpen={rulesOpen}
         onToggleRules={() => setRulesOpen((v) => !v)}
         rulesTitle={rulesCoverage}
+        providerOpen={providerOpen}
+        onToggleProvider={() => setProviderOpen((v) => !v)}
         accountOpen={accountOpen}
         onToggleAccount={() => setAccountOpen((v) => !v)}
         gitOpen={gitOpen}
@@ -133,6 +145,14 @@ export default function AppShell() {
       />
 
       {notice ? <div className="app-notice">{notice.text}</div> : null}
+
+      {/* 第三方 API 接入：独立于项目，没选目录时也能配 */}
+      <ProviderPanel
+        controller={providers}
+        sync={providerSync}
+        open={providerOpen}
+        onClose={() => setProviderOpen(false)}
+      />
 
       {/* 强制规则面板：独立于项目，没选目录时也能编辑全局规则 */}
       <RulesPanel

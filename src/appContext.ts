@@ -92,6 +92,10 @@ export type AppContextValue = {
   rulesOpen: boolean
   setRulesOpen: (next: boolean | ((cur: boolean) => boolean)) => void
 
+  // 第三方 API 接入（provider 面板）
+  providerOpen: boolean
+  setProviderOpen: (next: boolean | ((cur: boolean) => boolean)) => void
+
   // 杂项
   notice: { text: string; id: number } | null
   treeSeq: number

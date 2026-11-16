@@ -527,6 +527,16 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             crate::balance::handle(request, &path, &url);
             return;
         }
+        // 第三方 API 接入：读写 opencode.json 的 provider 段 + 拉 /models。
+        // 必须排在 fsapi 前面，否则会被「未知的本地文件接口」吃掉。
+        if path == "/local/provider/quota" {
+            crate::provider_quota::handle(request, &path, &url);
+            return;
+        }
+        if path.starts_with("/local/provider/") {
+            crate::provider::handle(request, &path, &url);
+            return;
+        }
         // 强制规则：两级规则正文的读写（判定在插件里，外壳不参与）。
         if path.starts_with("/local/rules/") {
             crate::rules::handle(request, &path, &url);

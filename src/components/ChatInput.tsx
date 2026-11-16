@@ -22,7 +22,7 @@ type Props = {
   onPickAgent: (id: string) => void
   onAddFiles: (files: File[]) => void
   onRemoveAttachment: (id: string) => void
-  /** 输入框下方的附加区（会话统计条）。放在 wrap 内，好共用内边距和分隔 */
+  /** 输入框上方的附加区（会话统计条）。放在 wrap 内，好共用内边距和分隔，输入框保持贴底 */
   footer?: ReactNode
 }
 
@@ -351,6 +351,9 @@ export default function ChatInput({
 
       {notice && !menu ? <div className="chat-attach-notice">{notice}</div> : null}
 
+      {/* 统计条放在输入框上方：输入框要贴到面板最底部（用户明确要求） */}
+      {footer}
+
       <div className="chat-input-row">
         <button
           type="button"
@@ -399,7 +402,6 @@ export default function ChatInput({
           </button>
         )}
       </div>
-      {footer}
     </div>
   )
 }

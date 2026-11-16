@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { localBalancePlugin } from './scripts/dev-local-balance.mjs'
 import { localFsPlugin } from './scripts/dev-local-fs.mjs'
 import { localGitPlugin } from './scripts/dev-local-git.mjs'
+import { localProviderPlugin } from './scripts/dev-local-provider.mjs'
 import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
 import { localRulesPlugin } from './scripts/dev-local-rules.mjs'
 import { localRemotePlugin } from './scripts/dev-local-remote.mjs'
@@ -96,6 +97,8 @@ export default defineConfig(async ({ command, isPreview }) => {
       // 强制规则的读写：规则正文落盘位置与插件共用，dev 只补接口
       localRulesPlugin(),
       localBalancePlugin(),
+      // 第三方 API 接入：provider 读写 + 拉 /models，dev 只补接口
+      localProviderPlugin(),
       localFsPlugin(),
     ],
     server: {

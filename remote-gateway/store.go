@@ -53,6 +53,9 @@ type DB struct {
 	Devices []Device `json:"devices"`
 	Pairs   []Pair   `json:"pairs"`
 	Invites []Invite `json:"invites"`
+	// Profiles：账号级客户端配置（provider + SK + 模型选择），见 store_profile.go。
+	// 网关不解析内容，原样存取。
+	Profiles map[string]json.RawMessage `json:"profiles,omitempty"`
 }
 
 const (

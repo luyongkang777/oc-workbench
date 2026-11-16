@@ -37,6 +37,7 @@
 | `signup.go` | 开放注册 |
 | `device_register.go` | 设备登记（`pair.ps1` 调用）+ 配对码生成 |
 | `api_client.go` | 给 exe 用的 JSON API（Bearer + CORS） |
+| `profile_api.go` + `store_profile.go` | 账号级客户端配置（provider/SK/模型选择）读写，见下 |
 | `gate.go` | nginx `auth_request` 校验 + 一次性票据换 cookie |
 | `store.go` | 类型定义、原子落盘、跨进程写锁 |
 | `store_users.go` / `store_devices.go` / `store_pairs.go` | 用户 / 设备 / 配对码与邀请码 |
@@ -45,6 +46,24 @@
 | `nginxconf.go` | 设备表 → nginx 片段 + `nginx -t` + reload |
 | `probe.go` | 在线探测（打 `/api/state`，不是探端口） |
 | `lock_unix.go` / `lock_windows.go` | 跨进程文件锁 |
+
+## 账号级配置同步（`/portal/api/profile`）
+
+换电脑后不想重新填 key：客户端把「第三方 API 接入」里的 provider（含 SK、baseURL、
+模型与上下文）和默认模型存到账号下，另一台电脑登录同一账号后自动拉取并写进本地
+`opencode.json`。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/portal/api/profile` | 返回 `{"profile": <对象或 null>}`，只能读自己那份 |
+| POST | `/portal/api/profile` | 覆盖保存，body 必须是 JSON 对象，上限 512KB |
+
+几点约定：
+- **响应必须固定包一层 `{profile: ...}`**。曾经有数据时回裸对象、没数据时回
+  `{profile:null}`，客户端按 `data.profile` 取值，于是每次都判成「云端为空」，
+  反手把本机配置覆盖上去（实测踩过，换机后不但没恢复还丢了云端数据）。
+- 网关**不解析**内容，原样存取；以后客户端加字段不用改服务端。
+- 存在 `gateway.json` 的 `profiles`（键是 `u<userID>`），与用户/设备同一把写锁。
 
 ## 测试
 

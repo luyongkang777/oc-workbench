@@ -39,12 +39,21 @@ export type PendingRetry = {
  *
  * 有正文、有思考、有工具调用，或者已经写了 `time.completed` 都算。
  * 只看 `content.length > 0` 不够：工具调用失败留下的空 content 也会占位。
+ *
+ * 例外：模型调用失败时服务端会先写一条 assistant 消息——`content` 为空、
+ * `time.completed` 有值、带 `error`（实测 opencode 2.3.0 的 429 就是这个
+ * 结构，紧接着才是 idle failed）。它只是失败记录，不是模型输出。不能因为
+ * 它有 completed 就把这一轮判成「已经跑起来」，否则后面的 idle failed 永远
+ * 等不到自动重投，第二层重试整层失效。
  */
 function hasOutput(message: ChatMessage): boolean {
   if (message.type !== 'assistant') return false
-  if (typeof message.time?.completed === 'number') return true
   const parts = Array.isArray(message.content) ? message.content : []
-  return parts.length > 0
+  // 有实际内容（正文/思考/工具）就是有输出
+  if (parts.length > 0) return true
+  // 失败留下的空 assistant（带 error）不算输出，继续往下找 idle failed
+  if (message.error) return false
+  return typeof message.time?.completed === 'number'
 }
 
 /**
@@ -110,4 +119,14 @@ export function pendingRetry(messages: ChatMessage[]): PendingRetry | null {
     attempts: failures,
     failure: lastFailure ?? {},
   }
+}
+
+/**
+ * 这一轮是不是「跑完了但失败了」。
+ *
+ * 和 `pendingRetry` 的区别：这里不关心要不要重试，只关心界面上要不要
+ * 显示一条失败说明。放弃重试之后仍然要用它渲染。
+ */
+export function failedTurn(messages: ChatMessage[]): PendingRetry | null {
+  return pendingRetry(messages)
 }

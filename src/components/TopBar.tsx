@@ -30,6 +30,8 @@ export type TopBarProps = {
   onToggleRules: () => void
   /** 规则覆盖情况的短描述，直接做按钮 title */
   rulesTitle: string
+  providerOpen: boolean
+  onToggleProvider: () => void
   accountOpen: boolean
   onToggleAccount: () => void
   gitOpen: boolean
@@ -79,6 +81,15 @@ export default function TopBar(props: TopBarProps) {
           aria-label="强制规则：全局与当前目录"
         >
           <Icon name="shield" size={15} />
+        </button>
+        <button
+          type="button"
+          className={`topbar-iconbtn${props.providerOpen ? ' auto' : ''}`}
+          onClick={props.onToggleProvider}
+          title="第三方 API 接入：配置模型服务商，自动获取模型"
+          aria-label="第三方 API 接入"
+        >
+          <Icon name="plug" size={15} />
         </button>
         <button
           type="button"

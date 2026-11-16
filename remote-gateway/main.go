@@ -137,6 +137,9 @@ func newMux(srv *server) *http.ServeMux {
 	mux.HandleFunc("POST /portal/api/claim", cors(srv.apiClaim))
 	mux.HandleFunc("POST /portal/api/logout", cors(srv.apiLogout))
 	mux.HandleFunc("POST /portal/api/tunnelkey", cors(srv.apiTunnelKey))
+	// 账号级配置（provider/SK/模型选择）同步：换电脑登录后自动拉取
+	mux.HandleFunc("GET /portal/api/profile", cors(srv.apiProfileGet))
+	mux.HandleFunc("POST /portal/api/profile", cors(srv.apiProfilePut))
 	mux.HandleFunc("OPTIONS /portal/api/", cors(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))

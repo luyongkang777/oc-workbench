@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { PROVIDERS_APPLIED_EVENT } from './useProviderSync'
 import {
   getDefaultModel,
   listModels,
@@ -61,6 +62,20 @@ export function useChatModels(root: string, connected: boolean) {
       refreshingRef.current = false
     }
   }, [fetchModels])
+
+  // 账号同步把云端配置写进本机后，立刻刷新（不用等 60 秒轮询）
+  useEffect(() => {
+    const onApplied = () => {
+      void load()
+      void getDefaultModel(root).then((fallback) => {
+        if (fallback?.id && fallback.providerID) {
+          setDefaultModel({ id: fallback.id, providerID: fallback.providerID })
+        }
+      })
+    }
+    window.addEventListener(PROVIDERS_APPLIED_EVENT, onApplied)
+    return () => window.removeEventListener(PROVIDERS_APPLIED_EVENT, onApplied)
+  }, [load, root])
 
   // 连上后拉列表 + 默认模型
   useEffect(() => {
