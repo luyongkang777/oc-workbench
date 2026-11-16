@@ -5,6 +5,7 @@ import { localFsPlugin } from './scripts/dev-local-fs.mjs'
 import { localGitPlugin } from './scripts/dev-local-git.mjs'
 import { localProviderPlugin } from './scripts/dev-local-provider.mjs'
 import { localUpdatePlugin } from './scripts/dev-local-update.mjs'
+import { localUsagePlugin } from './scripts/dev-local-usage.mjs'
 import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
 import { localRulesPlugin } from './scripts/dev-local-rules.mjs'
 import { localRemotePlugin } from './scripts/dev-local-remote.mjs'
@@ -102,6 +103,8 @@ export default defineConfig(async ({ command, isPreview }) => {
       localProviderPlugin(),
       // 工作台自身的更新：dev 里没有外壳，补一份模拟实现（不替换 exe）
       localUpdatePlugin(),
+      // 用量页：dev 没有外壳，读同一份 magpie 日志补一份接口
+      localUsagePlugin(),
       localFsPlugin(),
     ],
     server: {

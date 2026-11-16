@@ -51,6 +51,7 @@ mod account;
 mod remoteapi;
 mod update;
 mod update_progress;
+mod usage;
 mod winenc;
 mod shellprobe;
 mod server;
@@ -186,6 +187,8 @@ fn start_local(token: &str) -> Result<String, String> {
     // 后台采样「本机有没有会话在跑」：`/api/state` 的 busy 字段由它提供，
     // 手机顶部的设备条据此显示黄灯（在跑）/ 绿灯（空闲）。
     busy::spawn(backend.clone());
+    // 用量页要读 50MB 网关日志 + 9 万行会话库：启动时后台预热，点开时基本是热的
+    std::thread::spawn(crate::usage::warm);
     // 后台确认 opencode CLI 是 v2 且是最新版：缺了就装，旧了就更新。
     // 和 bootstrap 并行：它连不上时每 5 秒重试，装完自然就连上了。
     cli::spawn_auto_update();

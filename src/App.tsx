@@ -56,6 +56,8 @@ export default function App() {
   const [rulesOpen, setRulesOpen] = useState(false)
   /** 第三方 API 接入面板（顶栏插头） */
   const [providerOpen, setProviderOpen] = useState(false)
+  /** 用量面板（顶栏仪表）：统计 magpie 的请求日志 */
+  const [usageOpen, setUsageOpen] = useState(false)
   // 文件树刷新信号：窗口重新获得焦点或点「刷新」时自增
   const [treeSeq, setTreeSeq] = useState(0)
   // 一次性提示（例如打开链接失败），4 秒后自动消失
@@ -301,6 +303,8 @@ export default function App() {
     setRulesOpen,
     providerOpen,
     setProviderOpen,
+    usageOpen,
+    setUsageOpen,
     notice,
     treeSeq,
     bumpTree,

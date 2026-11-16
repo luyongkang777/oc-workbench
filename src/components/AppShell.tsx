@@ -11,6 +11,7 @@ import GitPanel from './GitPanel'
 import { IconDefs } from './Icon'
 import MobileNav from './MobileNav'
 import ProviderPanel from './ProviderPanel'
+import UsagePanel from './UsagePanel'
 import ReviewPanel from './ReviewPanel'
 import RulesPanel from './RulesPanel'
 import SubagentPanel from './SubagentPanel'
@@ -89,6 +90,8 @@ export default function AppShell() {
     setRulesOpen,
     providerOpen,
     setProviderOpen,
+    usageOpen,
+    setUsageOpen,
     notice,
     treeSeq,
     bumpTree,
@@ -126,6 +129,8 @@ export default function AppShell() {
         rulesTitle={rulesCoverage}
         providerOpen={providerOpen}
         onToggleProvider={() => setProviderOpen((v) => !v)}
+        usageOpen={usageOpen}
+        onToggleUsage={() => setUsageOpen((v) => !v)}
         accountOpen={accountOpen}
         onToggleAccount={() => setAccountOpen((v) => !v)}
         gitOpen={gitOpen}
@@ -153,6 +158,9 @@ export default function AppShell() {
         open={providerOpen}
         onClose={() => setProviderOpen(false)}
       />
+
+      {/* 用量面板：读 magpie 的请求日志，独立于项目 */}
+      <UsagePanel open={usageOpen} onClose={() => setUsageOpen(false)} />
 
       {/* 强制规则面板：独立于项目，没选目录时也能编辑全局规则 */}
       <RulesPanel

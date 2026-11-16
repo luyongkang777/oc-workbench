@@ -96,6 +96,10 @@ export type AppContextValue = {
   providerOpen: boolean
   setProviderOpen: (next: boolean | ((cur: boolean) => boolean)) => void
 
+  // 用量面板（读 magpie 的请求日志）
+  usageOpen: boolean
+  setUsageOpen: (next: boolean | ((cur: boolean) => boolean)) => void
+
   // 杂项
   notice: { text: string; id: number } | null
   treeSeq: number

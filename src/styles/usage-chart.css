@@ -1,0 +1,196 @@
+/* 用量面板：时间序列柱状图与分组明细 */
+
+.usage-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+
+.usage-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.usage-chart-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.usage-chart-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.usage-chart-tab.active {
+  background: var(--bg-1);
+  color: var(--text-1);
+}
+
+.usage-chart-peak {
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 桶很多（「全部」最多 180 天）时整块横向滚动，标签和柱子一起走 */
+.usage-scroll {
+  overflow-x: auto;
+}
+
+.usage-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 160px;
+  padding: 0 2px;
+}
+
+.usage-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.usage-bar-in {
+  display: block;
+  min-height: 0;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+
+.usage-bar-out {
+  display: block;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--accent) 42%, var(--bg-2));
+}
+
+.usage-labels {
+  display: flex;
+  gap: 3px;
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.usage-label {
+  flex: 1 1 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.usage-legend {
+  display: flex;
+  gap: 12px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.usage-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 2px;
+}
+
+.usage-dot.in {
+  background: var(--accent);
+}
+
+.usage-dot.out {
+  background: color-mix(in srgb, var(--accent) 42%, var(--bg-2));
+}
+
+.usage-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+
+.usage-source {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-source-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-1);
+}
+
+.usage-source-name {
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.usage-source-tokens {
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-source-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-1);
+  overflow: hidden;
+}
+
+.usage-source-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.usage-source-sub {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.usage-source-cost {
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+
+.usage-source-cost .bad {
+  color: var(--danger-soft);
+}
+
+.usage-source-cost .muted {
+  color: var(--text-3);
+}
+
+.usage-path {
+  color: var(--text-3);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 640px) {
+  .usage-bars {
+    height: 120px;
+  }
+}

@@ -32,6 +32,8 @@ export type TopBarProps = {
   rulesTitle: string
   providerOpen: boolean
   onToggleProvider: () => void
+  usageOpen: boolean
+  onToggleUsage: () => void
   accountOpen: boolean
   onToggleAccount: () => void
   gitOpen: boolean
@@ -90,6 +92,15 @@ export default function TopBar(props: TopBarProps) {
           aria-label="第三方 API 接入"
         >
           <Icon name="plug" size={15} />
+        </button>
+        <button
+          type="button"
+          className={`topbar-iconbtn${props.usageOpen ? ' auto' : ''}`}
+          onClick={props.onToggleUsage}
+          title="用量：Token、请求、费用与缓存命中率（读 magpie 日志）"
+          aria-label="用量"
+        >
+          <Icon name="gauge" size={15} />
         </button>
         <button
           type="button"

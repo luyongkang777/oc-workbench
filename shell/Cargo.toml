@@ -30,6 +30,10 @@ getrandom = "0.2"
 base64 = "0.22"
 # 校验更新包：Cargo.lock 里本来就有 0.10.9（ureq 的传递依赖），不新增编译图
 sha2 = "0.10"
+# 读 opencode 的会话库（SQLite）：用量页要合并「本地会话」的调用，
+# 光读 magpie 的 usage.jsonl 会漏掉不走网关的请求。bundled 自带 SQLite，
+# 不依赖系统里的 sqlite3.dll。
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # 依赖一次性编译好，debug 也能秒开窗口
 [profile.dev.package."*"]

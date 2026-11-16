@@ -18,6 +18,8 @@ import './styles/balance.css'
 import './styles/folder.css'
 import './styles/provider.css'
 import './styles/rules.css'
+import './styles/usage.css'
+import './styles/usage-chart.css'
 // 顶部设备条：自带 [data-mobile] 的尺寸分支，放在断点之后也不会被覆盖
 import './styles/device-strip.css'
 
