@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Magpie">
+  <defs>
+    <linearGradient id="mgBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22304d" />
+      <stop offset="1" stop-color="#0e1626" />
+    </linearGradient>
+    <linearGradient id="mgFg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9ae6ff" />
+      <stop offset="1" stop-color="#4fb6f5" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#mgBg)" />
+  <path
+    d="M13 45c7-2 10-6 12-13l4-13 6 15c2 6 6 9 12 11"
+    fill="none"
+    stroke="url(#mgFg)"
+    stroke-width="5.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="43" cy="19" r="4.5" fill="url(#mgFg)" />
+</svg>

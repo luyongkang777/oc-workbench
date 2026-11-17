@@ -117,3 +117,45 @@ test('带附件的空正文消息仍然要重投（图片消息没有文字）',
   assert.ok(retry)
   assert.equal(retry.files.length, 1)
 })
+
+test('失败的 assistant 空消息带 completed 时间戳，仍要识别成待重投（429 实测结构）', () => {
+  const messages = desc([
+    user('msg_u1', '你好'),
+    {
+      id: 'msg_a1',
+      type: 'assistant',
+      content: [],
+      error: { type: 'provider.rate-limit', message: '429 限流', status: 429 },
+      time: { created: 2, completed: 3 },
+    },
+    idle('msg_i1', 'failed', { type: 'provider.rate-limit', message: '429 限流', status: 429 }),
+  ])
+  const retry = pendingRetry(messages)
+  assert.ok(retry, '失败 assistant 有 completed 也不能挡住重投')
+  assert.equal(retry.attempts, 1)
+  assert.equal(retry.failure.status, 429)
+})
+
+test('已经写出一部分内容的 assistant 报错：算有输出，不重投（避免重复内容）', () => {
+  const messages = desc([
+    user('msg_u1', '你好'),
+    {
+      id: 'msg_a1',
+      type: 'assistant',
+      content: [{ type: 'text', text: '已经写了一半' }],
+      error: { type: 'provider.rate-limit', message: '429', status: 429 },
+      time: { created: 2, completed: 3 },
+    },
+    idle('msg_i1', 'failed', { message: '429', status: 429 }),
+  ])
+  assert.equal(pendingRetry(messages), null)
+})
+
+test('成功但内容为空的 assistant（无 error）仍算有输出', () => {
+  const messages = desc([
+    user('msg_u1', '你好'),
+    { id: 'msg_a1', type: 'assistant', content: [], time: { created: 2, completed: 3 } },
+    idle('msg_i1', 'failed', { message: '429' }),
+  ])
+  assert.equal(pendingRetry(messages), null)
+})

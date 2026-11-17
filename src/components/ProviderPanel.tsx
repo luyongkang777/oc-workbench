@@ -10,6 +10,7 @@ import {
 import { PRESET_ICONS } from '../components/providerPresets'
 import type { ProviderController } from '../hooks/useProviderPanel'
 import type { ProviderSyncController } from '../hooks/useProviderSync'
+import WorkBuddyCard from './WorkBuddyCard'
 import ProviderList from './ProviderList'
 import ProviderModelList from './ProviderModelList'
 import ProviderQuotaBox from './ProviderQuotaBox'
@@ -147,6 +148,7 @@ export default function ProviderPanel({ controller, sync, open, onClose }: Props
                   </span>
                 </button>
               ))}
+              <WorkBuddyCard controller={controller} open={open} />
             </div>
             {loading && providers.length === 0 ? (
               <div className="provider-empty">读取中…</div>

@@ -1,5 +1,6 @@
 import {
   creditsText,
+  pointsText,
   metersText,
   nextResetText,
   quotaDetailText,
@@ -33,7 +34,8 @@ export default function ProviderList({ controller, pendingDelete, onPendingDelet
                     // 先取一次再判 kind：联合类型在重复 index access 下收窄不了
                     const itemQuota = quota[info.id]
                     const balanceLine = quotaText(itemQuota, usage[info.id])
-                    const metersLine = metersText(itemQuota) || creditsText(itemQuota)
+                    const metersLine =
+    metersText(itemQuota) || creditsText(itemQuota) || pointsText(itemQuota)
                     const itemTitle =
                       [quotaDetailText(itemQuota), nextResetText(itemQuota)].filter(Boolean).join(' · ') ||
                       undefined

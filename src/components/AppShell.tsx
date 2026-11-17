@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { useAppContext } from '../appContext'
 import { nextThemePref } from './theme'
@@ -22,6 +23,7 @@ import { isRemoteHost } from '../api/auth'
 import { coverageText } from '../api/rules'
 import { useProviderPanel } from '../hooks/useProviderPanel'
 import { useProviderSync } from '../hooks/useProviderSync'
+import { getWorkBuddyBilling } from '../api/workbuddy'
 
 /**
  * 主界面的全部布局与 JSX。
@@ -106,6 +108,28 @@ export default function AppShell() {
   const providers = useProviderPanel(providerOpen, root)
   // 账号级同步：登录后把 provider/SK/默认模型存到账号，换电脑登录自动拉下来
   const providerSync = useProviderSync()
+
+  // WorkBuddy 自动签到：每天启动最多问一次；未登录不写标记，下次启动再试。
+  useEffect(() => {
+    const key = 'oc-workbench:wb-auto-checkin'
+    const today = new Date().toISOString().slice(0, 10)
+    try {
+      if (window.localStorage.getItem(key) === today) return
+    } catch {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void getWorkBuddyBilling(true).then((result) => {
+        if (!result.ok) return
+        try {
+          window.localStorage.setItem(key, today)
+        } catch {
+          /* 存不进去就下次再签，服务端还有 10 分钟节流 */
+        }
+      })
+    }, 3000)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   return (
     <div className="app" data-mobile={mobile ? '1' : undefined}>

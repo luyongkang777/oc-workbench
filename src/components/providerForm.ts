@@ -43,11 +43,21 @@ export const EMPTY_FORM: FormState = {
 export const DEFAULT_CONTEXT = 128_000
 export const DEFAULT_OUTPUT = 8_192
 
+/** Magpie 网关地址：本机固定端口，OpenAI 兼容层挂在 `/v1` 下。 */
+export const MAGPIE_BASE_URL = 'http://127.0.0.1:3425/v1'
+
 export type ProviderPreset = {
   id: string
   name: string
   baseURL: string
-  icon: 'deepseek' | 'opencode' | 'commandcode'
+  icon: 'deepseek' | 'opencode' | 'commandcode' | 'magpie' | 'workbuddy'
+  /**
+   * 预设自带的默认 key。
+   *
+   * 本地网关（Magpie）没有鉴权，Bearer 带什么都能过；但表单校验要求 key 非空，
+   * 预设直接填好，省得用户对着「请填 API Key」发呆。
+   */
+  apiKey?: string
 }
 
 /**
@@ -57,6 +67,19 @@ export type ProviderPreset = {
  * `whitelist`/`blacklist` 都不生效），于是「没勾选的模型也会出现在下拉里」。
  * 换成自定义 ID 后，配置里写几个就是几个（实测写 3 个 = 显示 3 个）。
  */
+/**
+ * WorkBuddy 的本地转发端点。
+ *
+ * baseURL 留空是有意的：exe 的端口是随机的，远程入口还多一层 `/u/<id>/` 前缀，
+ * 只能由界面按当前 origin 现拼。这个常量只用来给 provider 列表配图标与 id。
+ */
+export const WORKBUDDY_PRESET: ProviderPreset = {
+  id: 'workbuddy',
+  name: 'WorkBuddy',
+  baseURL: '',
+  icon: 'workbuddy',
+}
+
 export const PRESETS: ProviderPreset[] = [
   { id: 'deepseek-official', name: 'DeepSeek 官方', baseURL: DEEPSEEK_BASE_URL, icon: 'deepseek' },
   { id: 'opencode-zen', name: 'OpenCode Go', baseURL: 'https://opencode.ai/zen/v1', icon: 'opencode' },
@@ -66,6 +89,15 @@ export const PRESETS: ProviderPreset[] = [
     baseURL: 'https://api.commandcode.ai/provider/v1',
     icon: 'commandcode',
   },
+  // Magpie 是本地网关：WorkBuddy（要在 Magpie 里浏览器登录）、ZCode、Cursor 等都从这里出。
+  // id 不带后缀，opencode 里的模型 id 才短（`magpie/workbuddy/deepseek-v4.1-flash`）。
+  {
+    id: 'magpie',
+    name: 'Magpie 网关',
+    baseURL: MAGPIE_BASE_URL,
+    icon: 'magpie',
+    apiKey: 'magpie',
+  },
 ]
 
 /** 预设 → 空表单（只填 id/名称/地址）。 */
@@ -74,7 +106,7 @@ export function presetForm(preset: ProviderPreset): FormState {
     id: preset.id,
     name: preset.name,
     baseURL: preset.baseURL,
-    apiKey: '',
+    apiKey: preset.apiKey ?? '',
     models: [],
     picked: [],
   }
@@ -267,17 +299,25 @@ export function presetForBaseURL(raw: string): ProviderPreset | null {
   const text = (raw ?? '').trim()
   if (!text) return null
   let host = ''
+  let pathname = ''
   try {
-    host = new URL(text.includes('://') ? text : `https://${text}`).hostname.toLowerCase()
+    const url = new URL(text.includes('://') ? text : `https://${text}`)
+    // 用 host（含端口）而不是 hostname：本机网关靠端口区分（127.0.0.1:3425）
+    host = url.host.toLowerCase()
+    pathname = url.pathname
   } catch {
     return null
   }
+  // WorkBuddy 的本地转发：端口随机，只能靠路径认
+  if (pathname.includes('/local/workbuddy/v1')) return WORKBUDDY_PRESET
   const known: Record<string, string> = {
     'api.deepseek.com': 'deepseek-official',
     'deepseek.com': 'deepseek-official',
     'opencode.ai': 'opencode-zen',
     'api.commandcode.ai': 'command-code',
     'commandcode.ai': 'command-code',
+    '127.0.0.1:3425': 'magpie',
+    'localhost:3425': 'magpie',
   }
   const id = known[host]
   return PRESETS.find((preset) => preset.id === id) ?? null

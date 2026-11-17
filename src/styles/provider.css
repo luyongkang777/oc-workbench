@@ -562,3 +562,77 @@
     max-width: 100vw;
   }
 }
+
+/*
+ * WorkBuddy 区块（面板顶部）：登录、账号、接入。
+ *
+ * 单独一块背景：它不是一条已配置的 provider，而是「把 WorkBuddy 接进来」的入口。
+ */
+
+.provider-wb {
+  padding: 10px;
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  background: var(--bg-2);
+}
+
+.provider-wb-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.provider-wb-title .provider-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+.provider-wb-state {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.provider-wb-state.on {
+  color: #3fb950;
+}
+
+.provider-wb-btns {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.provider-wb-btn {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-2);
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.provider-wb-btn:hover {
+  color: var(--accent);
+}
+
+.provider-wb-card {
+  cursor: pointer;
+  /* 副标题要放下「积分 1600 · 连续 16 天 · 今日已签」，跨两列才不被截断 */
+  grid-column: span 2;
+}
+
+@media (max-width: 520px) {
+  .provider-wb-card {
+    grid-column: 1 / -1;
+  }
+}
+
+.provider-wb-error {
+  color: var(--danger-soft);
+}

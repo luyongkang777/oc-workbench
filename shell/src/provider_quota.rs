@@ -60,7 +60,28 @@ pub fn handle(request: Request, path: &str, url: &str) {
         .and_then(Value::as_str)
         .unwrap_or("");
 
-    let body = if is_opencode(base_url) && !api_key.trim().is_empty() {
+    let body = if is_workbuddy(base_url) {
+        let value = crate::workbuddy_billing::snapshot(true);
+        if value.get("ok").and_then(Value::as_bool) == Some(true) {
+            json!({
+                "ok": true,
+                "kind": "points",
+                "credits": value.get("credits").cloned().unwrap_or(Value::Null),
+                "checkin": value.get("checkin").cloned().unwrap_or(Value::Null),
+                "consoleUrl": "https://www.workbuddy.cn",
+            })
+        } else {
+            json!({
+                "ok": true,
+                "kind": "console",
+                "consoleUrl": "https://www.workbuddy.cn",
+                "note": value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("没读到 WorkBuddy 积分"),
+            })
+        }
+    } else if is_opencode(base_url) && !api_key.trim().is_empty() {
         match crate::provider_quota_fetch::fetch_opencode_meters(api_key) {
             Ok(meters) => {
                 let mut value = json!({
@@ -127,6 +148,11 @@ fn param(url: &str, key: &str) -> String {
         }
     }
     String::new()
+}
+
+/// WorkBuddy 的 provider 地址是本机转发（`/local/workbuddy/v1`）。
+fn is_workbuddy(base_url: &str) -> bool {
+    base_url.to_ascii_lowercase().contains("/local/workbuddy/v1")
 }
 
 fn is_opencode(base_url: &str) -> bool {

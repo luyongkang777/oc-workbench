@@ -476,6 +476,13 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
         }
     }
 
+    // WorkBuddy 本地转发：调用方是 opencode，它手里没有页面令牌，
+    // 改用独立密钥（settings.json 的 workbuddyKey）。必须在 /local 的令牌校验之前分流。
+    if path.starts_with("/local/workbuddy/v1/") {
+        crate::workbuddy_proxy::handle(request, &path, &url);
+        return;
+    }
+
     // 本地文件通道：直接读磁盘，不经过 opencode。同样要 token（页面从 IPC 拿）。
     if path == "/local" || path.starts_with("/local/") {
         if !token_allowed(&request, ctx) {
@@ -529,6 +536,11 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
         // 放在 fsapi 前面，否则会被「未知的本地文件接口」吃掉。
         if path == "/local/balance" || path.starts_with("/local/balance/") {
             crate::balance::handle(request, &path, &url);
+            return;
+        }
+        // WorkBuddy 登录：登录页 + 令牌轮询 + 本机令牌文件（只读写本机状态）。
+        if path == "/local/workbuddy" || path.starts_with("/local/workbuddy/") {
+            crate::workbuddy::handle(request, &path, &url);
             return;
         }
         // 第三方 API 接入：读写 opencode.json 的 provider 段 + 拉 /models。

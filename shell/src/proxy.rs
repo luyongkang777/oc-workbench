@@ -113,7 +113,7 @@ pub fn proxy(request: tiny_http::Request, ctx: &Ctx, path: &str, url: &str) {
     }
 }
 
-fn relay(request: tiny_http::Request, resp: ureq::Response) {
+pub(crate) fn relay(request: tiny_http::Request, resp: ureq::Response) {
     let status = StatusCode(resp.status());
     let content_type = resp.header("content-type").map(|v| v.to_string());
     let cache_control = resp.header("cache-control").map(|v| v.to_string());

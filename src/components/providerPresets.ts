@@ -12,11 +12,15 @@
  */
 import commandCodeIcon from '../assets/providers/commandcode.png'
 import deepseekIcon from '../assets/providers/deepseek.png'
+import magpieIcon from '../assets/providers/magpie.svg'
 import opencodeIcon from '../assets/providers/opencode.svg'
+import workbuddyIcon from '../assets/providers/workbuddy.svg'
 import type { ProviderPreset } from './providerForm'
 
 export const PRESET_ICONS: Record<ProviderPreset['icon'], string> = {
   deepseek: deepseekIcon,
   opencode: opencodeIcon,
   commandcode: commandCodeIcon,
+  magpie: magpieIcon,
+  workbuddy: workbuddyIcon,
 }

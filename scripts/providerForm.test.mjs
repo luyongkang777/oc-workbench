@@ -28,6 +28,7 @@ import {
   togglePicked,
   updateModelLimit,
   visibleModels,
+  WORKBUDDY_PRESET,
 } from '../src/components/providerForm.ts'
 import { normalizeBaseURL } from '../src/api/providerFormat.ts'
 
@@ -44,7 +45,12 @@ const OPTIONS = [
 ]
 
 test('预设：三个 ID 都避开 opencode 内置名', () => {
-  assert.deepEqual(PRESETS.map((item) => item.id), ['deepseek-official', 'opencode-zen', 'command-code'])
+  assert.deepEqual(PRESETS.map((item) => item.id), [
+    'deepseek-official',
+    'opencode-zen',
+    'command-code',
+    'magpie',
+  ])
   const form = presetForm(PRESETS[0])
   assert.equal(form.id, 'deepseek-official')
   assert.equal(form.baseURL, 'https://api.deepseek.com/v1')
@@ -176,7 +182,30 @@ test('按地址反查预设图标', () => {
   assert.equal(presetForBaseURL('https://api.deepseek.com/v1')?.id, 'deepseek-official')
   assert.equal(presetForBaseURL('https://opencode.ai/zen/v1')?.id, 'opencode-zen')
   assert.equal(presetForBaseURL('https://api.commandcode.ai/provider/v1')?.id, 'command-code')
+  assert.equal(presetForBaseURL('http://127.0.0.1:3425/v1')?.id, 'magpie')
+  // WorkBuddy 走本机转发：端口随机，靠路径认
+  assert.equal(presetForBaseURL('http://127.0.0.1:54321/local/workbuddy/v1')?.id, 'workbuddy')
+  assert.equal(presetForBaseURL('http://localhost:3425/v1')?.id, 'magpie')
   assert.equal(presetForBaseURL('https://my-proxy.example.com/v1'), null)
+})
+
+test('Magpie 预设：地址指向本机网关，自带非空 key', () => {
+  const preset = PRESETS.find((item) => item.id === 'magpie')
+  assert.ok(preset, '应该有 magpie 预设')
+  const form = presetForm(preset)
+  assert.equal(form.baseURL, 'http://127.0.0.1:3425/v1')
+  assert.equal(form.apiKey, 'magpie')
+  // 本地网关不校验 key，但「获取模型」按钮要求表单有值
+  assert.equal(canFetchModels(form), true)
+  // 端口不能被补成 /v1/v1
+  assert.equal(normalizeBaseURL(form.baseURL), form.baseURL)
+})
+
+test('WorkBuddy 预设在界面现拼地址时仍能认出图标', () => {
+  assert.equal(WORKBUDDY_PRESET.id, 'workbuddy')
+  assert.equal(WORKBUDDY_PRESET.icon, 'workbuddy')
+  // 地址留空是给界面按 origin 现拼的，别在预设里写死 127.0.0.1
+  assert.equal(WORKBUDDY_PRESET.baseURL, '')
 })
 
 test('toDraft 只取校验需要的四个字段', () => {

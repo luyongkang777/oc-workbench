@@ -54,6 +54,8 @@ export type ProviderController = {
   /** 编辑已有的一条；传 null 表示新建 */
   edit: (info: ProviderInfo | null) => void
   preset: (preset: ProviderPreset) => void
+  /** 一键接入：套预设 → 拉模型 → 优先勾选指定前缀（Magpie 用 `workbuddy/`） */
+  connectPreset: (preset: ProviderPreset, preferPrefix?: string) => Promise<void>
   patch: (field: keyof FormState, value: string) => void
   fetchModels: () => Promise<void>
   save: () => Promise<void>
@@ -147,6 +149,49 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
     setMessage(null)
     setForm(presetForm(next))
   }, [])
+
+  /**
+   * 一键接入（Magpie 网关用）：套预设、马上拉模型、只勾选感兴趣的模型。
+   *
+   * 为什么不能「先 preset() 再 fetchModels()」：fetchModels 读的是渲染后的 form，
+   * 两次调用之间 React 还没刷新，第二次拿到的仍是旧表单。这里用同一份值去拉。
+   */
+  const connectPreset = useCallback(
+    async (next: ProviderPreset, preferPrefix = '') => {
+      if (busy) return
+      const base = presetForm(next)
+      setForm(base)
+      setMessage(null)
+      setBusy(true)
+      try {
+        const list = await fetchProviderModels({
+          id: base.id,
+          baseURL: base.baseURL,
+          apiKey: base.apiKey,
+        })
+        if (!alive.current) return
+        // 不指定前缀 = 全部模型（WorkBuddy 只有一家，接就接全）
+        const preferred = preferPrefix
+          ? list.filter((model) => model.id.startsWith(preferPrefix)).map((model) => model.id)
+          : list.map((model) => model.id)
+        setForm((cur) => {
+          const applied = applyRemoteModels({ ...cur, picked: preferred }, list)
+          return { ...applied, picked: preferred }
+        })
+        setMessage(
+          preferred.length > 0
+            ? `已接好 ${next.name}：勾选 ${preferred.length} 个模型，点「保存」写入配置`
+            : `读到 ${list.length} 个模型，但没有${preferPrefix ? ` ${preferPrefix}*` : ''}`,
+        )
+      } catch (err) {
+        if (!alive.current) return
+        setMessage(err instanceof Error ? err.message : '接入失败')
+      } finally {
+        if (alive.current) setBusy(false)
+      }
+    },
+    [busy],
+  )
 
   const patch = useCallback((field: keyof FormState, value: string) => {
     setForm((cur) => ({ ...cur, [field]: value }))
@@ -271,6 +316,7 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
     saveDisabled: busy || !canSave(form),
     edit,
     preset,
+    connectPreset,
     patch,
     fetchModels,
     save,

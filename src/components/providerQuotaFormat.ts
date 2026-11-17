@@ -40,6 +40,14 @@ export type ProviderQuota =
       windows: CreditWindow[]
       consoleUrl: string
     }
+  | {
+      ok: true
+      kind: 'points'
+      /** WorkBuddy：积分（签到活动的 total/today/daily） */
+      credits: { total: number; today: number; daily: number }
+      checkin: { todayCheckedIn: boolean; streakDays: number }
+      consoleUrl: string
+    }
   | { ok: true; kind: 'console'; consoleUrl: string; note: string }
   | { ok: false; kind?: string; error: string }
 
@@ -215,6 +223,21 @@ export function nextResetText(quota: ProviderQuota | null | undefined): string {
     .filter((date): date is Date => Boolean(date) && !Number.isNaN(date!.getTime()))
     .sort((left, right) => left.getTime() - right.getTime())[0]
   return next ? `最近重置：${resetText(next.toISOString())}` : ''
+}
+
+/**
+ * WorkBuddy 积分：`积分 1600 · 连续 16 天 · 今日已签`。
+ *
+ * 它没有「上限」概念，只有签到累计的积分余额，所以不套用余额/百分比格式。
+ */
+export function pointsText(quota: ProviderQuota | null | undefined): string {
+  if (!quota || !quota.ok || quota.kind !== 'points') return ''
+  const total = Number(quota.credits?.total ?? 0)
+  const streak = Number(quota.checkin?.streakDays ?? 0)
+  const parts = ['积分 ' + (Number.isInteger(total) ? String(total) : total.toFixed(2))]
+  if (streak > 0) parts.push('连续 ' + streak + ' 天')
+  parts.push(quota.checkin?.todayCheckedIn ? '今日已签' : '今日未签')
+  return parts.join(' · ')
 }
 
 /** 本机累计用量文案。 */

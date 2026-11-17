@@ -12,6 +12,7 @@ import {
   metersText,
   nextResetText,
   percentLeft,
+  pointsText,
   quotaDetailText,
   quotaText,
   usageText,
@@ -154,4 +155,23 @@ test('Command Code 额度：总剩余百分比 + 滚动窗口', () => {
   // 其它类型不产生文案
   assert.equal(creditsText({ ok: true, kind: 'console', consoleUrl: 'x', note: 'y' }), '')
   assert.equal(creditsText(null), '')
+})
+
+test('WorkBuddy 积分文案：总额 + 连续天数 + 今日签到状态', () => {
+  const quota = {
+    ok: true,
+    kind: 'points',
+    credits: { total: 1600, today: 100, daily: 100 },
+    checkin: { todayCheckedIn: true, streakDays: 16 },
+    consoleUrl: '',
+  }
+  assert.equal(pointsText(quota), '积分 1600 · 连续 16 天 · 今日已签')
+  assert.equal(
+    pointsText({ ...quota, checkin: { todayCheckedIn: false, streakDays: 0 } }),
+    '积分 1600 · 今日未签',
+  )
+  assert.equal(pointsText({ ...quota, credits: { total: 12.5, today: 0, daily: 0 } }), '积分 12.50 · 连续 16 天 · 今日已签')
+  // 其它类型不产生文案
+  assert.equal(pointsText({ ok: true, kind: 'console', consoleUrl: 'x', note: 'y' }), '')
+  assert.equal(pointsText(null), '')
 })

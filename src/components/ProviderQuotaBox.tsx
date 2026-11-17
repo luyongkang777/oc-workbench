@@ -1,5 +1,6 @@
 import {
   creditsText,
+  pointsText,
   metersText,
   nextResetText,
   quotaDetailText,
@@ -40,6 +41,7 @@ export default function ProviderQuotaBox({ quota, usage, onOpenConsole }: Props)
   // 否则行首会多出一个孤零零的分隔符。
   const meters = quota.ok && quota.kind === 'meters' ? metersText(quota) : ''
   const credits = quota.ok && quota.kind === 'credits' ? creditsText(quota) : ''
+  const points = quota.ok && quota.kind === 'points' ? pointsText(quota) : ''
   const metersUsage = meters && usageLine ? ` · ${usageLine}` : ''
   const creditsUsage = credits && usageLine ? ` · ${usageLine}` : ''
 
@@ -80,6 +82,19 @@ export default function ProviderQuotaBox({ quota, usage, onOpenConsole }: Props)
         </>
       ) : null}
 
+      {quota.ok && quota.kind === 'points' ? (
+        <>
+          <span className="provider-quota-line">
+            {points}
+            {usageLine ? ` · ${usageLine}` : ''}
+          </span>
+          {quota.consoleUrl ? (
+            <button type="button" className="provider-btn" onClick={() => onOpenConsole(quota.consoleUrl)}>
+              打开控制台
+            </button>
+          ) : null}
+        </>
+      ) : null}
       {quota.ok && quota.kind === 'console' ? (
         <>
           <span className="provider-quota-line">
