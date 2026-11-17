@@ -18,6 +18,7 @@ import {
   effectiveOutput,
   EMPTY_FORM,
   formFromProvider,
+  OPENCODE_GO_BASE_URL,
   PRESETS,
   presetForBaseURL,
   presetForm,
@@ -59,6 +60,10 @@ test('预设：三个 ID 都避开 opencode 内置名', () => {
   for (const preset of PRESETS) {
     assert.equal(normalizeBaseURL(preset.baseURL), preset.baseURL, preset.id)
   }
+  // OpenCode Go 必须走套餐端点；写成 /zen/v1 会被判按量付费并报 402 余额不足。
+  const go = PRESETS.find((item) => item.id === 'opencode-zen')
+  assert.equal(go?.baseURL, OPENCODE_GO_BASE_URL)
+  assert.ok(go?.baseURL.includes('/inference/go/'), go?.baseURL)
 })
 
 test('从配置读出来的 provider：模型带上下文，key 用掩码', () => {
@@ -181,6 +186,7 @@ test('保存清单：id 当名字时按 id 拆词再拼商家名', () => {
 test('按地址反查预设图标', () => {
   assert.equal(presetForBaseURL('https://api.deepseek.com/v1')?.id, 'deepseek-official')
   assert.equal(presetForBaseURL('https://opencode.ai/zen/v1')?.id, 'opencode-zen')
+  assert.equal(presetForBaseURL('https://opencode.ai/inference/go/openai/v1')?.id, 'opencode-zen')
   assert.equal(presetForBaseURL('https://api.commandcode.ai/provider/v1')?.id, 'command-code')
   assert.equal(presetForBaseURL('http://127.0.0.1:3425/v1')?.id, 'magpie')
   // WorkBuddy 走本机转发：端口随机，靠路径认

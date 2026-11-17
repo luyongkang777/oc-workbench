@@ -43,6 +43,16 @@ export const EMPTY_FORM: FormState = {
 export const DEFAULT_CONTEXT = 128_000
 export const DEFAULT_OUTPUT = 8_192
 
+/**
+ * OpenCode Go 套餐端点。
+ *
+ * 不能写成 `https://opencode.ai/zen/v1`：那是按量付费（credits）网关，
+ * 套餐请求打到那里会被判成 pay-as-you-go，回 402 Insufficient balance，
+ * 文案还写着「OpenCode Go covers only requests to the OpenCode Go provider」，
+ * 看起来像套餐过期，实际是地址接错了。
+ */
+export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/inference/go/openai/v1'
+
 /** Magpie 网关地址：本机固定端口，OpenAI 兼容层挂在 `/v1` 下。 */
 export const MAGPIE_BASE_URL = 'http://127.0.0.1:3425/v1'
 
@@ -82,7 +92,7 @@ export const WORKBUDDY_PRESET: ProviderPreset = {
 
 export const PRESETS: ProviderPreset[] = [
   { id: 'deepseek-official', name: 'DeepSeek 官方', baseURL: DEEPSEEK_BASE_URL, icon: 'deepseek' },
-  { id: 'opencode-zen', name: 'OpenCode Go', baseURL: 'https://opencode.ai/zen/v1', icon: 'opencode' },
+  { id: 'opencode-zen', name: 'OpenCode Go', baseURL: OPENCODE_GO_BASE_URL, icon: 'opencode' },
   {
     id: 'command-code',
     name: 'Command Code',
