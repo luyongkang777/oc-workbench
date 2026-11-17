@@ -40,6 +40,8 @@ export type TopBarProps = {
   onToggleGit: () => void
   view: 'code' | 'diff'
   onToggleDiff: () => void
+  terminalOpen: boolean
+  onToggleTerminal: () => void
   statusOk: boolean
   statusText: string
   retryError: string | null
@@ -125,6 +127,15 @@ export default function TopBar(props: TopBarProps) {
           onClick={props.onToggleDiff}
         >
           审查
+        </button>
+        <button
+          type="button"
+          className={`topbar-iconbtn${props.terminalOpen ? ' auto' : ''}`}
+          onClick={props.onToggleTerminal}
+          title="终端：显示/隐藏编辑区底部的停靠面板"
+          aria-label="终端面板开关"
+        >
+          <Icon name="terminal" size={15} />
         </button>
         <span className={`status-dot ${props.statusOk ? 'ok' : 'bad'}`} />
         <span className="status-text" title={props.retryError ?? props.statusText}>

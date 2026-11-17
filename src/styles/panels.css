@@ -38,9 +38,41 @@
   background: var(--accent-line);
 }
 
-/* 拖动过程中：整页锁定光标，hover 的竖线保持可见 */
+/* 行分隔条（终端停靠面板上沿）：和列分隔条同一套手感，只是方向相反 */
+.row-resizer {
+  flex: 0 0 6px;
+  margin: -3px 0;
+  position: relative;
+  z-index: 5;
+  cursor: row-resize;
+  background: transparent;
+  transition: background var(--ease);
+}
+
+.row-resizer::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+  background: transparent;
+  transition: background var(--ease);
+}
+
+.row-resizer:hover::after {
+  background: var(--accent-line);
+}
+
 body.resizing {
   cursor: col-resize;
+  user-select: none;
+}
+
+/* 拖终端高度时锁行方向光标 */
+body.resizing-row {
+  cursor: row-resize;
   user-select: none;
 }
 

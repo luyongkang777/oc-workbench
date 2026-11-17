@@ -52,6 +52,10 @@ export default function AppShell() {
     chatW,
     scaleHint,
     beginResize,
+    beginTerminalResize,
+    termOpen,
+    setTermOpen,
+    termH,
     mainRef,
     projects,
     root,
@@ -159,6 +163,8 @@ export default function AppShell() {
         onToggleAccount={() => setAccountOpen((v) => !v)}
         gitOpen={gitOpen}
         onToggleGit={() => setGitOpen((v) => !v)}
+        terminalOpen={termOpen}
+        onToggleTerminal={() => setTermOpen((v) => !v)}
         view={view}
         onToggleDiff={() => {
           setView((v) => (v === 'diff' ? 'code' : 'diff'))
@@ -199,7 +205,7 @@ export default function AppShell() {
           className="main"
           ref={mainRef}
           data-pane={pane}
-          style={{ '--side-w': `${sideW}px`, '--chat-w': `${chatW}px` } as CSSProperties}
+          style={{ '--side-w': `${sideW}px`, '--chat-w': `${chatW}px`, '--term-h': `${termH}px` } as CSSProperties}
         >
           <aside className="sidebar">
             <div className="pane-title">
@@ -244,6 +250,7 @@ export default function AppShell() {
           />
 
           <section className="editor-pane">
+            <div className="editor-main">
             {view === 'diff' ? (
               <ReviewPanel root={root} connected={connected} />
             ) : (
@@ -290,6 +297,27 @@ export default function AppShell() {
                 </div>
               </>
             )}
+            </div>
+
+            {termOpen ? (
+              <>
+                <div
+                  className="row-resizer"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label="调整终端高度"
+                  title="拖动调整高度，双击复位"
+                  onPointerDown={beginTerminalResize}
+                />
+                <Terminal
+                  key={root}
+                  root={root}
+                  connected={connected}
+                  sessionID={activeSessionID ?? undefined}
+                  onClose={() => setTermOpen(false)}
+                />
+              </>
+            ) : null}
           </section>
 
           <div
@@ -334,8 +362,6 @@ export default function AppShell() {
           onRemove={forgetProject}
         />
       )}
-
-      {root ? <Terminal key={root} root={root} connected={connected} /> : null}
 
       {root ? (
         <GitPanel root={root} open={gitOpen} onClose={() => setGitOpen(false)} onOpenFile={openFile} />

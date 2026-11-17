@@ -78,6 +78,7 @@ export async function runInTerminal(
 
 export async function readTerminal(ptyID: string): Promise<TerminalSnapshot> {
   const res = await req(`/api/experimental/persistent-pty/${encodeURIComponent(ptyID)}/snapshot`)
+  if (res.status === 404) throw new Error('这个终端已经不在了')
   if (!res.ok) throw new Error(`读取终端输出失败：${res.status}`)
   const json = (await res.json()) as {
     data?: {
@@ -94,4 +95,35 @@ export async function readTerminal(ptyID: string): Promise<TerminalSnapshot> {
 
 export async function removeTerminal(ptyID: string): Promise<void> {
   await req(`/api/experimental/persistent-pty/${encodeURIComponent(ptyID)}`, { method: 'DELETE' })
+}
+
+/**
+ * 持久终端（PTY）列表项。注意：终端是**会话维度**的，
+ * 列表必须走 `/api/experimental/session/{id}/terminal`；
+ * 顶层的 `/api/pty` 是另一套管理器，id 与这里不通用（DELETE 会 404）。
+ */
+export type PtyInfo = {
+  id: string
+  title: string
+  userTitle?: string | null
+  command: string
+  args?: string[]
+  cwd: string
+  status: 'running' | 'exited'
+  pid: number
+  exitCode?: number
+  foregroundProcess?: string | null
+}
+
+/** 某个会话下的持久终端（含已退出、尚未移除的）。 */
+export async function listSessionTerminals(sessionID: string, root: string): Promise<PtyInfo[]> {
+  const res = await req(`/api/experimental/session/${encodeURIComponent(sessionID)}/terminal?${loc(root)}`)
+  if (!res.ok) throw new Error(`读取终端列表失败：${res.status}`)
+  const json = (await res.json()) as { data?: PtyInfo[] }
+  return json.data ?? []
+}
+
+/** 移除一个持久终端（running 的会先被杀掉）。 */
+export async function killPty(ptyID: string): Promise<void> {
+  await removeTerminal(ptyID)
 }

@@ -8,12 +8,34 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const SIDE_KEY = 'oc-workbench:side-w'
 const CHAT_KEY = 'oc-workbench:chat-w'
 const SCALE_KEY = 'oc-workbench:scale'
+/** 终端停靠面板：高度与开关，都是全局偏好 */
+const TERM_H_KEY = 'oc-workbench:term-h'
+const TERM_OPEN_KEY = 'oc-workbench:term-open'
 
 export const SIDE_W = { min: 180, max: 380, def: 240 }
 export const CHAT_W = { min: 360, max: 820, def: 520 }
 export const SCALE = { min: 0.8, max: 1.6, def: 1 }
+export const TERM_H = { min: 120, max: 720, def: 240 }
 
 const HINT_MS = 1600
+
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw === null) return fallback
+    return raw === '1'
+  } catch {
+    return fallback
+  }
+}
+
+function saveFlag(key: string, value: boolean): void {
+  try {
+    window.localStorage.setItem(key, value ? '1' : '0')
+  } catch {
+    /* 存不进去就算了 */
+  }
+}
 
 function readNumber(key: string, fallback: number): number {
   try {
@@ -44,6 +66,9 @@ export function useUiLayout() {
   const [sideW, setSideWState] = useState(() => clamp(readNumber(SIDE_KEY, SIDE_W.def), SIDE_W.min, SIDE_W.max))
   const [chatW, setChatWState] = useState(() => clamp(readNumber(CHAT_KEY, CHAT_W.def), CHAT_W.min, CHAT_W.max))
   const [scale, setScaleState] = useState(() => round100(clamp(readNumber(SCALE_KEY, SCALE.def), SCALE.min, SCALE.max)))
+  // 终端停靠面板：默认打开（新功能要能立刻看到）；高度按上次拖的记住
+  const [termOpen, setTermOpenState] = useState(() => readFlag(TERM_OPEN_KEY, true))
+  const [termH, setTermHState] = useState(() => Math.round(clamp(readNumber(TERM_H_KEY, TERM_H.def), TERM_H.min, TERM_H.max)))
   // 缩放时右下角短暂浮现的比例；null 表示不显示
   const [scaleHint, setScaleHint] = useState<string | null>(null)
 
@@ -55,6 +80,20 @@ export function useUiLayout() {
     const next = Math.round(clamp(value, SIDE_W.min, SIDE_W.max))
     setSideWState(next)
     saveNumber(SIDE_KEY, next)
+  }, [])
+
+  const setTermOpen = useCallback((next: boolean | ((cur: boolean) => boolean)) => {
+    setTermOpenState((cur) => {
+      const value = typeof next === 'function' ? next(cur) : next
+      saveFlag(TERM_OPEN_KEY, value)
+      return value
+    })
+  }, [])
+
+  const setTermH = useCallback((value: number) => {
+    const next = Math.round(clamp(value, TERM_H.min, TERM_H.max))
+    setTermHState(next)
+    saveNumber(TERM_H_KEY, next)
   }, [])
 
   const setChatW = useCallback((value: number) => {
@@ -143,5 +182,19 @@ export function useUiLayout() {
     }
   }, [])
 
-  return { sideW, chatW, scale, scaleHint, setSideW, setChatW, setScale, resetSizes, resetLayout }
+  return {
+    sideW,
+    chatW,
+    scale,
+    scaleHint,
+    setSideW,
+    setChatW,
+    setScale,
+    resetSizes,
+    resetLayout,
+    termOpen,
+    setTermOpen,
+    termH,
+    setTermH,
+  }
 }

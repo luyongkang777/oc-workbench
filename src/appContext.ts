@@ -45,6 +45,13 @@ export type AppContextValue = {
   chatW: number
   scaleHint: string | null
   beginResize: (which: 'side' | 'chat') => (event: ReactPointerEvent<HTMLDivElement>) => void
+  /** 拖终端上沿改高度（双击复位） */
+  beginTerminalResize: (event: ReactPointerEvent<HTMLDivElement>) => void
+  /** 终端停靠面板开关 */
+  termOpen: boolean
+  setTermOpen: (next: boolean | ((cur: boolean) => boolean)) => void
+  /** 终端停靠面板高度（px） */
+  termH: number
   mainRef: MutableRefObject<HTMLDivElement | null>
 
   // 工作区

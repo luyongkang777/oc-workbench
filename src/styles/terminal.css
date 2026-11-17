@@ -1,16 +1,14 @@
 /* 底部终端面板 */
+/* 停靠在编辑区底部：高度由拖拽写进 --term-h，70% 上限防止把文件区挤没 */
 .terminal {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: 260px;
+  height: var(--term-h, 240px);
+  max-height: 70%;
   background: var(--bg-inset);
   border-top: 1px solid var(--line-2);
-}
-
-.terminal.collapsed {
-  max-height: none;
 }
 
 .terminal-head {
@@ -46,6 +44,112 @@
 
 .terminal-spacer {
   flex: 1;
+}
+
+/* 头部右侧：运行中数量 + 关闭 */
+.terminal-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.terminal-stat {
+  padding: 1px 7px;
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.terminal-stat.live {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.terminal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: var(--r-2);
+  flex: 0 0 auto;
+}
+
+.terminal-close:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+/* tab 条：本身就是按钮，切 tab 同时展开面板 */
+.terminal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.terminal-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-tab {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  padding: 4px 9px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.terminal-tab:hover {
+  color: var(--text-1);
+}
+
+.terminal-tab.active {
+  color: var(--text-1);
+  background: var(--bg-control);
+}
+
+/*
+ * 三个面板常驻挂载、只切显隐（保住草稿和缓存）。
+ * 必须显式写 [hidden]，否则 .terminal-pane 的 display:flex 会盖掉浏览器默认的 display:none。
+ */
+.terminal-panes {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-panes[hidden],
+.terminal-pane[hidden] {
+  display: none;
+}
+
+.terminal-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line-1);
+  flex: 0 0 auto;
 }
 
 .terminal-body {
@@ -142,4 +246,19 @@
   background: var(--bg-control);
   color: var(--text-3);
   cursor: default;
+}
+
+/* 编辑区被拖窄时：统计只留数字，把宽度让给 tab */
+@container pane-box (max-width: 480px) {
+  .terminal-stat-label {
+    display: none;
+  }
+
+  .terminal-stat {
+    padding: 1px 5px;
+  }
+
+  .terminal-tab {
+    padding: 4px 7px;
+  }
 }

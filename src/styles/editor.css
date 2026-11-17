@@ -1,7 +1,19 @@
 /* 编辑器 / 会话面板 */
 
 /* ---------- 编辑器 ---------- */
+/* 编辑区上部（文件标签 + 编辑内容）；终端停靠面板在它下面 */
+.editor-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .editor-pane {
+  /* 停靠终端按编辑区宽度收缩，不跟视口走 */
+  container-type: inline-size;
+  container-name: pane-box;
   flex: 1 1 auto;
   min-width: 0;
   background: var(--bg-0);

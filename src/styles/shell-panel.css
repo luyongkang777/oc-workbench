@@ -1,0 +1,199 @@
+/* 后台 Shell / 会话终端列表（底部终端条里的两个 tab） */
+.shell-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.shell-empty {
+  padding: 14px;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+.shell-list {
+  max-height: 132px;
+  overflow: auto;
+  border-bottom: 1px solid var(--line-1);
+  flex: 0 0 auto;
+}
+
+.shell-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: var(--fs-sm);
+}
+
+.shell-row:hover {
+  background: var(--bg-hover);
+}
+
+.shell-row.active {
+  background: var(--bg-control);
+}
+
+.shell-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex: 0 0 auto;
+}
+
+.shell-dot.running {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}
+
+.shell-dot.timeout,
+.shell-dot.killed {
+  background: var(--danger);
+}
+
+.shell-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.shell-meta {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  flex: 0 0 auto;
+}
+
+.shell-pid {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  flex: 0 0 auto;
+}
+
+.shell-error {
+  padding: 4px 12px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.shell-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.shell-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line-1);
+  flex: 0 0 auto;
+}
+
+.shell-detail-title {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.shell-detail-exit {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.shell-detail-cut {
+  color: var(--warn);
+  font-size: var(--fs-xs);
+}
+
+.shell-spacer {
+  flex: 1;
+}
+
+.shell-kill {
+  background: var(--danger-weak);
+  color: var(--danger);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-2);
+  font-size: var(--fs-xs);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.shell-kill:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.shell-output {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 8px 14px;
+  overflow: auto;
+  min-height: 60px;
+  max-height: 140px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 手机窄屏：列表里 pid 先让位，别把命令挤没 */
+@media (max-width: 520px) {
+  .shell-pid {
+    display: none;
+  }
+
+  .shell-list {
+    max-height: 104px;
+  }
+
+  .shell-output {
+    max-height: 108px;
+  }
+}
+
+/* 完成判定：只有退出码 0 才是打勾结束；跑动转圈，非 0 打叉 */
+.shell-dot.spin {
+  background: transparent;
+  border: 1.5px solid var(--warn);
+  border-top-color: transparent;
+  box-shadow: none;
+  animation: shell-spin 0.8s linear infinite;
+}
+
+@keyframes shell-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.shell-ok,
+.shell-fail {
+  width: 14px;
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.shell-ok {
+  color: var(--success);
+}
+
+.shell-fail {
+  color: var(--danger);
+}

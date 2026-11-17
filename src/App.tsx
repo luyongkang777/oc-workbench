@@ -15,6 +15,7 @@ import { useRules } from './hooks/useRules'
 import { useSessionLights } from './hooks/useSessionLights'
 import { useTheme } from './hooks/useTheme'
 import { useUiLayout } from './hooks/useUiLayout'
+import { usePanelResize } from './hooks/usePanelResize'
 import { useWorkspace } from './hooks/useWorkspace'
 
 /**
@@ -121,72 +122,33 @@ export default function App() {
   })
 
   // 三栏宽度 + 整体缩放（Ctrl/⌘ + 滚轮），都落 localStorage
-  const { sideW, chatW, scaleHint, setSideW, setChatW, resetSizes } = useUiLayout()
+  const {
+    sideW,
+    chatW,
+    scaleHint,
+    setSideW,
+    setChatW,
+    resetSizes,
+    termOpen,
+    setTermOpen,
+    termH,
+    setTermH,
+  } = useUiLayout()
   const mainRef = useRef<HTMLDivElement | null>(null)
 
-  // 上一次按在分隔条上的时刻。双击复位靠这里判断，不用 dblclick：
-  // pointerdown 里的 preventDefault 会掐掉后续的 click，dblclick 就永远不来。
-  const lastGrabRef = useRef(0)
-
-  /**
-   * 拖动分隔条。
-   * 用「实际渲染宽度 / 逻辑宽度」换算鼠标位移，这样界面被 Ctrl+滚轮 zoom 过之后
-   * 拖拽手感仍然是 1:1（zoom 会同时改变 clientX 与 getBoundingClientRect 的尺度）。
-   */
-  const beginResize = useCallback(
-    (which: 'side' | 'chat') => (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return
-
-      const now = performance.now()
-      const isDouble = lastGrabRef.current > 0 && now - lastGrabRef.current < 320
-      lastGrabRef.current = isDouble ? 0 : now
-      if (isDouble) {
-        resetSizes()
-        return
-      }
-
-      event.preventDefault()
-      const main = mainRef.current
-      if (!main) return
-
-      const target = main.querySelector(which === 'side' ? '.sidebar' : '.chat-pane')
-      const base = which === 'side' ? sideW : chatW
-      const rendered = target?.getBoundingClientRect().width ?? base
-      const ratio = base > 0 && rendered > 0 ? rendered / base : 1
-      const startX = event.clientX
-
-      document.body.classList.add('resizing')
-
-      const onMove = (moveEvent: PointerEvent) => {
-        const delta = (moveEvent.clientX - startX) / ratio
-        // 左侧分隔条往右拖 = 变宽；右侧分隔条往右拖 = 聊天变窄
-        if (which === 'side') setSideW(base + delta)
-        else setChatW(base - delta)
-      }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-        window.removeEventListener('pointercancel', onUp)
-        document.body.classList.remove('resizing')
-      }
-
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-      window.addEventListener('pointercancel', onUp)
-    },
-    [sideW, chatW, setSideW, setChatW, resetSizes],
-  )
-
-  useAppEffects({
-    bumpTree,
-    notice,
-    setNotice,
-    notify: showNotice,
-    themePref,
-    setThemePref,
-    applyRoot,
-    subagentMode,
+  // 拖拽（左右宽度 + 终端高度）都交给 hook，App 这边只留状态
+  const { beginResize, beginTerminalResize } = usePanelResize({
+    sideW,
+    chatW,
+    termH,
+    setSideW,
+    setChatW,
+    setTermH,
+    resetSizes,
+    mainRef,
   })
+
+  useAppEffects({ bumpTree, notice, setNotice, notify: showNotice, themePref, setThemePref, applyRoot, subagentMode })
 
   // 会话状态：一次轮询同时喂顶栏项目灯、会话列表灯和标签栏的灯
   const lights = useSessionLights(connected, projects.length)
@@ -263,6 +225,10 @@ export default function App() {
     chatW,
     scaleHint,
     beginResize,
+    beginTerminalResize,
+    termOpen,
+    setTermOpen,
+    termH,
     mainRef,
     projects,
     root,
