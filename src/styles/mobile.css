@@ -8,7 +8,7 @@
  */
 
 #root .app[data-mobile='1'] {
-  --mobile-nav-h: 50px;
+  --mobile-nav-h: 52px;
   /* 手机浏览器地址栏伸缩时不要跳动 */
   height: 100dvh;
 }
@@ -16,9 +16,9 @@
 /* ---------- 顶栏：压成一行，状态文字和窗口按钮让位 ---------- */
 
 #root .app[data-mobile='1'] .topbar {
-  height: 46px;
-  padding: 0 8px;
-  gap: 6px;
+  height: 50px;
+  padding: 0 10px;
+  gap: 8px;
 }
 
 #root .app[data-mobile='1'] .topbar .brand,
@@ -30,10 +30,11 @@
 /* 余额在手机上保留：远程访问时最想知道的就是还剩多少钱。
    只做紧凑化，别让它挤掉项目标签。 */
 #root .app[data-mobile='1'] .balance-chip {
-  height: 28px;
-  padding: 0 8px;
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 7px;
   margin-left: 0;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 /* .win-controls 不在这里隐藏：exe 拖窄到手机宽度时它是唯一的关闭入口。
@@ -48,23 +49,44 @@
 }
 
 #root .app[data-mobile='1'] .topbar-right {
-  gap: 4px;
+  gap: 8px;
   flex: 0 0 auto;
+  min-width: 0;
+  /* 项目标签收起后靠右站，别在右边留一条空白 */
+  margin-left: auto;
 }
 
-/* 手指点得中：顶栏按钮至少 38px 见方 */
+/* 手机上顶栏只有一行的宽度：配置类入口（强制规则 / 第三方 API / 账号）
+   让位，把宽度还给项目标签和余额，免得余额被挤出屏幕右边缘。桌面照旧。 */
+#root .app[data-mobile='1'] .topbar-config {
+  display: none;
+}
+
+/* 手指点得中：顶栏按钮 36px 见方，彼此留 8px 呼吸 */
 #root .app[data-mobile='1'] .topbar-iconbtn,
 #root .app[data-mobile='1'] .review-toggle,
 #root .app[data-mobile='1'] .retry-button {
-  min-width: 38px;
-  height: 34px;
-  padding: 0 8px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 9px;
 }
 
-/* 项目标签可以横向滑，不换行不压缩 */
+/* 项目标签可以横向滑，不换行不压缩；
+   保底 30px 是给「＋」留的位置——压到 0 时那个按钮会溢出去压在旁边的图标上。 */
+#root .app[data-mobile='1'] .project-strip {
+  flex: 0 0 auto;
+  min-width: 30px;
+}
+
+/* 手机上项目标签会被剩余宽度压成一条几像素的碎片，比不显示还难看：
+   只保留「＋」（加/切项目），标签本身收起。 */
 #root .app[data-mobile='1'] .project-tabs {
-  flex: 1 1 auto;
-  min-width: 0;
+  display: none;
+}
+
+/* 手机上主题跟随系统就够，这颗图标让位给项目标签和余额 */
+#root .app[data-mobile='1'] .topbar-theme {
+  display: none;
 }
 
 #root .app[data-mobile='1'] .project-tab {
@@ -99,11 +121,12 @@
 
 /* 子智能体：收起时是底部一条，展开时整屏盖住当前栏 */
 #root .app[data-mobile='1'] .main > .subagent-bar {
-  flex: 0 0 32px;
+  flex: 0 0 36px;
   width: 100%;
-  height: 32px;
+  height: 36px;
   align-items: center;
   padding-top: 0;
+  padding-left: 6px;
   border-left: none;
   border-top: 1px solid var(--line-1);
 }

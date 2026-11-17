@@ -70,7 +70,7 @@ export default function TopBar(props: TopBarProps) {
         <UpdateEntry version={__APP_VERSION__} />
         <button
           type="button"
-          className={`topbar-iconbtn${props.themePref === 'system' ? ' auto' : ''}`}
+          className={`topbar-iconbtn topbar-theme${props.themePref === 'system' ? ' auto' : ''}`}
           onClick={props.onCycleTheme}
           title={`${themeTitle(props.themePref, props.theme)}（Ctrl+Shift+L）`}
           aria-label="切换主题（跟随系统 / 暗色 / 浅白，Ctrl+Shift+L）"
@@ -79,7 +79,7 @@ export default function TopBar(props: TopBarProps) {
         </button>
         <button
           type="button"
-          className={`topbar-iconbtn${props.rulesOpen ? ' auto' : ''}`}
+          className={`topbar-iconbtn topbar-config${props.rulesOpen ? ' auto' : ''}`}
           onClick={props.onToggleRules}
           title={props.rulesTitle}
           aria-label="强制规则：全局与当前目录"
@@ -88,7 +88,7 @@ export default function TopBar(props: TopBarProps) {
         </button>
         <button
           type="button"
-          className={`topbar-iconbtn${props.providerOpen ? ' auto' : ''}`}
+          className={`topbar-iconbtn topbar-config${props.providerOpen ? ' auto' : ''}`}
           onClick={props.onToggleProvider}
           title="第三方 API 接入：配置模型服务商，自动获取模型"
           aria-label="第三方 API 接入"
@@ -97,7 +97,7 @@ export default function TopBar(props: TopBarProps) {
         </button>
         <button
           type="button"
-          className={`topbar-iconbtn${props.usageOpen ? ' auto' : ''}`}
+          className={`topbar-iconbtn topbar-usage${props.usageOpen ? ' auto' : ''}`}
           onClick={props.onToggleUsage}
           title="用量：Token、请求、费用与缓存命中率（读 magpie 日志）"
           aria-label="用量"
@@ -106,7 +106,7 @@ export default function TopBar(props: TopBarProps) {
         </button>
         <button
           type="button"
-          className={`topbar-iconbtn${props.accountOpen ? ' auto' : ''}`}
+          className={`topbar-iconbtn topbar-config${props.accountOpen ? ' auto' : ''}`}
           onClick={props.onToggleAccount}
           title="账号：登录后打开同账号下的其他电脑"
           aria-label="账号"

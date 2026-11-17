@@ -3,6 +3,7 @@ import type { AgentInfo } from '../api/chat'
 import { formatBytes } from './codeWindow'
 import { isImageMime, type ChatAttachment } from './attachments'
 import { filterCommands, type CommandItem } from './chatCommands'
+import { isMobileViewport } from '../hooks/useMobileLayout'
 
 type Props = {
   draft: string
@@ -50,6 +51,8 @@ export default function ChatInput({
   onRemoveAttachment,
   footer,
 }: Props) {
+  // 手机屏上那条长提示会折成两行、把输入框挤满：窄视口换成一句短的
+  const compactHint = isMobileViewport()
   const [menu, setMenu] = useState<'commands' | 'agents' | null>(null)
   const [active, setActive] = useState(0)
   const [dismissed, setDismissed] = useState(false)
@@ -377,7 +380,9 @@ export default function ChatInput({
           onPaste={onPaste}
           placeholder={
             connected
-              ? '输入消息，Enter 发送，Shift+Enter 换行；/ 打开命令；可直接粘贴或拖入图片'
+              ? compactHint
+                ? '输入消息，Enter 发送，/ 打开命令'
+                : '输入消息，Enter 发送，Shift+Enter 换行；/ 打开命令；可直接粘贴或拖入图片'
               : '后端未连接'
           }
           disabled={!connected}

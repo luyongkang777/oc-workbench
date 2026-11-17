@@ -37,11 +37,13 @@
   padding: 0 10px;
 }
 
-/* 聊天头部：手机上按最紧档显示，同时不让内容反撑面板 */
+/* 聊天头部：手机上按最紧档显示，同时不让内容反撑面板。
+   高度提到 48、控件统一 32 高：原来 24~28px 的按钮上下一挤就贴死。 */
 #root .app[data-mobile='1'] .chat-header {
   min-width: 0;
-  padding: 0 6px;
-  gap: 4px;
+  height: 48px;
+  padding: 0 8px;
+  gap: 6px;
 }
 
 /* 模型名太长会把破甲 / 上下文挤到屏幕外：手机上截断，title 里仍是全名 */
@@ -50,7 +52,7 @@
 }
 
 #root .app[data-mobile='1'] .model-toggle-text {
-  max-width: 96px;
+  max-width: 104px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -68,14 +70,50 @@
   flex-shrink: 1;
 }
 
+/* 头部控件统一 32 高：会话名 / 模式 / 模型 / 思考强度 / 新会话 / 破甲
+   同高同内边距，视觉上成一组，而不是高低不齐地挤成一排。 */
+#root .app[data-mobile='1'] .chat-header .chat-session-toggle,
+#root .app[data-mobile='1'] .chat-header .mode-toggle,
+#root .app[data-mobile='1'] .chat-header .model-toggle,
+#root .app[data-mobile='1'] .chat-header .variant-toggle,
+#root .app[data-mobile='1'] .chat-header .purge-chip,
+#root .app[data-mobile='1'] .chat-header .chat-new {
+  height: 32px;
+  padding: 0 9px;
+  font-size: var(--fs-sm);
+}
+
+/* 工具行的「＋」和上面会话标签行右侧的「＋」是同一个入口，手机上只留一个：
+   把宽度还给会话名，免得标题被压成只剩一个状态灯。 */
+#root .app[data-mobile='1'] .chat-header .chat-new {
+  display: none;
+}
+
+/* 会话名保底 72px（够看清两个字 + 省略号），模型名吃掉剩余宽度 */
+#root .app[data-mobile='1'] .chat-header .chat-session-toggle {
+  flex: 1 1 auto;
+  min-width: 72px;
+  max-width: 40%;
+}
+
+#root .app[data-mobile='1'] .chat-header .model-picker {
+  flex: 1 1 0;
+  min-width: 72px;
+}
+
+#root .app[data-mobile='1'] .chat-header .mode-picker,
+#root .app[data-mobile='1'] .chat-header .variant-picker {
+  flex: 0 0 auto;
+}
+
 #root .app[data-mobile='1'] .chat-tabbed {
   min-width: 0;
 }
 
 /* 输入区：手机上让输入框独占一行，按钮排到下面一行 */
 #root .app[data-mobile='1'] .chat-input-wrap {
-  padding: 6px 10px 8px;
-  gap: 6px;
+  padding: 8px 10px 10px;
+  gap: 8px;
 }
 
 /* 手机上不显示 token 统计与 MCP 计数：两行吃掉 76px，桌面看更合适 */
@@ -96,27 +134,44 @@
   flex: 1 1 100%;
   width: 100%;
   /* 约两行半：再多就内部滚动，不占屏幕 */
-  height: 58px;
-  min-height: 58px;
-  padding: 8px 12px;
+  height: 60px;
+  min-height: 60px;
+  padding: 10px 12px;
   font-size: 16px;
 }
 
 #root .app[data-mobile='1'] .chat-attach-add {
   flex: 0 0 auto;
-  min-width: 64px;
-  height: 36px;
-  padding: 0 10px;
+  min-width: 68px;
+  height: 38px;
+  padding: 0 12px;
   font-size: var(--fs-sm);
 }
 
 #root .app[data-mobile='1'] .chat-send {
   flex: 0 0 auto;
-  min-width: 76px;
-  height: 36px;
-  padding: 0 14px;
+  min-width: 80px;
+  height: 38px;
+  padding: 0 16px;
   /* 靠右，中间留白，视觉上更轻 */
   margin-left: auto;
+}
+
+/* 会话标签行单独一层：标签高 36、左右留 8，跟下面的工具行拉开层次 */
+#root .app[data-mobile='1'] .chat-tabs {
+  padding: 0 8px;
+  gap: 2px;
+}
+
+#root .app[data-mobile='1'] .chat-tabs .chat-tab {
+  height: 36px;
+  font-size: var(--fs-sm);
+}
+
+#root .app[data-mobile='1'] .chat-tabs .chat-tab-add {
+  align-self: center;
+  width: 26px;
+  height: 26px;
 }
 
 /* 会话标签、文件标签可以横滑 */

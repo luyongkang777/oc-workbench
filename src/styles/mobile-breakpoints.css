@@ -71,11 +71,32 @@
   #root .app[data-mobile='1'] .main > .subagent-bar {
     display: none;
   }
+
+  /* 输入区上下内边距再收一档：568x320 这类横屏底部原本占 33% */
+  #root .app[data-mobile='1'] .chat-input-wrap {
+    padding: 6px 10px 8px;
+    gap: 6px;
+  }
 }
 
 /* 极矮也保持 44px 导航；这里只把输入行再压一档 */
 
 /* ---------- 极窄：折叠屏外屏 280~320 ---------- */
+/* 360 以下的顶栏：用量图标也让位。
+   未连接时还会多出一个「重试」，不腾地方的话整条顶栏会把文档撑到 375px。 */
+@media (max-width: 380px) {
+  #root .app[data-mobile='1'] .topbar-usage {
+    display: none;
+  }
+}
+
+/* 300 以下（折叠屏外屏）：项目标签区连「＋」都放不下，整条收起 */
+@media (max-width: 300px) {
+  #root .app[data-mobile='1'] .project-strip {
+    display: none;
+  }
+}
+
 @media (max-width: 320px) {
   #root .app[data-mobile='1'] .chat-header {
     padding: 0 4px;
@@ -89,6 +110,13 @@
 
   #root .app[data-mobile='1'] .model-toggle-text {
     max-width: 78px;
+  }
+
+  /* 280 宽：余额 chip 再瘦一档，顶栏就不会把文档撑宽 7px */
+  #root .app[data-mobile='1'] .balance-chip {
+    height: 28px;
+    padding: 0 4px;
+    font-size: 10px;
   }
 }
 
