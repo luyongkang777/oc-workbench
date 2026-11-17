@@ -92,6 +92,10 @@ export const WORKBUDDY_PRESET: ProviderPreset = {
 
 export const PRESETS: ProviderPreset[] = [
   { id: 'deepseek-official', name: 'DeepSeek 官方', baseURL: DEEPSEEK_BASE_URL, icon: 'deepseek' },
+  // id 保持 `opencode-zen`（历史名字），不要换成 `opencode-go`：
+  //   1. 那是 opencode 内置 provider 名，会把自己那份模型目录合并进来，勾选失效；
+  //   2. 老配置里存的也是 `opencode-zen`，换了会让同一条变成两个 provider。
+  // 名字与地址才是给用户看的，id 只是键。
   { id: 'opencode-zen', name: 'OpenCode Go', baseURL: OPENCODE_GO_BASE_URL, icon: 'opencode' },
   {
     id: 'command-code',

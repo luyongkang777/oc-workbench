@@ -45,7 +45,7 @@ const OPTIONS = [
   { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', context: 128_000, output: 8_192 },
 ]
 
-test('预设：三个 ID 都避开 opencode 内置名', () => {
+test('预设：四个 ID 都避开 opencode 内置名', () => {
   assert.deepEqual(PRESETS.map((item) => item.id), [
     'deepseek-official',
     'opencode-zen',
