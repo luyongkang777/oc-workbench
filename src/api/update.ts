@@ -79,6 +79,10 @@ export type UpdateConfig = {
   autoCheck: boolean
   source: string | null
   skipped: string | null
+  /** 当前生效的更新代理；null = 直连。 */
+  proxy: string | null
+  /** 编译进程序的内置中继（用于「恢复内置」）。 */
+  defaultProxy: string | null
 }
 
 /**
@@ -106,6 +110,22 @@ export async function skipUpdate(version: string): Promise<void> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ version }),
   })
+}
+
+/** 保存更新代理（http:// 地址）；传空串表示直连。返回保存后实际生效的值。 */
+export async function saveUpdateProxy(
+  url: string,
+): Promise<{ ok: boolean; proxy: string | null }> {
+  return localRequest<{ ok: boolean; proxy: string | null }>(
+    '/local/update/proxy',
+    undefined,
+    15_000,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    },
+  )
 }
 
 /** 保存更新源（清单地址）；传空串表示清除。 */

@@ -18,6 +18,16 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// ureq 的 `native-tls` feature 只是提供 `impl TlsConnector`，不显式传进去
 /// HTTPS 会直接报「no TLS backend is configured」。
 pub fn agent(overall: Duration, read: Option<Duration>) -> Result<ureq::Agent, String> {
+    agent_with_proxy(overall, read, None)
+}
+
+/// 同 agent，但可以指定代理。**只有需要翻墙的外网请求才传**：
+/// CLI 安装包在 GitHub 上，余额/WorkBuddy 这些走国内直连，别给它们套代理。
+pub fn agent_with_proxy(
+    overall: Duration,
+    read: Option<Duration>,
+    proxy_url: Option<&str>,
+) -> Result<ureq::Agent, String> {
     let connector =
         native_tls::TlsConnector::new().map_err(|err| format!("初始化 TLS 连接器失败：{err}"))?;
     let mut builder = ureq::AgentBuilder::new()
@@ -26,6 +36,11 @@ pub fn agent(overall: Duration, read: Option<Duration>) -> Result<ureq::Agent, S
         .timeout(overall);
     if let Some(read) = read {
         builder = builder.timeout_read(read);
+    }
+    if let Some(url) = proxy_url {
+        let parsed =
+            ureq::Proxy::new(url).map_err(|err| format!("代理地址不合法（{url}）：{err}"))?;
+        builder = builder.proxy(parsed);
     }
     Ok(builder.build())
 }

@@ -1,6 +1,6 @@
 [package]
 name = "oc-workbench-shell"
-version = "1.11.0"
+version = "1.12.0"
 edition = "2021"
 description = "OpenCode 工作台桌面外壳（tao + wry / WebView2）"
 publish = false
@@ -16,7 +16,7 @@ wry = "0.57"
 # 否则 BTreeMap 会把顶层键全部按字母序重排，git diff 看着像改了一大片。
 serde_json = { version = "1", features = ["preserve_order"] }
 tiny_http = "0.12"
-ureq = { version = "2", default-features = false, features = ["native-tls", "json"] }
+ureq = { version = "2", default-features = false, features = ["native-tls", "json", "socks-proxy"] }
 # ureq 的 native-tls feature 只提供「impl TlsConnector」，不会自动装进 Agent——
 # 不显式传 connector 时 HTTPS 会直接报 "no TLS backend is configured"。
 # 显式用 Windows 证书库（schannel），比内置 webpki 根证书更适配企业代理。

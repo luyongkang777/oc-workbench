@@ -202,7 +202,10 @@ fn releases_api() -> String {
 }
 
 fn build_agent(overall: Duration, read: Option<Duration>) -> Result<ureq::Agent, String> {
-    crate::fetch::agent(overall, read)
+    // CLI 的 release 列表和安装包都在 GitHub 上：跟「版本与更新」用同一套代理，
+    // 否则连不上 GitHub 的机器能更新工作台、却装不上 CLI。
+    let proxy = crate::update::proxy();
+    crate::fetch::agent_with_proxy(overall, read, proxy.as_deref())
 }
 
 /// 按当前架构挑安装包名（顺序即优先级）。

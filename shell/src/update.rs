@@ -47,6 +47,13 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///   * 少一次 API 往返，国内网络下对 api.github.com 的通达性也更差。
 pub const DEFAULT_SOURCE: &str =
     "https://github.com/luyongkang777/oc-workbench/releases/latest/download/latest.json";
+/// 更新代理的环境变量（优先于 settings.json）。
+pub const PROXY_ENV: &str = "OC_WORKBENCH_UPDATE_PROXY";
+/// 内置更新中继：只放行 GitHub 域名、带 Basic 认证的 CONNECT 代理。
+///
+/// 用途是「把客户端发给别人时，别人连不上 GitHub 也能更新」——所以默认值
+/// 编译进程序，不需要任何配置；想用自己的代理或直连，在面板里改或设空串。
+pub const DEFAULT_PROXY: &str = "socks5://ocw:0bef7126f6d85e3164bddc3a@192.220.50.95:18088";
 
 /// 清单请求超时：清单很小，10 秒足够；网络不通时不能让人干等。
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -115,9 +122,41 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, String> {
     })
 }
 
+/// 环回地址不走代理：更新源可以指向本机或内网镜像（自托管 latest.json 是支持的），
+/// 那条路上套外网代理只会多一跳甚至 407。测试里的本地 HTTP 服务也靠这条。
+fn is_loopback_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    let Some((_, rest)) = lower.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if host_port.starts_with('[') {
+        host_port
+            .split(']')
+            .next()
+            .unwrap_or(host_port)
+            .trim_start_matches('[')
+            .to_string()
+    } else {
+        host_port.split(':').next().unwrap_or(host_port).to_string()
+    };
+    host == "localhost" || host == "::1" || host.starts_with("127.")
+}
+
 fn is_http_url(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
     lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+/// 代理地址允许的协议（ureq 的 Proxy::new 支持这些前缀）。
+fn is_proxy_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("socks5://")
+        || lower.starts_with("socks5h://")
+        || lower.starts_with("socks://")
 }
 
 /// 版本号切成可比较的数字段。
@@ -254,6 +293,16 @@ fn save_update_source(url: &str) -> Result<(), String> {
     let mut map = load_settings();
     map.insert(
         "updateUrl".to_string(),
+        serde_json::Value::String(url.trim().to_string()),
+    );
+    save_settings(map)
+}
+
+/// 只改 updateProxy 这个键，其余键原样保留（空串 = 直连，不再回落到内置中继）。
+fn save_update_proxy(url: &str) -> Result<(), String> {
+    let mut map = load_settings();
+    map.insert(
+        "updateProxy".to_string(),
         serde_json::Value::String(url.trim().to_string()),
     );
     save_settings(map)
@@ -424,12 +473,50 @@ pub fn source() -> Option<String> {
     resolve_source(env.as_deref(), &load_settings())
 }
 
+/// 解析更新代理的三层优先级（纯函数，方便单测）：
+///
+///   1. 环境变量非空 → 用它
+///   2. settings.json 里有 updateProxy → 用它的值；**空串表示主动关闭（直连）**
+///   3. 两者都没有 → 内置中继（连不上 GitHub 的机器装上就能更新）
+pub fn resolve_proxy(
+    env_value: Option<&str>,
+    settings: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    if let Some(value) = env_value {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    match settings.get("updateProxy").and_then(|value| value.as_str()) {
+        Some(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None // 显式关闭
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        None => Some(DEFAULT_PROXY.to_string()),
+    }
+}
+
+/// 当前生效的更新代理。
+pub fn proxy() -> Option<String> {
+    let env = std::env::var(PROXY_ENV).ok();
+    resolve_proxy(env.as_deref(), &load_settings())
+}
+
 /// 建一个带 TLS 的 agent。
 ///
 /// ureq 的 `native-tls` feature 只是提供了 `impl TlsConnector for native_tls::TlsConnector`，
 /// **不会自动装进 Agent**：不显式传，HTTPS 一律报 "cannot make HTTPS request because
 /// no TLS backend is configured"（这个问题只有在第一次访问 https 时才会暴露）。
-fn build_agent(overall: Duration, read: Option<Duration>) -> Result<ureq::Agent, String> {
+fn build_agent(
+    overall: Duration,
+    read: Option<Duration>,
+    target_url: Option<&str>,
+) -> Result<ureq::Agent, String> {
     let connector = native_tls::TlsConnector::new()
         .map_err(|err| format!("初始化 TLS 连接器失败：{err}"))?;
     let mut builder = ureq::AgentBuilder::new()
@@ -439,6 +526,17 @@ fn build_agent(overall: Duration, read: Option<Duration>) -> Result<ureq::Agent,
     if let Some(read) = read {
         builder = builder.timeout_read(read);
     }
+    // 清单和安装包都走同一个 agent，所以代理只在这里挂一次就全覆盖。
+    // 环回目标（本机/内网自托管源）不套代理。
+    let proxy_choice = match target_url {
+        Some(url) if is_loopback_url(url) => None,
+        _ => proxy(),
+    };
+    if let Some(proxy_url) = proxy_choice {
+        let parsed = ureq::Proxy::new(&proxy_url)
+            .map_err(|err| format!("更新代理地址不合法（{proxy_url}）：{err}"))?;
+        builder = builder.proxy(parsed);
+    }
     Ok(builder.build())
 }
 
@@ -447,7 +545,7 @@ pub fn fetch_manifest(source_url: &str) -> Result<Manifest, String> {
     if !is_http_url(source_url) {
         return Err(format!("更新源只支持 http/https：{source_url}"));
     }
-    let agent = build_agent(MANIFEST_TIMEOUT, None)?;
+    let agent = build_agent(MANIFEST_TIMEOUT, None, Some(source_url))?;
     let response = agent
         .get(source_url)
         .set("cache-control", "no-cache")
@@ -587,7 +685,11 @@ fn download_with(
     let part_path = dir.join(format!("oc-workbench-{safe_version}.exe.part"));
     let _ = fs::remove_file(&part_path);
 
-    let agent = build_agent(Duration::from_secs(300), Some(READ_TIMEOUT))?;
+    let agent = build_agent(
+        Duration::from_secs(300),
+        Some(READ_TIMEOUT),
+        Some(&manifest.url),
+    )?;
     let response = agent.get(&manifest.url).call().map_err(|err| match err {
         ureq::Error::Status(code, _) => format!("下载失败：HTTP {code}"),
         other => format!("下载失败：{other}"),
@@ -861,6 +963,7 @@ pub fn handle(request: Request, path: &str, _url: &str) {
         "/local/update/progress" => progress_endpoint(request),
         "/local/update/apply" => apply_endpoint(request),
         "/local/update/source" => source_endpoint(request),
+        "/local/update/proxy" => proxy_endpoint(request),
         "/local/update/skip" => skip_endpoint(request),
         "/local/update/config" => config_endpoint(request),
         "/local/update/auto" => auto_endpoint(request),
@@ -1042,6 +1145,88 @@ fn source_endpoint(request: Request) {
     }
 }
 
+/// `POST /local/update/proxy`：保存更新代理（空串 = 直连）。
+fn proxy_endpoint(request: Request) {
+    if !method_is(&request, Method::Post) {
+        json_respond(
+            request,
+            405,
+            serde_json::json!({ "error": "只支持 POST" }).to_string(),
+        );
+        return;
+    }
+    let Some((request, body)) = read_body_with_timeout(request, 16 * 1024) else {
+        return;
+    };
+    let bytes = match body {
+        BodyRead::Ok(bytes) => bytes,
+        BodyRead::TooLarge => {
+            json_respond(
+                request,
+                413,
+                serde_json::json!({ "error": "请求体过大" }).to_string(),
+            );
+            return;
+        }
+        BodyRead::Failed(err) => {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": format!("读取请求体失败：{err}") }).to_string(),
+            );
+            return;
+        }
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let parsed: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(err) => {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": format!("请求体不是 JSON：{err}") }).to_string(),
+            );
+            return;
+        }
+    };
+    let url = parsed
+        .get("url")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // 先在这里校验格式：写坏一次，下次检查更新时才报错就太晚了。
+    if !url.is_empty() {
+        if !is_proxy_url(&url) {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": "代理只支持 http:// 或 socks5:// 地址" }).to_string(),
+            );
+            return;
+        }
+        if let Err(err) = ureq::Proxy::new(&url) {
+            json_respond(
+                request,
+                400,
+                serde_json::json!({ "error": format!("代理地址格式不对：{err}") }).to_string(),
+            );
+            return;
+        }
+    }
+    match save_update_proxy(&url) {
+        Ok(()) => {
+            crate::append_log(&format!("[update] 更新代理已设为 {url}\n"));
+            json_respond(
+                request,
+                200,
+                serde_json::json!({ "ok": true, "proxy": proxy() }).to_string(),
+            );
+        }
+        Err(err) => json_respond(request, 500, serde_json::json!({ "error": err }).to_string()),
+    }
+}
+
 /// `GET /local/update/config`：页面启动时要的那几项设置。
 ///
 /// 单独一个轻量端点：自动检查关掉时，页面不该为了「要不要检查」而先做一次检查。
@@ -1058,6 +1243,8 @@ fn config_endpoint(request: Request) {
         "autoCheck": auto_check(),
         "source": source(),
         "skipped": skipped_version(),
+        "proxy": proxy(),
+        "defaultProxy": DEFAULT_PROXY,
     })
     .to_string();
     json_respond(request, 200, body);
@@ -1313,6 +1500,53 @@ mod tests {
             resolve_source(Some("https://env/x.json"), &map).as_deref(),
             Some("https://env/x.json")
         );
+    }
+
+    #[test]
+    fn proxy_prefers_env_then_settings_then_builtin() {
+        let empty = serde_json::Map::new();
+        assert_eq!(
+            resolve_proxy(Some("http://env:8080"), &empty).as_deref(),
+            Some("http://env:8080")
+        );
+        assert_eq!(
+            resolve_proxy(None, &empty).as_deref(),
+            Some(DEFAULT_PROXY),
+            "都没配时用内置中继"
+        );
+
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "updateProxy".into(),
+            serde_json::Value::String("http://settings:3128".into()),
+        );
+        assert_eq!(
+            resolve_proxy(None, &map).as_deref(),
+            Some("http://settings:3128")
+        );
+        // 空串 = 主动关闭（直连），不回落内置中继
+        map.insert("updateProxy".into(), serde_json::Value::String("  ".into()));
+        assert_eq!(resolve_proxy(None, &map), None);
+        // 环境变量优先于 settings
+        assert_eq!(
+            resolve_proxy(Some("http://env:9"), &map).as_deref(),
+            Some("http://env:9")
+        );
+    }
+
+    #[test]
+    fn loopback_urls_skip_proxy() {
+        assert!(is_loopback_url("http://127.0.0.1:8123/x.json"));
+        assert!(is_loopback_url("http://localhost:9000"));
+        assert!(is_loopback_url("https://[::1]:8443/latest.json"));
+        assert!(!is_loopback_url("https://github.com/x/y"));
+        assert!(!is_loopback_url("http://192.220.50.95:18088"));
+        assert!(!is_loopback_url("not a url"));
+    }
+
+    #[test]
+    fn builtin_proxy_url_is_parseable() {
+        ureq::Proxy::new(DEFAULT_PROXY).expect("内置代理地址必须能被 ureq 解析");
     }
 
     #[test]

@@ -5,11 +5,12 @@ import { Icon } from './Icon'
 import {
   checkUpdate,
   getUpdateConfig,
+  saveUpdateProxy,
   saveUpdateSource,
   setAutoCheck,
   skipUpdate,
 } from '../api/update'
-import type { UpdateCheck } from '../api/update'
+import type { UpdateCheck, UpdateConfig } from '../api/update'
 import { getCliStatus, installCli, setCliAutoUpdate } from '../api/cli'
 import type { CliStatus } from '../api/cli'
 import {
@@ -38,6 +39,11 @@ const SILENT_INTERVAL_MS = 6 * 60 * 60 * 1000
 /** 上次静默检查的时间戳，存 localStorage。 */
 const SILENT_STAMP_KEY = 'oc.update.lastSilentCheck'
 
+/** 代理地址里的密码打码：socks5://user:***@host:port。 */
+function maskProxy(value: string): string {
+  return value.replace(/(:\/\/[^:@/]+):([^@/]+)@/, '$1:***@')
+}
+
 function formatSize(bytes: number): string {
   if (!bytes) return ''
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
@@ -58,6 +64,8 @@ export default function UpdateEntry({ version }: { version: string }) {
   const [latest, setLatest] = useState<string | null>(null)
   // OpenCode CLI 的状态：顶栏要直接显示它的版本号，缺了还要能一眼看出来
   const [cli, setCli] = useState<CliStatus | null>(null)
+  // 更新配置（代理/自动检查）：面板里要显示当前生效的那个代理
+  const [config, setConfig] = useState<UpdateConfig | null>(null)
   const alive = useRef(true)
   // 更新成功后停止一切检查：本次进程内不再提示「有新版本」
   const settledRef = useRef(false)
@@ -100,6 +108,31 @@ export default function UpdateEntry({ version }: { version: string }) {
   // 于是「读不到配置」的兜底会把关掉的自动检查又打开。必须等握手完成。
   const auth = useSyncExternalStore(subscribeAuth, getAuthState)
 
+  // 配置（代理、自动检查）单独加载，**不能**跟着静默检查的节流一起被跳过：
+  // 以前 getUpdateConfig 写在「6 小时内查过就 return」后面，节流一命中就再也读不到
+  // 配置，面板永远显示「直连」、也没有「恢复内置」。
+  useEffect(() => {
+    if (auth.status !== 'ready') return
+    let cancelled = false
+    getUpdateConfig()
+      .then((config) => {
+        if (!cancelled) setConfig(config)
+      })
+      .catch(() => {
+        // 读不到配置就不显示代理详情，不影响其它功能
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [auth.status])
+
+  /**
+   * 启动后的静默检查：开着「自动检查」时才做，而且**最多 6 小时一次**。
+   *
+   * 以前是每次启动都查（延迟 4 秒就发请求），一天开十几次就是十几次外联。
+   * 现在把上次检查的时间记在 localStorage，没到点直接跳过；要立刻知道有没有
+   * 新版，点开面板——那里的检查不受这个窗口限制。
+   */
   useEffect(() => {
     if (auth.status !== 'ready') return
     // 手机上更新的是 Windows 客户端，检查没有意义；这条请求在公网链路上要 2~3 秒
@@ -107,6 +140,9 @@ export default function UpdateEntry({ version }: { version: string }) {
     // 这次进程已经把新版本装上去了：不再检查，否则会拿旧的内存版本号
     // 跟刚装上的同一个版本比，反复提示「有新版本」。
     if (settledRef.current) return
+    // 等配置到了再决定（autoCheck 关掉就不查）
+    if (!config) return
+    if (!config.autoCheck) return
     let cancelled = false
     let timer = 0
 
@@ -114,34 +150,26 @@ export default function UpdateEntry({ version }: { version: string }) {
     const due = !Number.isFinite(last) || last <= 0 || Date.now() - last >= SILENT_INTERVAL_MS
     if (!due) return
 
-    const scheduleSilent = () => {
-      timer = window.setTimeout(() => {
-        if (settledRef.current) return
-        checkUpdate()
-          .then((result) => {
-            if (!cancelled && alive.current && !settledRef.current) {
-              setLatest(badgeOf(result))
-              // 只有真查过才记时间：失败时下次启动还能再试
-              window.localStorage.setItem(SILENT_STAMP_KEY, String(Date.now()))
-            }
-          })
-          .catch(() => {
-            // 没配更新源、或者暂时连不上：不打扰，点开面板才看细节
-          })
-      }, 2000)
-    }
-    getUpdateConfig()
-      .then((config) => {
-        if (!cancelled && config.autoCheck) scheduleSilent()
-      })
-      .catch(() => {
-        if (!cancelled) scheduleSilent()
-      })
+    timer = window.setTimeout(() => {
+      if (settledRef.current) return
+      checkUpdate()
+        .then((result) => {
+          if (!cancelled && alive.current && !settledRef.current) {
+            setLatest(badgeOf(result))
+            // 只有真查过才记时间：失败时下次启动还能再试
+            window.localStorage.setItem(SILENT_STAMP_KEY, String(Date.now()))
+          }
+        })
+        .catch(() => {
+          // 没配更新源、或者暂时连不上：不打扰，点开面板才看细节
+        })
+    }, 2000)
+
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [auth.status])
+  }, [auth.status, config])
 
   // 顶栏上的 CLI 版本：握手完成后拉一次，**只读本机**（不带 latest），不联网。
   // 最新的 CLI 版本等用户点开面板再查，避免每次启动都去问 GitHub。
@@ -185,6 +213,7 @@ export default function UpdateEntry({ version }: { version: string }) {
         <UpdateDialog
           version={version}
           cli={cli}
+          config={config}
           refreshCli={refreshCli}
           task={task}
           settled={settled}
@@ -200,6 +229,7 @@ export default function UpdateEntry({ version }: { version: string }) {
 function UpdateDialog({
   version,
   cli,
+  config,
   refreshCli,
   task,
   settled,
@@ -209,6 +239,7 @@ function UpdateDialog({
 }: {
   version: string
   cli: CliStatus | null
+  config: UpdateConfig | null
   refreshCli: (remote?: boolean, latest?: boolean) => Promise<CliStatus | null>
   task: UpdateTask
   settled: boolean
@@ -233,7 +264,17 @@ function UpdateDialog({
   const [cliBusy, setCliBusy] = useState(false)
   const [cliError, setCliError] = useState<string | null>(null)
   const [cliAuto, setCliAuto] = useState<boolean | null>(null)
+  // 更新代理：默认用内置中继，留空 = 直连
+  const [proxyNow, setProxyNow] = useState<string | null>(() => config?.proxy ?? null)
+  const [proxyDraft, setProxyDraft] = useState('')
+  const [editingProxy, setEditingProxy] = useState(false)
+  const [savingProxy, setSavingProxy] = useState(false)
   const alive = useRef(true)
+
+  // 配置是异步读的：晚到时补上，但不要覆盖用户刚保存的值
+  useEffect(() => {
+    if (config) setProxyNow(config.proxy)
+  }, [config])
 
   useEffect(() => {
     alive.current = true
@@ -337,6 +378,24 @@ function UpdateDialog({
       if (alive.current) setError((err as Error).message)
     } finally {
       if (alive.current) setSavingSource(false)
+    }
+  }
+
+  /** 保存更新代理；空串 = 直连。保存后立刻重查一次，验证新通道能不能用。 */
+  async function saveProxy(url: string) {
+    if (savingProxy) return
+    setSavingProxy(true)
+    setError(null)
+    try {
+      const result = await saveUpdateProxy(url)
+      if (!alive.current) return
+      setProxyNow(result.proxy)
+      setEditingProxy(false)
+      await runCheck()
+    } catch (err) {
+      if (alive.current) setError((err as Error).message)
+    } finally {
+      if (alive.current) setSavingProxy(false)
     }
   }
 
@@ -509,6 +568,61 @@ function UpdateDialog({
               </button>
             </div>
           ) : null}
+          {/* 更新代理：检查清单和下载安装包都走它；默认内置中继，留空 = 直连 */}
+          {phase === 'ready' && !applying ? (
+            <div className="update-source">
+              <div className="update-source-title">更新代理</div>
+              <div className="update-source-hint">
+                检查更新和下载安装包都走这个代理。内置中继只放行 GitHub 域名；
+                留空表示直连。只有点检查或更新时才会用到它。
+              </div>
+              {editingProxy ? (
+                <div className="update-source-row">
+                  <input
+                    className="update-input"
+                    value={proxyDraft}
+                    placeholder="socks5://user:pass@host:port 或 http://host:port"
+                    onChange={(event) => setProxyDraft(event.target.value)}
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="update-btn"
+                    onClick={() => void saveProxy(proxyDraft.trim())}
+                    disabled={savingProxy}
+                  >
+                    {savingProxy ? '保存中…' : '保存'}
+                  </button>
+                </div>
+              ) : (
+                <div className="update-source-now">
+                  <span className="update-source-url">
+                    代理：{proxyNow ? maskProxy(proxyNow) : '直连（不使用代理）'}
+                  </span>
+                  <button
+                    type="button"
+                    className="update-link"
+                    onClick={() => {
+                      setProxyDraft(proxyNow ?? '')
+                      setEditingProxy(true)
+                    }}
+                  >
+                    更改
+                  </button>
+                  {config?.defaultProxy && proxyNow !== config.defaultProxy ? (
+                    <button
+                      type="button"
+                      className="update-link"
+                      onClick={() => void saveProxy(config?.defaultProxy ?? '')}
+                    >
+                      恢复内置
+                    </button>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          ) : null}
+
           {/* OpenCode CLI：工作台的后端全靠它，所以版本、安装、自动更新都放在这里 */}
           <div className="update-cli">
             <div className="update-cli-head">
