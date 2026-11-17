@@ -1881,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "oc-workbench-shell"
-version = "1.14.0"
+version = "1.14.1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
