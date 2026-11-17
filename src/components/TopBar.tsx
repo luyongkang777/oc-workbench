@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import BalanceChip from './BalanceChip'
 import { Icon } from './Icon'
@@ -51,8 +52,12 @@ export type TopBarProps = {
 }
 
 export default function TopBar(props: TopBarProps) {
+  // 手机上顶栏放不下的入口收进「⋯」抽屉；桌面按钮全部平铺，不显示这个按钮
+  const [moreOpen, setMoreOpen] = useState(false)
+
   return (
-    <header className="topbar" onMouseDown={props.onMouseDown}>
+    <>
+      <header className="topbar" onMouseDown={props.onMouseDown}>
       <span className="brand">
         <Icon name="logo" size={16} />
         OpenCode 工作台
@@ -123,14 +128,14 @@ export default function TopBar(props: TopBarProps) {
         </button>
         <button
           type="button"
-          className={`review-toggle${props.view === 'diff' ? ' active' : ''}`}
+          className={`review-toggle topbar-review${props.view === 'diff' ? ' active' : ''}`}
           onClick={props.onToggleDiff}
         >
           审查
         </button>
         <button
           type="button"
-          className={`topbar-iconbtn${props.terminalOpen ? ' auto' : ''}`}
+          className={`topbar-iconbtn topbar-terminal${props.terminalOpen ? ' auto' : ''}`}
           onClick={props.onToggleTerminal}
           title="终端：显示/隐藏编辑区底部的停靠面板"
           aria-label="终端面板开关"
@@ -142,6 +147,15 @@ export default function TopBar(props: TopBarProps) {
           {props.statusText}
         </span>
         <BalanceChip />
+        <button
+          type="button"
+          className="topbar-iconbtn topbar-more"
+          onClick={() => setMoreOpen((v) => !v)}
+          aria-label="更多入口：主题、强制规则、第三方 API、账号、用量"
+          title="更多：主题 / 强制规则 / 第三方 API / 账号 / 用量"
+        >
+          ⋯
+        </button>
         {props.showRetry ? (
           <button
             type="button"
@@ -153,7 +167,97 @@ export default function TopBar(props: TopBarProps) {
           </button>
         ) : null}
         <WindowControls />
-      </div>
-    </header>
+        </div>
+      </header>
+
+      {/* 手机上的「更多」抽屉：桌面这个按钮不渲染，这里的 DOM 也就不会出现 */}
+      {moreOpen ? (
+        <>
+          <div className="topbar-sheet-mask" onClick={() => setMoreOpen(false)} />
+          <div className="topbar-sheet" role="dialog" aria-label="更多入口">
+            <div className="topbar-sheet-head">更多</div>
+            <button
+              type="button"
+              className="topbar-sheet-item"
+              onClick={() => {
+                props.onToggleDiff()
+                setMoreOpen(false)
+              }}
+            >
+              <Icon name="review" size={17} />
+              <span className="topbar-sheet-label">审查视图</span>
+              <span className="topbar-sheet-value">{props.view === 'diff' ? '当前是审查' : '当前是代码'}</span>
+            </button>
+            <button
+              type="button"
+              className="topbar-sheet-item"
+              onClick={() => props.onCycleTheme()}
+            >
+              <Icon name={themeIcon(props.themePref, props.theme)} size={17} />
+              <span className="topbar-sheet-label">主题</span>
+              <span className="topbar-sheet-value">
+                {props.themePref === 'system' ? '跟随系统' : props.themePref === 'dark' ? '暗色' : '浅白'}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="topbar-sheet-item"
+              onClick={() => {
+                props.onToggleTerminal()
+                setMoreOpen(false)
+              }}
+            >
+              <Icon name="terminal" size={17} />
+              <span className="topbar-sheet-label">终端面板</span>
+              <span className="topbar-sheet-value">{props.terminalOpen ? '已打开' : '已收起'}</span>
+            </button>
+            <button
+              type="button"
+              className="topbar-sheet-item"
+              onClick={() => {
+                props.onToggleRules()
+                setMoreOpen(false)
+              }}
+            >
+              <Icon name="shield" size={17} />
+              <span className="topbar-sheet-label">强制规则</span>
+            </button>
+            <button
+              type="button"
+              className="topbar-sheet-item"
+              onClick={() => {
+                props.onToggleProvider()
+                setMoreOpen(false)
+              }}
+            >
+              <Icon name="plug" size={17} />
+              <span className="topbar-sheet-label">第三方 API 接入</span>
+            </button>
+            <button
+              type="button"
+              className="topbar-sheet-item"
+              onClick={() => {
+                props.onToggleAccount()
+                setMoreOpen(false)
+              }}
+            >
+              <Icon name="monitor" size={17} />
+              <span className="topbar-sheet-label">账号与设备</span>
+            </button>
+            <button
+              type="button"
+              className="topbar-sheet-item"
+              onClick={() => {
+                props.onToggleUsage()
+                setMoreOpen(false)
+              }}
+            >
+              <Icon name="gauge" size={17} />
+              <span className="topbar-sheet-label">用量与花费</span>
+            </button>
+          </div>
+        </>
+      ) : null}
+    </>
   )
 }

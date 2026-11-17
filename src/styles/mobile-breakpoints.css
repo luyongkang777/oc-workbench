@@ -82,10 +82,17 @@
 /* 极矮也保持 44px 导航；这里只把输入行再压一档 */
 
 /* ---------- 极窄：折叠屏外屏 280~320 ---------- */
-/* 360 以下的顶栏：用量图标也让位。
-   未连接时还会多出一个「重试」，不腾地方的话整条顶栏会把文档撑到 375px。 */
+/* 380 以下的顶栏：终端图标收进「⋯」抽屉，把位置让给项目名。
+   390 宽（iPhone 主流）仍保留终端直达按钮。 */
 @media (max-width: 380px) {
-  #root .app[data-mobile='1'] .topbar-usage {
+  #root .app[data-mobile='1'] .topbar-terminal {
+    display: none;
+  }
+}
+
+/* 340 以下：项目名放不下，只留「＋」（加/切项目走抽屉外的那一格） */
+@media (max-width: 340px) {
+  #root .app[data-mobile='1'] .project-tabs {
     display: none;
   }
 }

@@ -49,17 +49,117 @@
 }
 
 #root .app[data-mobile='1'] .topbar-right {
-  gap: 8px;
+  gap: 6px;
   flex: 0 0 auto;
   min-width: 0;
   /* 项目标签收起后靠右站，别在右边留一条空白 */
   margin-left: auto;
 }
 
+/* 手机上顶栏要同时放下项目名 + 5 个入口：Git 与重试按钮收窄一点 */
+#root .app[data-mobile='1'] .topbar .review-toggle {
+  min-width: 34px;
+  padding: 0 7px;
+}
+
+#root .app[data-mobile='1'] .retry-button {
+  min-width: 36px;
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+}
+
 /* 手机上顶栏只有一行的宽度：配置类入口（强制规则 / 第三方 API / 账号）
-   让位，把宽度还给项目标签和余额，免得余额被挤出屏幕右边缘。桌面照旧。 */
-#root .app[data-mobile='1'] .topbar-config {
+   收进「⋯」抽屉，不再占顶栏位置。桌面照旧全部平铺。 */
+#root .app[data-mobile='1'] .topbar-config,
+#root .app[data-mobile='1'] .topbar-theme,
+#root .app[data-mobile='1'] .topbar-usage,
+#root .app[data-mobile='1'] .topbar-review {
   display: none;
+}
+
+/* 「⋯」：抽屉里的入口和顶栏图标同尺寸 */
+#root .app[data-mobile='1'] .topbar-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  line-height: 1;
+  letter-spacing: 1px;
+  padding-bottom: 4px;
+}
+
+/* 抽屉本体：贴底，点遮罩关。只在手机宽度下有意义。
+   这里必须带 #root：.topbar-iconbtn 是单类选择器，同特指度下先后顺序不可靠。 */
+#root .topbar-more,
+#root .topbar-sheet-mask,
+#root .topbar-sheet {
+  display: none;
+}
+
+#root .app[data-mobile='1'] .topbar-sheet-mask {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+#root .app[data-mobile='1'] .topbar-sheet {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 200;
+  padding: 8px 10px calc(14px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg-1);
+  border-top: 1px solid var(--line-2);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.28);
+}
+
+#root .app[data-mobile='1'] .topbar-sheet-head {
+  padding: 4px 6px 8px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+#root .app[data-mobile='1'] .topbar-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-md);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#root .app[data-mobile='1'] .topbar-sheet-item:active {
+  background: var(--bg-control);
+}
+
+#root .app[data-mobile='1'] .topbar-sheet-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#root .app[data-mobile='1'] .topbar-sheet-value {
+  margin-left: auto;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
 }
 
 /* 手指点得中：顶栏按钮 36px 见方，彼此留 8px 呼吸 */
@@ -71,21 +171,47 @@
   padding: 0 9px;
 }
 
-/* 项目标签可以横向滑，不换行不压缩；
+/* 项目区：手机上只显示「当前项目」一格（点开是完整项目列表）+「＋」。
    保底 30px 是给「＋」留的位置——压到 0 时那个按钮会溢出去压在旁边的图标上。 */
 #root .app[data-mobile='1'] .project-strip {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-width: 30px;
+  margin-left: 0;
 }
 
-/* 手机上项目标签会被剩余宽度压成一条几像素的碎片，比不显示还难看：
-   只保留「＋」（加/切项目），标签本身收起。 */
 #root .app[data-mobile='1'] .project-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 非当前项目不占位置；切项目在标签行里点（标签仍可横滑） */
+#root .app[data-mobile='1'] .project-tab:not(.active) {
   display: none;
 }
 
-/* 手机上主题跟随系统就够，这颗图标让位给项目标签和余额 */
-#root .app[data-mobile='1'] .topbar-theme {
+#root .app[data-mobile='1'] .project-tab {
+  /* 允许被容器压缩：可用宽度不够时收缩成省略号，而不是溢出盖住「＋」 */
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 32px;
+  /* 上限放宽，实际宽度交给 flex 分配：屏幕宽松时多显示几个字，
+     紧的时候自己收缩成省略号，不需要按机型写死 */
+  max-width: 132px;
+  padding: 0 8px 0 9px;
+}
+
+#root .app[data-mobile='1'] .project-tab-name {
+  min-width: 0;
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 手机上不给「×」：误触就把项目入口删了，去项目列表里管理 */
+#root .app[data-mobile='1'] .project-tab-del {
   display: none;
 }
 
