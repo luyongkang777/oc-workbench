@@ -14,6 +14,9 @@ pub(crate) fn upsert_provider(
     api_key: &str,
     models: &[ModelSpec],
 ) -> Result<(), String> {
+    // 走梯子的两个上游在磁盘上记成本地转发地址（界面与账号同步仍是真地址）。
+    let base_url = crate::relay::to_local(base_url, crate::relay::port());
+
     let providers = map
         .entry("provider".to_string())
         .or_insert_with(|| Value::Object(Map::new()));

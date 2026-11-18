@@ -60,6 +60,8 @@ mod single_peer;
 mod single_guard;
 mod win32;
 mod proxy;
+mod relay;
+mod relay_http;
 mod workbuddy;
 mod workbuddy_billing;
 mod workbuddy_models;
@@ -192,6 +194,10 @@ fn start_local(token: &str) -> Result<String, String> {
     })?;
     // WorkBuddy 的 provider 地址里写着本机端口，而单机模式的端口每次随机：
     // 启动时把那条旧地址校正成这次的端口，否则第二天打开就指向死端口。
+    // provider 转发地址里也带本机端口，同样要校正（否则下次打开就指向死端口）。
+    relay::set_base(&base);
+    relay::set_port(port);
+    relay::heal_provider_ports(port);
     workbuddy::heal_provider_port(port);
     server::spawn_bootstrap(backend.clone(), last_error);
     // 后台采样「本机有没有会话在跑」：`/api/state` 的 busy 字段由它提供，

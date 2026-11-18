@@ -54,7 +54,7 @@ pub(crate) fn export_json() -> Value {
             providers.push(json!({
                 "id": id,
                 "name": entry.get("name").and_then(Value::as_str).unwrap_or(id),
-                "baseURL": base_url,
+                "baseURL": crate::relay::to_upstream(base_url),
                 "apiKey": api_key,
                 "models": models,
             }));

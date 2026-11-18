@@ -149,7 +149,7 @@ pub(crate) fn provider_view(id: &str, value: &Value) -> Value {
         "id": id,
         "name": map.get("name").and_then(Value::as_str).unwrap_or(id),
         "npm": map.get("npm").and_then(Value::as_str).unwrap_or(""),
-        "baseURL": base_url,
+        "baseURL": crate::relay::to_upstream(base_url),
         "keyMasked": mask_key(api_key),
         "hasKey": !api_key.trim().is_empty(),
         "modelCount": models.len(),

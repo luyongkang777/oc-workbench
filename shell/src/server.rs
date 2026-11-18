@@ -476,6 +476,13 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
         }
     }
 
+    // provider 转发（OpenCode Go / Command Code 走梯子）：调用方是 opencode，
+    // 它不带页面令牌，所以同样要排在 /local 的令牌校验之前。
+    if path.starts_with(crate::relay::PREFIX) {
+        crate::relay_http::handle(request, &path, &url);
+        return;
+    }
+
     // WorkBuddy 本地转发：调用方是 opencode，它手里没有页面令牌，
     // 改用独立密钥（settings.json 的 workbuddyKey）。必须在 /local 的令牌校验之前分流。
     if path.starts_with("/local/workbuddy/v1/") {
