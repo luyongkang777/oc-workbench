@@ -1318,7 +1318,7 @@
   height: 36px;
   padding: 0 18px;
   background: var(--accent);
-  color: var(--text-1);
+  color: var(--text-inverse);
   border: none;
   border-radius: var(--r-2);
   font-size: var(--fs-sm);
@@ -2146,7 +2146,7 @@
 .editor-action.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--text-1);
+  color: var(--text-inverse);
 }
 
 .editor-action.primary:hover:not(:disabled) {

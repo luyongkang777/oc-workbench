@@ -101,7 +101,7 @@
   border-radius: var(--r-2);
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: var(--fs-md);
   font-family: inherit;
   cursor: pointer;

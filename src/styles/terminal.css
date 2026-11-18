@@ -235,7 +235,7 @@
   height: 30px;
   padding: 0 14px;
   background: var(--accent);
-  color: var(--text-1);
+  color: var(--text-inverse);
   border: none;
   border-radius: var(--r-2);
   font-size: var(--fs-sm);

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- OpenCode Workbench 应用图标母版
+       设计：冷哑光炭黑圆角瓦片 + 冷青六棱柱 + 内嵌终端提示符（> _）
+       16~40px 用实心六棱柱（细线在小尺寸会糊），48px 以上用暗底 + 青色线框 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#1a1d24"/>
+      <stop offset="1" stop-color="#0a0b0e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="4"/>
+  <path d="M256.00 106.00 L385.90 181.00 L385.90 331.00 L256.00 406.00 L126.10 331.00 L126.10 181.00 Z" fill="#0e2b3d"/>
+  <path d="M256.00 106.00 L385.90 181.00 L385.90 331.00 L256.00 406.00 L126.10 331.00 L126.10 181.00 Z" fill="none" stroke="#38bdf8" stroke-width="20" stroke-linejoin="round"/>
+  <path d="M206 214 L248 256 L206 298" fill="none" stroke="#38bdf8" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M268 298 H318" fill="none" stroke="#38bdf8" stroke-width="26" stroke-linecap="round"/>
+</svg>

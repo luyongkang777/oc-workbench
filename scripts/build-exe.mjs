@@ -152,6 +152,14 @@ if (!checkOnly) {
 }
 if (!existsSync(exe)) fail(`没有产出 ${exe}`)
 
+// 2.5 桌面图标：把 shell/icon.ico 写进 exe 的资源段。
+// 不用 winres / embed-resource——它们依赖 SDK 的 rc.exe，本机没有；
+// Win32 的 BeginUpdateResource 属于 kernel32，改图标不必重编 Rust。
+if (!checkOnly) {
+  const embed = spawnSync(process.execPath, [path.join(here, 'embed-exe-icon.mjs'), exe], { stdio: 'inherit' })
+  if (embed.status !== 0) fail('写入 exe 图标失败（图标资源没进 exe）')
+}
+
 // 3. 核对 exe 里到底嵌了什么
 const distTime = statSync(distIndex).mtimeMs
 const exeTime = statSync(exe).mtimeMs

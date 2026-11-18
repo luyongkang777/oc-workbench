@@ -277,6 +277,12 @@ fn run() -> Result<(), String> {
     if let Some((x, y)) = initial.position {
         window_builder = window_builder.with_position(TaoPosition::new(x, y));
     }
+    // 任务栏 / Alt-Tab 取的是窗口自己的图标；不设的话是系统通用图标，
+    // 和 exe 资源里的图标不是一回事（资源只影响资源管理器里那个文件）。
+    #[cfg(windows)]
+    if let Some(icon) = window_icon() {
+        window_builder = window_builder.with_window_icon(Some(icon));
+    }
     let window = window_builder
         .build(&event_loop)
         .map_err(|e| format!("创建窗口失败：{e}"))?;
@@ -647,6 +653,20 @@ const WINDOW_CAP_RATIO: (f64, f64) = (0.90, 0.86);
 const WINDOW_MIN_PX: (f64, f64) = (800.0, 560.0);
 /// settings.json 里记窗口尺寸的键，值形如 `1280x840`（逻辑像素）。
 const WINDOW_SIZE_KEY: &str = "windowSize";
+
+/// 窗口图标（任务栏 / Alt-Tab）。
+///
+/// 走 include_bytes! 嵌一份预渲染的 64×64 RGBA，避免为读 PNG 引一个解码依赖：
+/// 图标是构建期生成的静态资源，运行时只需要把字节交给 tao。
+#[cfg(windows)]
+fn window_icon() -> Option<tao::window::Icon> {
+    const SIZE: u32 = 64;
+    const RGBA: &[u8] = include_bytes!("../icon64.rgba");
+    if RGBA.len() != (SIZE * SIZE * 4) as usize {
+        return None;
+    }
+    tao::window::Icon::from_rgba(RGBA.to_vec(), SIZE, SIZE).ok()
+}
 
 /// 首次启动用哪套几何。
 struct InitialWindow {

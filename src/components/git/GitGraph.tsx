@@ -25,7 +25,7 @@ type GitGraphProps = {
 /* 布局常量写死（不读 CSS 变量）：SVG 几何不该被主题或用户样式改动 */
 /** 行高 */
 /** 行高与 git.css 的 .git-graph-row 一致（改了一处必须同步另一处）。 */
-const ROW_H = 30
+const ROW_H = 46
 /** 单条 lane 的宽度 */
 const LANE_W = 14
 /** 图形列左侧留白 */
@@ -235,6 +235,10 @@ export default function GitGraph({
           const cy = ROW_H / 2
           const merged = extra.parents.length > 1
           const time = relativeTime(row.commit.time)
+          // 次行还要放 hash / 作者 / 时间：refs 最多显示 2 个（再多每个只剩 50px，
+           // 标签会缩成 "gith…" 反而看不出是什么），其余折成 +N
+          const visibleRefs = extra.refs.slice(0, 2)
+          const hiddenRefCount = extra.refs.length - visibleRefs.length
 
           return (
             <div
@@ -301,11 +305,18 @@ export default function GitGraph({
               </svg>
 
               <div className="git-graph-main">
+                {/* 主行只放提交消息：refs 挪到次行，短消息也不会被一排标签挤没 */}
                 <div className="git-graph-title">
+                  <span className="git-graph-msg" title={row.commit.message}>
+                    {row.commit.message || '（没有说明）'}
+                  </span>
+                </div>
+
+                <div className="git-graph-meta">
                   <span className="git-graph-hash" title={row.commit.hash}>
                     {row.commit.short}
                   </span>
-                  {extra.refs.map((ref, index) => {
+                  {visibleRefs.map((ref, index) => {
                     const tone = toneOf(ref, view.remotes)
                     return (
                       <span
@@ -317,15 +328,17 @@ export default function GitGraph({
                       </span>
                     )
                   })}
-                  <span className="git-graph-msg" title={row.commit.message}>
-                    {row.commit.message || '（没有说明）'}
-                  </span>
-                </div>
-
-                <div className="git-graph-meta">
-                  <span>{row.commit.author || '未知作者'}</span>
-                  {time ? <span>·</span> : null}
-                  {time ? <span>{time}</span> : null}
+                  {hiddenRefCount > 0 ? (
+                    <span
+                      className="git-graph-ref more"
+                      title={extra.refs.slice(visibleRefs.length).join('\n')}
+                    >
+                      +{hiddenRefCount}
+                    </span>
+                  ) : null}
+                  <span className="git-graph-meta-author">{row.commit.author || '未知作者'}</span>
+                  {time ? <span className="git-graph-meta-time">·</span> : null}
+                  {time ? <span className="git-graph-meta-time">{time}</span> : null}
                   {extra.unpushed ? <span className="git-graph-local">本地未推送</span> : null}
                 </div>
               </div>

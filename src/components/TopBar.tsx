@@ -80,7 +80,7 @@ export default function TopBar(props: TopBarProps) {
           title={`${themeTitle(props.themePref, props.theme)}（Ctrl+Shift+L）`}
           aria-label="切换主题（跟随系统 / 暗色 / 浅白，Ctrl+Shift+L）"
         >
-          <Icon name={themeIcon(props.themePref, props.theme)} size={15} />
+          <Icon name={themeIcon(props.themePref, props.theme)} size={16} />
         </button>
         <button
           type="button"
@@ -89,7 +89,7 @@ export default function TopBar(props: TopBarProps) {
           title={props.rulesTitle}
           aria-label="强制规则：全局与当前目录"
         >
-          <Icon name="shield" size={15} />
+          <Icon name="shield" size={16} />
         </button>
         <button
           type="button"
@@ -98,7 +98,7 @@ export default function TopBar(props: TopBarProps) {
           title="第三方 API 接入：配置模型服务商，自动获取模型"
           aria-label="第三方 API 接入"
         >
-          <Icon name="plug" size={15} />
+          <Icon name="plug" size={16} />
         </button>
         <button
           type="button"
@@ -107,7 +107,7 @@ export default function TopBar(props: TopBarProps) {
           title="用量：Token、请求、费用与缓存命中率（读 magpie 日志）"
           aria-label="用量"
         >
-          <Icon name="gauge" size={15} />
+          <Icon name="gauge" size={16} />
         </button>
         <button
           type="button"
@@ -116,7 +116,7 @@ export default function TopBar(props: TopBarProps) {
           title="账号：登录后打开同账号下的其他电脑"
           aria-label="账号"
         >
-          <Icon name="monitor" size={15} />
+          <Icon name="account" size={16} />
         </button>
         <button
           type="button"
@@ -140,7 +140,7 @@ export default function TopBar(props: TopBarProps) {
           title="终端：显示/隐藏编辑区底部的停靠面板"
           aria-label="终端面板开关"
         >
-          <Icon name="terminal" size={15} />
+          <Icon name="terminal" size={16} />
         </button>
         <span className={`status-dot ${props.statusOk ? 'ok' : 'bad'}`} />
         <span className="status-text" title={props.retryError ?? props.statusText}>
@@ -241,7 +241,7 @@ export default function TopBar(props: TopBarProps) {
                 setMoreOpen(false)
               }}
             >
-              <Icon name="monitor" size={17} />
+              <Icon name="account" size={17} />
               <span className="topbar-sheet-label">账号与设备</span>
             </button>
             <button

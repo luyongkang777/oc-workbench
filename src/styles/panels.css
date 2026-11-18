@@ -1708,7 +1708,7 @@ body.resizing .col-resizer::after {
 .tree-dialog-btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--text-1);
+  color: var(--text-inverse);
 }
 
 .tree-dialog-btn.primary:hover:not(:disabled) {

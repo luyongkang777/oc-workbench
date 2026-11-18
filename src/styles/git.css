@@ -1510,10 +1510,13 @@
 }
 
 .git-graph-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
-  height: 30px;
+  /* 两行文字：消息 18 + 间距 3 + meta 16 = 37，上下各留 4 → 45，余 1px 给分割线。
+     原来 30px 装不下两行，文字会压到分割线上（看着"挤在一起"）。 */
+  height: 46px;
   padding-right: 10px;
   border-bottom: 1px solid var(--line-1);
   transition: background var(--ease);
@@ -1542,17 +1545,19 @@
 .git-graph-main {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
   flex: 1 1 auto;
   min-width: 0;
 }
 
+/* 主行只放提交消息：refs 已在次行，这里再挤就会把消息截成几个字 */
 .git-graph-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
-  font-size: var(--fs-xs);
+  font-size: 13px;
+  line-height: 18px;
   color: var(--text-1);
 }
 
@@ -1564,14 +1569,29 @@
   white-space: nowrap;
 }
 
+/* short hash：等宽 + 极淡底，跟正文区分开但不抢视线 */
+.git-graph-hash {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 15px;
+  letter-spacing: 0.2px;
+  color: var(--text-3);
+  background: var(--bg-control);
+  border-radius: var(--r-1);
+  user-select: none;
+}
+
 /* refs 标签：默认=本地分支（中性），head / remote / tag 三档各有色调 */
 .git-graph-ref {
-  flex: 0 0 auto;
-  max-width: 150px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 116px;
   overflow: hidden;
-  padding: 0 6px;
-  font-size: var(--fs-2xs);
-  line-height: 16px;
+  padding: 0 5px;
+  font-size: 10.5px;
+  line-height: 15px;
   color: var(--text-2);
   background: var(--bg-control);
   border: 1px solid var(--line-2);
@@ -1602,12 +1622,34 @@
 .git-graph-meta {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 16px;
   color: var(--text-3);
   white-space: nowrap;
+}
+
+/* 时间绝不压缩：被截成「20 …」等于没有信息 */
+.git-graph-meta-time {
+  flex: 0 0 auto;
+}
+
+/* 作者名可以让位给 refs：账号名通常很长，截断比挤掉时间更可读 */
+.git-graph-meta-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* refs 多于 3 个时折叠成 +N，避免把作者和时间挤出可视区 */
+.git-graph-ref.more {
+  color: var(--text-3);
+  background: transparent;
+  border-style: dashed;
 }
 
 .git-graph-meta > span {
@@ -1630,14 +1672,20 @@
 }
 
 /* 回滚入口：平时不占视觉，hover / 键盘聚焦才浮出来 */
+/* 绝对定位：opacity:0 的按钮如果留在文档流里，会常年吃掉 ~86px 行宽，
+   把 refs / 作者 / 时间全挤成省略号。改成悬浮在行右端，只在 hover 时出现。 */
 .git-graph-action {
-  flex: 0 0 auto;
-  height: 20px;
-  padding: 0 8px;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  padding: 0 9px;
+  background: var(--bg-2);
+  z-index: 1;
   font-size: 13px;
   line-height: 18px;
   color: var(--text-2);
-  background: transparent;
   border: 1px solid var(--line-2);
   border-radius: var(--r-2);
   cursor: pointer;
