@@ -12,6 +12,7 @@ import CodeEditor from './CodeEditor'
 import CodeSourceBody from './CodeSourceBody'
 import CodeSearchBar from './CodeSearchBar'
 import CodeToolbar from './CodeToolbar'
+import LocateHint from './LocateHint'
 import { coveringEntry, isFailure, loadedEnd, type Entry, type Page } from './codeCache'
 import {
   LINE_HEIGHT,
@@ -76,10 +77,25 @@ type Props = {
   externalRoot?: string | null
   /** 点「外部文件」标记：把工作区切到这个目录。 */
   onUseExternalRoot?: (root: string) => void
+  /** 其它已记录的项目根：打开失败时去这些目录里找同名文件。 */
+  locateProjects?: readonly string[]
   /** 打开失败（常见于文件树里的旧条目已被删/改名）：外层可据此提示并刷新文件树。 */
   onOpenFailed?: (path: string, message: string) => void
   /** 点路径栏的 × 关掉当前文件（外层把 file 置空，回到「选择左侧文件查看」）。 */
   onClose?: () => void
+}
+
+/** 稳定的空数组：默认值写成 `= []` 会每次渲染都新建一个，把下面搜索的 effect 变成死循环。 */
+const NO_PROJECTS: readonly string[] = []
+
+/**
+ * 这个错误是不是「文件不在了」（而不是超时/权限/编码问题）？
+ *
+ * 只有这一种情况值得去别的目录找：超时说明文件大概率在、只是慢，
+ * 权限不足则换目录也打不开，硬去找只会给出误导性的「在别处找到」。
+ */
+function isMissingPath(message: string): boolean {
+  return /文件不存在|not found|ENOENT/i.test(message)
 }
 
 /**
@@ -144,6 +160,7 @@ export default function CodeView({
   autoEditSeq = 0,
   externalRoot = null,
   onUseExternalRoot,
+  locateProjects = NO_PROJECTS,
   onOpenFailed,
   onClose,
 }: Props) {
@@ -1003,6 +1020,15 @@ export default function CodeView({
             重试
           </button>
         </div>
+        {/* 只有「文件不存在」才去别处找；超时/权限这类错误找也白找，反而误导 */}
+        {isMissingPath(statError) ? (
+          <LocateHint
+            root={root}
+            path={path}
+            projects={locateProjects}
+            onOpen={(absPath) => onOpenFile?.(absPath)}
+          />
+        ) : null}
       </div>
     )
   }

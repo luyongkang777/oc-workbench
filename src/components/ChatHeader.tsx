@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  LEGACY_PLACEHOLDER_TITLE,
   sessionLastAt,
   type AgentInfo,
   type ModelInfo,
@@ -10,8 +9,9 @@ import type { ContextUsage } from './contextUsage'
 import ContextMeter from './ContextMeter'
 import PurgeToggle from './PurgeToggle'
 import type { PurgeController } from '../hooks/usePurge'
-import { formatClock, formatDateTime } from './turns'
-import { sessionLight, sessionLightTitle, type SessionLike } from './sessionLight'
+import { lightFromSnapshot, sessionLight, type SessionLike } from './sessionLight'
+import SessionMenu, { shortTitle } from './SessionMenu'
+export { shortTitle } from './SessionMenu'
 
 type ModelKey = { id: string; providerID: string; variant?: string }
 
@@ -60,28 +60,13 @@ type Props = {
   compact?: boolean
 }
 
-/**
- * 会话灯：优先用轮询到的最新快照。
- *
- * 快照里没有这条会话时一律灰（未验证），不再退回挂载那一刻的旧数据——
- * 那样一条当时在跑、之后早就跑完的会话会永远亮着黄灯，比灰灯更误导。
- */
+/** 会话灯：走共用判定，快照里没有这条就是灰（未验证）。 */
 function lightFor(
   session: SessionInfo,
   lights: Map<string, SessionLike> | undefined,
   connected: boolean,
 ) {
-  const live = lights?.get(session.id)
-  if (!live) return 'unknown' as const
-  return sessionLight(live, connected)
-}
-
-export function shortTitle(session: SessionInfo): string {
-  const title = session.title?.trim()
-  // 空标题＝刚建、服务端还在等第一条消息起名；占位标题＝老版本写死的那种。
-  // 两种都显示「新会话」，别把会话 id 片段当成名字露出来。
-  if (!title || title === LEGACY_PLACEHOLDER_TITLE) return '新会话'
-  return title
+  return lightFromSnapshot(session.id, lights, connected)
 }
 
 /** 思考强度档位的中文名；模型自定义档位（如 high-fast）直接回退到 id。 */
@@ -425,53 +410,19 @@ export default function ChatHeader({
       </div>
 
       {expanded ? (
-        <div className="chat-sessions">
-          {sessions.length === 0 ? (
-            <div className="chat-session-empty">还没有会话</div>
-          ) : (
-            sessions.map((session) => {
-              const at = sessionLastAt(session)
-              const light = lightFor(session, lights, connected)
-              const opened = panelIDs?.has(session.id) ?? false
-              return (
-                <div
-                  key={session.id}
-                  className={`chat-session-item${session.id === current?.id ? ' active' : ''}`}
-                >
-                  <button
-                    type="button"
-                    className="chat-session-main"
-                    title={`${sessionLightTitle(light)}${
-                      at ? `\n最后一次对话 ${formatDateTime(at)}` : ''
-                    }${opened ? '\n已在并排面板中打开' : ''}`}
-                    onClick={() => onPickSession(session.id)}
-                  >
-                    <span className={`chat-session-light ${light}`} aria-hidden="true" />
-                    <span className="chat-session-title">{shortTitle(session)}</span>
-                  </button>
-                  {at ? <span className="chat-session-time">{formatClock(at)}</span> : null}
-                  {onOpenInPanel ? (
-                    <button
-                      type="button"
-                      className="chat-session-split"
-                      title={opened ? '已在并排面板中' : '在并排面板中打开'}
-                      aria-label={opened ? '已在并排面板中' : '在并排面板中打开'}
-                      disabled={opened}
-                      onClick={() => onOpenInPanel(session.id)}
-                    >
-                      ⧉
-                    </button>
-                  ) : null}
-                </div>
-              )
-            })
-          )}
-          {hiddenCount > 0 || showAll ? (
-            <button type="button" className="chat-session-more" onClick={onToggleShowAll}>
-              {showAll ? '只显示工作台会话' : `显示全部会话（另有 ${hiddenCount} 条外部会话）`}
-            </button>
-          ) : null}
-        </div>
+        <SessionMenu
+          sessions={sessions}
+          lights={lights}
+          current={current}
+          connected={connected}
+          onPick={onPickSession}
+          onOpenInPanel={onOpenInPanel}
+          panelIDs={panelIDs}
+          hiddenCount={hiddenCount}
+          showAll={showAll}
+          onToggleShowAll={onToggleShowAll}
+          onClose={onToggleSessions}
+        />
       ) : null}
     </>
   )

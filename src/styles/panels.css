@@ -320,10 +320,70 @@ body.resizing .col-resizer::after {
 }
 
 .chat-sessions {
-  max-height: 220px;
+  /* 历史多了 220px 只够看五六条：抬到 340 并让搜索框吸顶 */
+  max-height: min(340px, 52vh);
   overflow: auto;
   border-bottom: 1px solid var(--line-1);
   background: var(--bg-inset);
+}
+
+/* 搜索历史会话：吸顶，滚到下面的分组里也还在 */
+.chat-session-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.chat-session-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--bg-control);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  outline: none;
+}
+
+.chat-session-filter:focus {
+  border-color: var(--accent-line);
+}
+
+.chat-session-filter::placeholder {
+  color: var(--text-3);
+}
+
+.chat-session-filter-clear {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-session-filter-clear:hover {
+  color: var(--text-1);
+}
+
+/* 分组小标题：比条目更淡、更小，不抢会话标题的注意力 */
+.chat-session-group-label {
+  padding: 6px 12px 2px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
 }
 
 /* 一条会话 = 主按钮（灯+标题）+ 时间 + 分屏按钮 */

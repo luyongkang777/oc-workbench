@@ -374,3 +374,20 @@
   - 草稿写盘 600ms 防抖 + 目录清理每 16 次写才扫一次（上一提交）
   - 测试：新增 `scripts/visibility.test.mjs` 2 项；`npm test` 428 项全过、`tsc --noEmit` 干净
   - REVIEW: 中 | 🔴0 🟡1 🟢2 | 结论: Approve（🟡：合并只覆盖无 signal 的调用，带 signal 的取消语义不受影响）
+
+- 2026-11-18 **历史会话选择 + 「在跑却显示没跑」修复**（用户报：对话在跑但界面卡住，切走再切回就好）：
+  - 根因 1：`useChatRunning` 以前只在「自认为在跑」时轮询，一旦判成空闲就彻底停手，
+    任何一次误判都永久停住 —— 这正是「切走再切回才好」。改：空闲也慢速轮询（本地 2.5s / 远程 5s）、
+    失败不清状态、可见时立刻补查、手动停止加抑制窗口（绑 sessionID + 服务端 busy 时间戳，换会话/新一轮自动放行）
+  - 根因 2：外壳 `relay_sse` 裸写 + `Connection: close` 且无超时，上游静默时前端 `reader.read()`
+    永久阻塞不报错 → 事件断流、界面冻住。改：`subscribeEvents` 加首字节 20s + 静默 100s 看门狗，
+    内部 AbortController 合并调用方 cancel，`finally` 里关闭半开连接
+  - 顺带加固：`call()` 默认 15 秒超时（以前没有任何超时，轮询一旦挂住最长停 10 分钟）；
+    压缩/斜杠命令/发消息显式传 `0` 关掉限时（长操作不能被误杀）
+  - 历史会话面板：新增 `SessionMenu.tsx` + `sessionList.ts`（搜索 + 今天/昨天/近7天/更早分组），
+    `lightFor` 两处重复实现合并成 `sessionLight.lightFromSnapshot`，Esc 先清搜索再收面板
+  - 测试：`npm test` 665 项全过、`tsc --noEmit` 干净；新增 3 个 CDP 验收
+    （12/12 面板、3/3 空闲自愈【实测 9.5s 内 4 次请求，旧实现 0 次】、5/5 状态自愈）+ 手机布局 26/26
+  - REVIEW: 中 | 🔴0 🟡3 🟢4 | 结论: Approve（🟡3 全部修掉：Esc 关不掉面板、停止窗口没绑会话、
+    `getSession` 无超时；🟢4：合并 lightFor、其余为已知取舍已注明）
+

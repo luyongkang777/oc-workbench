@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import type { CSSProperties } from 'react'
 import { useAppContext } from '../appContext'
 import { nextThemePref } from './theme'
@@ -104,6 +104,9 @@ export default function AppShell() {
     handleTopbarMouseDown,
     remoteBack,
   } = c
+
+  // 打开失败时去哪里找文件：当前工作区之外，还有这些用过的项目根
+  const projectRoots = useMemo(() => projects.map((item) => item.path), [projects])
 
   // 规则按钮的 title：说明哪几级在生效（规则没有开关，不说「开/关」）
   const rulesCoverage = coverageText(rules.status)
@@ -290,6 +293,7 @@ export default function AppShell() {
                         externalRoot={tab.root}
                         onUseExternalRoot={useExternalRoot}
                         onOpenFailed={handleOpenFailed}
+                        locateProjects={projectRoots}
                         onClose={() => closeTab(tab.key)}
                       />
                     </div>

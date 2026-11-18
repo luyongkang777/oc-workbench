@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { killPty, listSessionTerminals, readTerminal, type PtyInfo } from '../api/terminal'
+import { cleanTerminalOutput } from './shellText'
 
 /**
  * 会话的持久终端（PTY）列表。
@@ -53,8 +54,7 @@ function PtyDetail({ item, snapshot, error, killing, onKill }: {
           {killing ? '移除中' : '移除'}
         </button>
       </div>
-      {error ? <div className="shell-error">{error}</div> : null}
-      <pre className="shell-output">{snapshot || '（还没有输出）'}</pre>
+      <pre className="shell-output">{cleanTerminalOutput(snapshot) || '（还没有输出）'}</pre>
     </div>
   )
 }

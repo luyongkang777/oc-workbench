@@ -216,7 +216,24 @@ export type ModelInfo = {
 }
 
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * 查询类接口的单次等待上限。
+ *
+ * 外壳对非 SSE 请求的 deadline 是 600 秒，对轮询来说等于「没有超时」：
+ * 轮询用的 \`/api/session/{id}\` 一旦挂住不回包，\`tick\` 就永远不返回、也不再
+ * \`schedule\`，界面停在「没在跑」最长十分钟 —— 正是要修的那个症状。
+ *
+ * 15 秒足够（公网单次实测 60~90ms）；超时按一次失败处理，交给调用方退避重试。
+ * 长操作（压缩上下文可能跑几分钟）必须显式传 \`timeoutMs: 0\` 关掉这道闸。
+ */
+const REQUEST_TIMEOUT_MS = 15_000
+
+async function call<T>(
+  path: string,
+  init?: RequestInit,
+  // 0 = 不限时（长操作），不传 = 用默认 15 秒
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<T> {
   const headers = new Headers(init?.headers)
   // dev 模式走 Vite 代理（cookie 由代理注入），这时没有 token；
   // 别发空的 x-oc-token，否则会被上游当成带了错误凭据。
@@ -225,10 +242,34 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
-  const res = await fetch(withBase(path), { ...init, headers })
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
-  const text = await res.text()
-  return (text ? JSON.parse(text) : undefined) as T
+
+  // 调用方自己传的 signal（切走会话时取消）和我们的超时要能一起中止请求
+  const controller = new AbortController()
+  let timedOut = false
+  const timer =
+    timeoutMs > 0
+      ? window.setTimeout(() => {
+          timedOut = true
+          controller.abort()
+        }, timeoutMs)
+      : 0
+  const outer = init?.signal
+  const onAbort = () => controller.abort()
+  if (outer?.aborted) controller.abort()
+  else outer?.addEventListener('abort', onAbort)
+
+  try {
+    const res = await fetch(withBase(path), { ...init, headers, signal: controller.signal })
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+    const text = await res.text()
+    return (text ? JSON.parse(text) : undefined) as T
+  } catch (err) {
+    if (timedOut) throw new Error('请求超时')
+    throw err
+  } finally {
+    if (timer) window.clearTimeout(timer)
+    outer?.removeEventListener('abort', onAbort)
+  }
 }
 
 /**
@@ -603,24 +644,42 @@ export async function listCommands(root: string): Promise<CommandInfo[]> {
   return list.filter((command) => command.name)
 }
 
-/** 执行服务端斜杠命令（/goal、/swarm、/vkb 等）。 */
+/**
+ * 执行服务端斜杠命令（/goal、/swarm、/vkb 等）。
+ *
+ * 不设超时：这类命令会真的跑一段活（goal 判定、vkb 建索引），
+ * 15 秒就中断只会让界面报一个假失败，而服务端其实还在跑。
+ */
 export async function runSessionCommand(
   sessionID: string,
   name: string,
   text = '',
 ): Promise<void> {
-  await call(`/api/session/${encodeURIComponent(sessionID)}/command`, {
-    method: 'POST',
-    body: JSON.stringify({ name, text }),
-  })
+  await call(
+    `/api/session/${encodeURIComponent(sessionID)}/command`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ name, text }),
+    },
+    0,
+  )
 }
 
-/** 压缩当前会话上下文。 */
+/**
+ * 压缩当前会话上下文。
+ *
+ * 这是长操作：服务端要重写整段历史，实测几十秒到几分钟都出现过。
+ * 必须关掉 15 秒那道超时，否则压缩还没完成前端就先报「请求超时」。
+ */
 export async function compactSession(sessionID: string): Promise<void> {
-  await call(`/api/session/${encodeURIComponent(sessionID)}/compact`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  })
+  await call(
+    `/api/session/${encodeURIComponent(sessionID)}/compact`,
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+    0,
+  )
 }
 
 /**
@@ -671,7 +730,12 @@ export async function clearRevert(sessionID: string): Promise<void> {
   await call(`/api/session/${encodeURIComponent(sessionID)}/revert`, { method: 'DELETE' })
 }
 
-/** 发一条用户消息；返回后内容会通过 SSE 陆续推过来。files 是图片/文件附件。 */
+/**
+ * 发一条用户消息；返回后内容会通过 SSE 陆续推过来。files 是图片/文件附件。
+ *
+ * **不设超时**：这条必须在服务端确认收下之后才返回，忙的时候几十秒也可能。
+ * 15 秒就放弃的话，消息其实已经进去了，界面却报「没有发出去」—— 比慢更糟。
+ */
 export async function sendPrompt(
   sessionID: string,
   text: string,
@@ -679,10 +743,14 @@ export async function sendPrompt(
 ): Promise<void> {
   const body: { text: string; files?: PromptFile[] } = { text }
   if (files.length > 0) body.files = files
-  await call(`/api/session/${encodeURIComponent(sessionID)}/prompt`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
+  await call(
+    `/api/session/${encodeURIComponent(sessionID)}/prompt`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+    0,
+  )
 }
 
 /** 当前目录可用的模型列表（只保留有 id + providerID 的）。 */
@@ -791,7 +859,28 @@ export function isIncrementalEvent(type: string | undefined): boolean {
  *
  * 不用 EventSource：它不能带自定义请求头，而本地服务要求 `x-oc-token`。
  * 这里用 fetch 流手动按 SSE 的 `data: {...}` 行解析（心跳是 `: heartbeat`，跳过）。
+ *
+ * 两道超时（都是实测踩过的坑）：
+ *
+ * 1. **首字节超时**：`fetch` 只等到响应头就 resolve，而外壳代理通常是先写响应头、
+ *    再等上游数据。上游迟迟不吐正文时界面看着像「连上了但什么都没发生」，
+ *    所以「响应头都没拿到」和「拿到响应头后 20 秒没有第一块数据」共用这道闸。
+ * 2. **静默看门狗**：转发是裸写 + `Connection: close`，上游一旦不再吐数据
+ *    （进程半死、代理线程卡住），`reader.read()` 会**永久阻塞**且不报错。
+ *    界面上表现为：对话其实还在跑，但消息和状态都不再更新，只能切标签重挂载
+ *    才恢复。这里用超时打断它，让调用方的重连逻辑接管。
  */
+/** 连上后等第一块数据的上限：健康连接会立刻吐 `server.connected`（见 docs/api-notes.md），
+ *  所以 20 秒只用来抓「连上了但上游不说话」，正常不会误伤。 */
+const FIRST_BYTE_TIMEOUT_MS = 20_000
+/**
+ * 多久没收到任何字节（含心跳）就认为流死了。
+ *
+ * 不能太短：工具调用跑几十秒也可能没有事件。也不能太长：太长了用户还是要干等。
+ * 100 秒是「心跳一定会来」和「卡住要能醒」之间的折中。
+ */
+const IDLE_TIMEOUT_MS = 100_000
+
 export async function subscribeEvents(
   onEvent: (event: StreamEvent) => void,
   signal: AbortSignal,
@@ -800,33 +889,77 @@ export async function subscribeEvents(
   const headers = new Headers()
   const current = authToken()
   if (current) headers.set('x-oc-token', current)
-  const res = await fetch(withBase('/api/event'), { headers, signal })
-  if (!res.ok || !res.body) throw new Error(`事件流连接失败：${res.status}`)
-  // 连上了才回调：调用方用它判断「这次重连需不需要全量对齐」。
-  onOpen?.()
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
+  // 内部 AbortController：把「调用方取消」和「我们自己的超时」合成一个信号
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  if (signal.aborted) controller.abort()
+  else signal.addEventListener('abort', abort)
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
+  let timedOut = false
+  let idleTimer = 0
+  const clearIdle = () => {
+    if (idleTimer !== 0) {
+      window.clearTimeout(idleTimer)
+      idleTimer = 0
+    }
+  }
+  const armIdle = (ms: number) => {
+    clearIdle()
+    idleTimer = window.setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, ms)
+  }
 
-    const chunks = buffer.split('\n\n')
-    buffer = chunks.pop() ?? ''
-    for (const chunk of chunks) {
-      for (const line of chunk.split('\n')) {
-        if (!line.startsWith('data:')) continue
-        const payload = line.slice(5).trim()
-        if (!payload) continue
-        try {
-          onEvent(JSON.parse(payload))
-        } catch {
-          // 单条坏数据不影响后续流
+  try {
+    armIdle(FIRST_BYTE_TIMEOUT_MS)
+    const res = await fetch(withBase('/api/event'), { headers, signal: controller.signal })
+    if (!res.ok || !res.body) throw new Error(`事件流连接失败：${res.status}`)
+    // 连上了才回调：调用方用它判断「这次重连需不需要全量对齐」。
+    onOpen?.()
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let firstChunk = true
+
+    while (true) {
+      // 首块数据单独用 20 秒闸：代理先写响应头、正文不来时 fetch 早已 resolve，
+      // 只有这道闸能把「连上了但没内容」拽回来。之后按任何字节重置看门狗
+      armIdle(firstChunk ? FIRST_BYTE_TIMEOUT_MS : IDLE_TIMEOUT_MS)
+      const { done, value } = await reader.read()
+      firstChunk = false
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const chunks = buffer.split('\n\n')
+      buffer = chunks.pop() ?? ''
+      for (const chunk of chunks) {
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data:')) continue
+          const payload = line.slice(5).trim()
+          if (!payload) continue
+          try {
+            onEvent(JSON.parse(payload))
+          } catch {
+            // 单条坏数据不影响后续流
+          }
         }
       }
     }
+  } catch (err) {
+    // 超时被打断：换成一句能看懂的话，调用方据此退避重连
+    if (timedOut) {
+      const timeout = new Error('事件流长时间没有数据，准备重连')
+      timeout.name = 'TimeoutError'
+      throw timeout
+    }
+    throw err
+  } finally {
+    clearIdle()
+    signal.removeEventListener('abort', abort)
+    // 异常退出时把底层连接也关掉，别留一个半开的流占着外壳的请求线程
+    controller.abort()
   }
 }

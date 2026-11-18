@@ -1,5 +1,5 @@
 import type { ShellInfo } from '../api/shells'
-import { commandSummary, elapsedOf, statusText } from './shellText'
+import { cleanTerminalOutput, commandSummary, elapsedOf, statusText } from './shellText'
 
 /** Shell 列表的展示组件（纯渲染，不含请求）。 */
 
@@ -79,7 +79,7 @@ export function ShellDetail({ item, output, truncated, error, killing, onKill }:
         </button>
       </div>
       {error ? <div className="shell-error">{error}</div> : null}
-      <pre className="shell-output">{output || placeholder}</pre>
+      <pre className="shell-output">{cleanTerminalOutput(output) || placeholder}</pre>
     </div>
   )
 }

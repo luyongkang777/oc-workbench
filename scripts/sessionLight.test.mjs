@@ -5,7 +5,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isRunning, sessionLight, sessionLightTitle } from '../src/components/sessionLight.ts'
+import {
+  isRunning,
+  lightFromSnapshot,
+  sessionLight,
+  sessionLightTitle,
+} from '../src/components/sessionLight.ts'
 
 /** 造一个会话条目：busy/idle 比大小决定灯色。 */
 const at = (busy, idle, extra = {}) => ({
@@ -50,3 +55,24 @@ test('每种灯都有中文提示', () => {
     assert.ok(sessionLightTitle(light).length > 0)
   }
 })
+
+test('lightFromSnapshot: 快照里没有这条会话时是灰（不做空闲承诺）', () => {
+  const lights = new Map()
+  assert.equal(lightFromSnapshot('ses_x', lights, true), 'unknown')
+  // 连 Map 都没有（还没轮询出结果）同样是灰
+  assert.equal(lightFromSnapshot('ses_x', undefined, true), 'unknown')
+})
+
+test('lightFromSnapshot: 有快照就按快照算，和 sessionLight 一致', () => {
+  const lights = new Map([['ses_a', { time: { busy: 200, idle: 100 } }]])
+  assert.equal(lightFromSnapshot('ses_a', lights, true), 'running')
+  assert.equal(lightFromSnapshot('ses_a', lights, true), sessionLight(lights.get('ses_a'), true))
+  // 断开时一律灰，哪怕快照说空闲
+  assert.equal(lightFromSnapshot('ses_a', new Map([['ses_a', { time: { busy: 1, idle: 2 } }]]), false), 'unknown')
+})
+
+test('lightFromSnapshot: 只认自己的 id，不会串到别的会话', () => {
+  const lights = new Map([['ses_a', { time: { busy: 200, idle: 100 } }]])
+  assert.equal(lightFromSnapshot('ses_b', lights, true), 'unknown')
+})
+

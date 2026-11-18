@@ -12,11 +12,20 @@
   font-size: var(--fs-sm);
 }
 
+/*
+ * 列表默认吃满面板剩余高度（原来是写死 max-height:132px，下面一大片空白全浪费）。
+ * 选中某一条后详情区出现，这时列表让到 45%，剩下的留给输出。
+ */
 .shell-list {
-  max-height: 132px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   border-bottom: 1px solid var(--line-1);
-  flex: 0 0 auto;
+}
+
+.shell-panel:has(.shell-detail) .shell-list {
+  flex: 0 1 auto;
+  max-height: 45%;
 }
 
 .shell-row {
@@ -142,7 +151,7 @@
   padding: 8px 14px;
   overflow: auto;
   min-height: 60px;
-  max-height: 140px;
+  max-height: none;
   font-family: 'Cascadia Mono', Consolas, monospace;
   font-size: var(--fs-sm);
   line-height: 1.5;
@@ -157,12 +166,9 @@
     display: none;
   }
 
-  .shell-list {
-    max-height: 104px;
-  }
-
-  .shell-output {
-    max-height: 108px;
+  /* 手机上不再写死高度：列表照样吃满，选中后按 45% 让位 */
+  .shell-panel:has(.shell-detail) .shell-list {
+    max-height: 50%;
   }
 }
 

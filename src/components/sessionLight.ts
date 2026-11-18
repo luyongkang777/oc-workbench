@@ -46,3 +46,22 @@ export function sessionLightTitle(light: SessionLight): string {
   if (light === 'unknown') return '未连接'
   return '空闲'
 }
+
+/**
+ * 从「会话 id → 轮询快照」的映射里取某条会话的灯色。
+ *
+ * 两个地方都要这份判定（顶栏当前会话灯 + 会话列表每一条的灯），
+ * 复制两份迟早分叉，所以放这里。参数用结构化的最小形状，
+ * 不 import api/chat，node 单测仍能直接跑。
+ */
+export function lightFromSnapshot(
+  sessionID: string,
+  lights: Map<string, { time?: { busy?: number; idle?: number }; metadata?: Record<string, unknown> }> | undefined,
+  connected: boolean,
+): SessionLight {
+  const live = lights?.get(sessionID)
+  // 快照里没有这条 = 这一轮没拿到它的状态：一律灰，不替服务端做「空闲」承诺
+  if (!live) return 'unknown'
+  return sessionLight(live, connected)
+}
+
