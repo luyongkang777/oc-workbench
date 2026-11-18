@@ -3,6 +3,14 @@ import type { AgentInfo } from '../api/chat'
 import { formatBytes } from './codeWindow'
 import { isImageMime, type ChatAttachment } from './attachments'
 import { filterCommands, type CommandItem } from './chatCommands'
+import {
+  applyMention,
+  baseName,
+  dirName,
+  filterHits,
+  parseMentionAt,
+  type MentionHit,
+} from './fileMention'
 import { isMobileViewport } from '../hooks/useMobileLayout'
 
 type Props = {
@@ -19,6 +27,8 @@ type Props = {
   onStop: () => void
   /** 把前台阻塞的工具挪到后台（只在生成中可用） */
   onBackground: () => void
+  /** 按关键字搜工作区的相对路径（@ 补全用）。返回空数组表示没匹配 */
+  onFindFiles: (query: string) => Promise<MentionHit[]>
   onBuiltin: (name: string) => void
   onPickAgent: (id: string) => void
   onAddFiles: (files: File[]) => void
@@ -45,6 +55,7 @@ export default function ChatInput({
   onSend,
   onStop,
   onBackground,
+  onFindFiles,
   onBuiltin,
   onPickAgent,
   onAddFiles,
@@ -53,11 +64,15 @@ export default function ChatInput({
 }: Props) {
   // 手机屏上那条长提示会折成两行、把输入框挤满：窄视口换成一句短的
   const compactHint = isMobileViewport()
-  const [menu, setMenu] = useState<'commands' | 'agents' | null>(null)
+  const [menu, setMenu] = useState<'commands' | 'agents' | 'files' | null>(null)
   const [active, setActive] = useState(0)
   const [dismissed, setDismissed] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
+  /** @ 提及：正在输入的那一段 + 候选路径 */
+  const [mention, setMention] = useState<{ query: string; start: number; end: number } | null>(null)
+  const [fileHits, setFileHits] = useState<MentionHit[]>([])
+  const [fileLoading, setFileLoading] = useState(false)
   const areaRef = useRef<HTMLTextAreaElement | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -90,6 +105,83 @@ export default function ChatInput({
     const node = listRef.current?.querySelector<HTMLElement>('.chat-slash-item.active')
     node?.scrollIntoView({ block: 'nearest' })
   }, [active, menu])
+
+  /**
+   * 父组件传进来的搜索回调每次渲染都可能换新函数；放进 ref，
+   * 这样 effect 只依赖「菜单开着」和「查询词」，不会因为父组件重渲染反复发请求。
+   */
+  const findFilesRef = useRef(onFindFiles)
+  findFilesRef.current = onFindFiles
+
+  // 菜单开着时按查询词取候选；查询词变化后短暂防抖，避免每个字符打一次磁盘。
+  useEffect(() => {
+    if (menu !== 'files') return
+    const query = mention?.query ?? ''
+    let alive = true
+    setFileLoading(true)
+    const timer = setTimeout(() => {
+      findFilesRef
+        .current(query)
+        .then((hits) => {
+          if (alive) setFileHits(hits)
+        })
+        .catch(() => {
+          if (alive) setFileHits([])
+        })
+        .finally(() => {
+          if (alive) setFileLoading(false)
+        })
+    }, 90)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [menu, mention?.query])
+
+  /**
+   * 根据文本和光标判断是否处于 @ 提及中。
+   *
+   * 只有「用户自己打字/点选」才调用：程序化插入路径后调它会把刚插入的
+   * `@src/a.ts` 又当成新提及，菜单自己弹回来。
+   */
+  function syncMention(value: string, caret: number | null) {
+    const found = caret === null ? null : parseMentionAt(value, caret)
+    setMention(found)
+    if (found) {
+      setMenu('files')
+      setActive(0)
+      setFileHits([])
+    } else if (menu === 'files') {
+      setMenu(null)
+    }
+  }
+
+  /** 选中一个候选：把 @query 换成 @路径，光标落到后面。目录则留在提及里继续补。 */
+  function chooseFile(hit: MentionHit) {
+    if (!mention) return
+    const isDir = hit.type === 'directory'
+    const applied = applyMention(draft, mention, hit.path, isDir)
+    setFileHits([])
+    onDraftChange(applied.text)
+    if (isDir) {
+      // 目录：提及还在（@src\components\），把状态同步成新的 query 好继续补
+      const nextMention = parseMentionAt(applied.text, applied.caret)
+      setMention(nextMention)
+      setMenu(nextMention ? 'files' : null)
+      setActive(0)
+    } else {
+      setMention(null)
+      setMenu(null)
+      setDismissed(true)
+    }
+    // 光标要落在插入内容之后：改完草稿再定位，否则会被受控组件的重渲染覆盖
+    requestAnimationFrame(() => {
+      const el = areaRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(applied.caret, applied.caret)
+    })
+  }
 
   function focusInput() {
     requestAnimationFrame(() => {
@@ -136,6 +228,42 @@ export default function ChatInput({
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (menu === 'files') {
+      const hits = filterHits(fileHits, mention?.query ?? '')
+      // 菜单开着的时候，Enter 一律归菜单：候选为空也不能穿透去发送，
+      // 否则「打了 @ 但没搜到文件」按回车的半句话直接被发出去（实测过的坑）。
+      // 但 Shift+Enter 是换行，任何情况下都得放过去——否则「@ 打了字又搜不到」
+      // 就变成既选不了、也换不了行（实测踩过）。
+      if ((event.key === 'Enter' || event.key === 'Tab') && hits.length === 0) {
+        if (!event.shiftKey) event.preventDefault()
+        return
+      }
+      if (event.key === 'ArrowDown' && hits.length > 0) {
+        event.preventDefault()
+        setActive((current) => (current + 1) % hits.length)
+        return
+      }
+      if (event.key === 'ArrowUp' && hits.length > 0) {
+        event.preventDefault()
+        setActive((current) => (current - 1 + hits.length) % hits.length)
+        return
+      }
+      if ((event.key === 'Enter' || event.key === 'Tab') && hits.length > 0) {
+        // Shift+Enter = 换行，不能拿去选候选
+        if (event.shiftKey) return
+        event.preventDefault()
+        chooseFile(hits[Math.min(active, hits.length - 1)])
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setMention(null)
+        setMenu(null)
+        return
+      }
+      // 其余按键交给输入框：继续打字时 onChange 会重新解析提及
+    }
+
     if (menu === 'commands' && filtered.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
@@ -256,8 +384,37 @@ export default function ChatInput({
         }}
       />
       {menu ? (
-        <div className="chat-slash-menu">
-          {menu === 'agents' ? (
+        <div className={menu === 'files' ? 'chat-slash-menu files' : 'chat-slash-menu'}>
+          {menu === 'files' ? (
+            <div className="chat-slash-list" ref={listRef}>
+              {fileLoading && fileHits.length === 0 ? (
+                <div className="chat-slash-empty">搜索文件…</div>
+              ) : filterHits(fileHits, mention?.query ?? '').length === 0 ? (
+                <div className="chat-slash-empty">
+                  {mention?.query ? `没有匹配 ${mention.query} 的文件` : '当前目录没有可引用的文件'}
+                </div>
+              ) : (
+                filterHits(fileHits, mention?.query ?? '').map((hit, index) => (
+                  <button
+                    key={hit.path}
+                    type="button"
+                    className={`chat-slash-item${index === active ? ' active' : ''}`}
+                    title={hit.type === 'directory' ? `${hit.path}（目录，可继续往下选）` : hit.path}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      chooseFile(hit)
+                    }}
+                  >
+                    <span className="chat-slash-name">
+                      {baseName(hit.path)}
+                      {hit.type === 'directory' ? '\\' : ''}
+                    </span>
+                    <span className="chat-slash-desc"><bdi>{dirName(hit.path)}</bdi></span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : menu === 'agents' ? (
             <>
               <button
                 type="button"
@@ -375,6 +532,16 @@ export default function ChatInput({
             setDismissed(false)
             setNotice(null)
             onDraftChange(event.target.value)
+            // 用事件里的光标位置判断 @ 提及：受控组件的 value 还没回流到 DOM，
+            // 直接读 el.selectionStart 可能是上一轮的位置
+            syncMention(event.target.value, event.target.selectionStart)
+          }}
+          onSelect={(event) => {
+            // 点选/方向键移动光标后也要重新判断：光标可能已经离开提及范围
+            const el = event.currentTarget
+            if (el.selectionStart === el.selectionEnd) {
+              syncMention(el.value, el.selectionStart)
+            }
           }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}

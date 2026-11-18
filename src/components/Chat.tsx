@@ -98,6 +98,7 @@ import {
   type SessionRevert,
 } from '../api/chat'
 import { joinRevertedDraft, revertNoticeText, sliceAtRevert } from './revert'
+import { findMentions } from '../api/localfs'
 
 type Props = {
   root: string
@@ -1851,6 +1852,15 @@ export default function Chat({
         }}
         onSend={() => void send()}
         onBackground={() => void moveToBackground()}
+        onFindFiles={async (query) => {
+          if (!root) return []
+          const hits = await findMentions(root, query)
+          // type 要带上去：目录选完可以继续往下选（office 里就是这么用的）
+          return hits.map((hit) => ({
+            path: hit.path,
+            type: hit.type === 'directory' ? ('directory' as const) : ('file' as const),
+          }))
+        }}
         onStop={() => void stop()}
         onBuiltin={(name) => void runBuiltin(name)}
         onPickAgent={(id) => void pickAgent(id)}

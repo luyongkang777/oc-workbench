@@ -74,6 +74,26 @@ export async function findLocal(
   return res.matches ?? []
 }
 
+/**
+ * `@` 补全：按子串模糊搜工作区里的路径（文件和目录都返回）。
+ *
+ * 和 [`findLocal`] 不同，这里不要求完整文件名——输入框里打半个词就要出候选。
+ * 服务端已按「浅层优先」排过序，前端只需要再按匹配位置细调。
+ */
+export async function findMentions(
+  root: string,
+  query: string,
+  signal?: AbortSignal,
+): Promise<FindMatch[]> {
+  const q = query.trim()
+  const res = await localRequest<{ matches?: FindMatch[] }>(
+    `/local/fs/mentions?root=${encodeURIComponent(root)}&q=${encodeURIComponent(q)}`,
+    signal,
+    20_000,
+  )
+  return res.matches ?? []
+}
+
 export async function statFile(
   root: string,
   relPath: string,

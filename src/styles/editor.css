@@ -1437,6 +1437,26 @@
   opacity: 0.55;
 }
 
+/*
+ * @ 文件提及的候选行：文件名要宽一些（路径常常很长），目录部分靠右省略。
+ * 复用 .chat-slash-item 的布局，只调两段的宽度与颜色。
+ */
+.chat-slash-menu.files .chat-slash-name {
+  flex: 0 1 auto;
+  max-width: 55%;
+}
+
+.chat-slash-menu.files .chat-slash-desc {
+  flex: 1 1 0;
+  direction: rtl;
+  text-align: right;
+}
+
+.chat-slash-menu.files .chat-slash-desc > bdi {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 .chat-slash-badge {
   flex: 0 0 auto;
   padding: 0 4px;

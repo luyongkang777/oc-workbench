@@ -45,6 +45,12 @@ const FIND_SKIP = new Set(['node_modules', '.git', 'dist', 'target', '.vite', '.
 const FIND_MAX_DEPTH = 8
 const FIND_MAX_VISITS = 20000
 const FIND_MAX_MATCHES = 50
+/** @ 补全名额收紧一档：会随打字连续触发，不能像 find 那样扫很久。 */
+const MENTION_MAX_MATCHES = 30
+/** 收集阶段先多收，排序后再截：否则 .git / .tmp / node_modules 会先占满 30 条名额。 */
+const MENTION_COLLECT_MAX = MENTION_MAX_MATCHES * 4
+const MENTION_MAX_VISITS = 12000
+const MENTION_MAX_QUERY_CHARS = 128
 
 // ---------- 保存（PUT /local/fs/write）用的小工具 ----------
 
@@ -634,6 +640,75 @@ async function findByName(root, name) {
   return { matches }
 }
 
+/**
+ * `@` 补全用的路径模糊搜索：匹配子串而不是完整文件名，目录也一起返回。
+ *
+ * 与 findByName 共用跳过规则与深度上限，但名额更紧（补全会随打字连续触发）。
+ * query 为空时返回浅层优先的一批，给菜单打底。
+ */
+async function findMentions(root, query) {
+  if (!root) throw httpError(400, '缺少 root 参数')
+  if (query.length > MENTION_MAX_QUERY_CHARS) throw httpError(400, '补全关键词过长')
+  const rootReal = await realpath(root).catch(() => {
+    throw httpError(404, `目录不存在：${root}`)
+  })
+  const needle = query.toLowerCase().replace(/\//g, '\\')
+  const matches = []
+  let visits = 0
+
+  // 广度优先：按深度优先的话，第一个子目录（可能很深很碎）就能吃满 30 条名额，
+  // 同层的其它文件就看不到了。这里按层推进，保证浅层的先出现（与 Rust 侧一致）。
+  const queue = [{ dirAbs: rootReal, rel: '', depth: 0 }]
+  while (queue.length > 0) {
+    if (matches.length >= MENTION_COLLECT_MAX || visits >= MENTION_MAX_VISITS) break
+    const { dirAbs, rel, depth } = queue.shift()
+    if (depth > FIND_MAX_DEPTH) continue
+
+    let entries
+    try {
+      entries = await readdir(dirAbs, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    visits += entries.length
+    for (const entry of entries) {
+      if (matches.length >= MENTION_COLLECT_MAX || visits >= MENTION_MAX_VISITS) break
+      const childRel = rel ? `${rel}\\${entry.name}` : entry.name
+      const hit = !needle || childRel.toLowerCase().includes(needle)
+      if (hit) {
+        matches.push({
+          path: childRel,
+          type: entry.isDirectory() ? 'directory' : 'file',
+          depth: childRel.split('\\').length,
+        })
+      }
+      if (entry.isDirectory() && !FIND_SKIP.has(entry.name)) {
+        queue.push({ dirAbs: path.join(dirAbs, entry.name), rel: childRel, depth: depth + 1 })
+      }
+    }
+  }
+  // 排序优先级与 Rust 侧一致：普通项 > 隐藏项（. 开头）> 重目录（node_modules 等），
+  // 同组内浅层优先再按名字。否则打 @ 的第一屏全是 .git / .tmp / node_modules。
+  const rankOf = (p) => {
+    const name = p.split('\\').pop()
+    if (FIND_SKIP.has(name)) return 2
+    if (name.startsWith('.')) return 1
+    return 0
+  }
+  matches.sort((a, b) => {
+    const ra = rankOf(a.path)
+    const rb = rankOf(b.path)
+    if (ra !== rb) return ra - rb
+    if (a.depth !== b.depth) return a.depth - b.depth
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0
+  })
+  return {
+    matches: matches
+      .slice(0, MENTION_MAX_MATCHES)
+      .map(({ path: p, type }) => ({ path: p, type })),
+  }
+}
+
 async function handle(req, res) {
   const method = req.method || 'GET'
   if (method !== 'GET' && method !== 'HEAD' && method !== 'PUT' && method !== 'POST') {
@@ -661,6 +736,12 @@ async function handle(req, res) {
     const name = (url.searchParams.get('name') || rel || '').trim()
     if (!name) throw httpError(400, '缺少 name 参数')
     return sendJson(res, 200, await findByName(root, name))
+  }
+
+  // 输入框的 @ 补全：按子串模糊匹配路径
+  if (action === 'mentions') {
+    const query = (url.searchParams.get('q') || '').trim()
+    return sendJson(res, 200, await findMentions(root, query))
   }
 
   const target = await resolveTarget(root, rel)

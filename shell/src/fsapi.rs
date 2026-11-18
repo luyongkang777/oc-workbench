@@ -39,6 +39,14 @@ const WRITE_BODY_LIMIT: usize = 8 * 1024 * 1024;
 const FIND_MAX_DEPTH: usize = 8;
 const FIND_MAX_VISITS: usize = 20_000;
 const FIND_MAX_MATCHES: usize = 50;
+/// `mentions`（输入框 @ 补全）名额收紧一档：补全会随打字连续触发，不能扫太久。
+const MENTION_MAX_MATCHES: usize = 30;
+/// 收集阶段先多收一些，排序后再截到 MENTION_MAX_MATCHES。
+/// 否则 30 条名额在遍历时就先被 .git / .tmp / node_modules 占满，
+/// 排序再对也来不及（实测根目录 22 条时它们直接霸屏）。
+const MENTION_COLLECT_MAX: usize = MENTION_MAX_MATCHES * 4;
+const MENTION_MAX_VISITS: usize = 12_000;
+const MENTION_MAX_QUERY_CHARS: usize = 128;
 /// 与前端文件树的隐藏规则一致。
 const FIND_SKIP: [&str; 7] = [
     "node_modules",
@@ -90,6 +98,17 @@ pub fn handle(request: tiny_http::Request, path: &str, url: &str) {
             return;
         }
         find(request, &root, &name);
+        return;
+    }
+
+    // 输入框的 @ 补全：按子串模糊匹配路径（find 只认完整文件名，不够用）。
+    if action == "mentions" {
+        let query = param(&pairs, "q").unwrap_or("").trim().to_string();
+        if query.chars().count() > MENTION_MAX_QUERY_CHARS {
+            let _ = json_error(request, 400, "补全关键词过长");
+            return;
+        }
+        mentions(request, &root, &query);
         return;
     }
 
@@ -417,6 +436,105 @@ fn find_matches(root: &Path, name: &str) -> Result<Vec<String>, PathError> {
     Ok(matches.into_iter().map(|(_, path)| path).collect())
 }
 
+/// `@` 补全用的路径模糊搜索：匹配**子串**而不是完整文件名，目录也一起返回
+/// （用户可能想补到某个目录再往下打）。query 为空时返回浅层优先的一批给菜单打底。
+///
+/// 与 [`find_matches`] 共用 [`FIND_SKIP`] / 深度 / 访问量上限，但名额更紧：
+/// 补全会随打字连续触发，不能像 find 那样一次扫很久。
+fn mentions(request: tiny_http::Request, root: &str, query: &str) {
+    match mention_matches(Path::new(root), query) {
+        Ok(found) => {
+            let items: Vec<serde_json::Value> = found
+                .into_iter()
+                .map(|(path, is_dir)| {
+                    json!({
+                        "path": path,
+                        "type": if is_dir { "directory" } else { "file" },
+                    })
+                })
+                .collect();
+            let _ = respond_json(request, 200, json!({ "matches": items }).to_string());
+        }
+        Err(err) => {
+            let _ = json_error(request, err.code, &err.message);
+        }
+    }
+}
+
+/// [`mentions`] 的纯逻辑：返回 `(相对 root 的路径, 是否目录)`，浅层优先。
+fn mention_matches(root: &Path, query: &str) -> Result<Vec<(String, bool)>, PathError> {
+    let root_canon = root
+        .canonicalize()
+        .map_err(|_| PathError::new(404, format!("目录不存在：{}", root.display())))?;
+    if !root_canon.is_dir() {
+        return Err(PathError::new(400, "root 不是目录"));
+    }
+
+    // 用户可能打 / 也可能打 \，统一成反斜杠再比；路径全部小写比较
+    let needle = query.to_lowercase().replace('/', "\\");
+    let mut matches: Vec<(usize, String, bool)> = Vec::new();
+    let mut visits = 0usize;
+    // 用队列做广度优先：如果按深度优先，第一个子目录（可能很深很碎）就能把
+    // 30 条名额吃光，用户看不到同层的其它文件。广度优先保证浅层的先出现。
+    let mut queue: std::collections::VecDeque<(PathBuf, String, usize)> =
+        std::collections::VecDeque::new();
+    queue.push_back((root_canon, String::new(), 0));
+
+    while let Some((dir, rel, depth)) = queue.pop_front() {
+        if matches.len() >= MENTION_COLLECT_MAX || visits >= MENTION_MAX_VISITS {
+            break;
+        }
+        let Ok(reader) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in reader.flatten() {
+            if matches.len() >= MENTION_COLLECT_MAX || visits >= MENTION_MAX_VISITS {
+                break;
+            }
+            visits += 1;
+            let entry_name = item.file_name().to_string_lossy().to_string();
+            let is_dir = item.metadata().map(|meta| meta.is_dir()).unwrap_or(false);
+            let child_rel = if rel.is_empty() {
+                entry_name.clone()
+            } else {
+                format!("{rel}\\{entry_name}")
+            };
+            if needle.is_empty() || child_rel.to_lowercase().contains(&needle) {
+                let depth_of = child_rel.matches('\\').count();
+                matches.push((depth_of, child_rel.clone(), is_dir));
+            }
+            if is_dir && !FIND_SKIP.contains(&entry_name.as_str()) && depth + 1 <= FIND_MAX_DEPTH {
+                queue.push_back((item.path(), child_rel, depth + 1));
+            }
+        }
+    }
+
+    // 排序优先级：普通项 > 隐藏项（. 开头）> 重目录（node_modules 等）。
+    // 只按层级排的话，打 @ 的第一屏会全是 .git / .tmp / node_modules，源码排在后面
+    // （实测：根目录 22 条时它们直接占满 30 条名额）。
+    // 同组内仍然是浅层优先、再按名字。
+    matches.sort_by(|a, b| {
+        let rank = |path: &str| -> u8 {
+            let name = path.rsplit('\\').next().unwrap_or(path);
+            if FIND_SKIP.contains(&name) {
+                2
+            } else if name.starts_with('.') {
+                1
+            } else {
+                0
+            }
+        };
+        rank(&a.1)
+            .cmp(&rank(&b.1))
+            .then_with(|| a.0.cmp(&b.0))
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    Ok(matches
+        .into_iter()
+        .take(MENTION_MAX_MATCHES)
+        .map(|(_, path, dir)| (path, dir))
+        .collect())
+}
 /// 查询参数里的 `encoding`：None = 自动；名字不认识就回一句错误（调用方转 400）。
 fn encoding_param(pairs: &[(String, String)]) -> Result<Option<Enc>, String> {
     match param(pairs, "encoding").filter(|value| !value.is_empty()) {

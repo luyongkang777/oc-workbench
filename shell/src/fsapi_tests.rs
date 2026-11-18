@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{find_matches, resolve};
+use super::{find_matches, mention_matches, resolve};
 use crate::fsdecode;
 use crate::fsindex;
 use crate::fsread;
@@ -188,6 +188,43 @@ fn find_matches_locates_bare_name() {
     assert_eq!(find_matches(&dir, "status.h").expect("大小写不敏感").len(), 2);
     // 找不到就是空，不报错
     assert!(find_matches(&dir, "Nope.h").expect("找不到返回空").is_empty());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `@` 补全：按子串匹配路径（不是完整文件名），目录也要返回，浅层优先。
+#[test]
+fn mention_matches_does_substring_and_keeps_dirs() {
+    let dir = temp_dir();
+    let src_dir = dir.join("src");
+    let deep = src_dir.join("components");
+    fs::create_dir_all(&deep).expect("建 components");
+    write_file(&src_dir, "chat.ts", b"// chat\n");
+    write_file(&deep, "ChatInput.tsx", b"// input\n");
+    write_file(&dir, "README.md", b"# readme\n");
+
+    // 半个词就能命中：两个文件名里都有 chat（大小写不敏感）
+    let hits = mention_matches(&dir, "chat").expect("按子串找");
+    let paths: Vec<&str> = hits.iter().map(|(path, _)| path.as_str()).collect();
+    assert!(paths.contains(&"src\\chat.ts"), "顶层 src/chat.ts 要命中：{paths:?}");
+    assert!(
+        paths.contains(&"src\\components\\ChatInput.tsx"),
+        "深层文件也要命中：{paths:?}"
+    );
+    assert!(!paths.contains(&"README.md"), "不匹配的不能混进来：{paths:?}");
+
+    // 目录本身也要能补出来（用户可能想补到目录再往下打）
+    let dirs = mention_matches(&dir, "comp").expect("找目录");
+    assert!(
+        dirs.iter().any(|(path, is_dir)| path == "src\\components" && *is_dir),
+        "目录要带 is_dir=true：{dirs:?}"
+    );
+
+    // 空查询返回一批给菜单打底，浅层优先
+    let all = mention_matches(&dir, "").expect("空查询");
+    assert!(!all.is_empty(), "空查询应该有内容打底");
+    let first_depth = all[0].0.matches('\\').count();
+    assert_eq!(first_depth, 0, "空查询的结果要浅层优先：{:?}", all[0].0);
 
     let _ = fs::remove_dir_all(&dir);
 }
