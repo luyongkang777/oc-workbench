@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { pageVisible } from '../api/visibility'
 import MarkdownText, { type OpenFile } from './MarkdownText'
@@ -6,7 +6,7 @@ import { useTurnWindow } from './useTurnWindow'
 import { copyText } from './clipboard'
 import { isRetryableFailure } from './retryPolicy'
 import { isImageFile, messageFilePreview } from './attachments'
-import { parseFilePath } from './fileLinks'
+import { splitTextPaths } from './fileLinks'
 import {
   formatDateTime,
   groupTurnsIncremental,
@@ -43,8 +43,14 @@ function ToolRow({ tool, onOpenFile }: { tool: ToolInfo; onOpenFile?: OpenFile }
       : tool.status === 'running' || tool.status === 'pending'
         ? 'run'
         : 'fail'
-  // 工具详情经常就是文件路径（read / edit 的入参），能认出来就点开
-  const file = onOpenFile ? parseFilePath(tool.detail) : null
+  // 工具详情经常就是一整条命令（`cd F:/x; node .tmp/a.mjs`）：不能把整段当路径，
+  // 只把其中真正的文件挑出来做成可点的。整段就是一个路径时仍按原来的按钮样式显示。
+  const chunks = useMemo(
+    () => (onOpenFile ? splitTextPaths(tool.detail) : []),
+    [onOpenFile, tool.detail],
+  )
+  const files = chunks.filter((chunk) => chunk.kind === 'file')
+  const wholePath = files.length === 1 && chunks.length === 1
   const hasBody = Boolean(tool.args || tool.output)
 
   return (
@@ -61,18 +67,37 @@ function ToolRow({ tool, onOpenFile }: { tool: ToolInfo; onOpenFile?: OpenFile }
           <span className="chat-tool-caret">{hasBody ? (open ? '▾' : '▸') : '·'}</span>
           <span className="chat-tool-name">{tool.name}</span>
         </button>
-        {file && onOpenFile ? (
+        {wholePath && onOpenFile ? (
           <button
             type="button"
             className="chat-tool-detail chat-tool-file"
-            title={`在编辑器打开 ${file.path}${file.line ? ` 第 ${file.line} 行` : ''}`}
-            onClick={() => onOpenFile(file.path, file.line)}
+            title={`在编辑器打开 ${files[0].ref.path}${files[0].ref.line ? ` 第 ${files[0].ref.line} 行` : ''}`}
+            onClick={() => onOpenFile(files[0].ref.path, files[0].ref.line)}
           >
             {tool.detail}
           </button>
         ) : (
-          <span className="chat-tool-detail" title={tool.detail}>
-            {tool.detail}
+          <span
+            className={`chat-tool-detail${files.length > 0 ? ' chat-tool-detail-links' : ''}`}
+            title={tool.detail}
+          >
+            {onOpenFile && files.length > 0
+              ? chunks.map((chunk, index) =>
+                  chunk.kind === 'file' ? (
+                    <button
+                      key={index}
+                      type="button"
+                      className="chat-tool-file"
+                      title={`在编辑器打开 ${chunk.ref.path}${chunk.ref.line ? ` 第 ${chunk.ref.line} 行` : ''}`}
+                      onClick={() => onOpenFile(chunk.ref.path, chunk.ref.line)}
+                    >
+                      {chunk.text}
+                    </button>
+                  ) : (
+                    <Fragment key={index}>{chunk.text}</Fragment>
+                  ),
+                )
+              : tool.detail}
           </span>
         )}
         <span className="chat-tool-status">{tool.status}</span>

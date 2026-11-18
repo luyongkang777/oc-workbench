@@ -55,6 +55,12 @@ export function useFileTabs(options: {
       // root —— 只影响编辑器，不改当前工作区，会话和文件树都留在原处。
       const target = splitOpenPath(rootRef.current, relPath)
       if (!target.path) return
+      // 走到这里还带冒号，说明传进来的是一整条命令 / URL 之类，不是文件路径。
+      // 直接说清楚，别再发给本地文件通道换一个 400「路径不允许包含盘符」。
+      if (target.path.includes(':')) {
+        notify(`这看着不像文件路径：${relPath}`)
+        return
+      }
 
       const open = (finalPath: string) => {
         const sameRoot = normPath(target.root) === normPath(rootRef.current)

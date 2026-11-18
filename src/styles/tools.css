@@ -166,6 +166,16 @@
   color: var(--text-3);
 }
 
+/* 含可点文件链接时允许横向滚动：命令很长时路径往往在末尾，
+   单行省略会把唯一能点的东西裁掉（用户看到的是「点了没反应」）。 */
+.chat-tool-detail.chat-tool-detail-links {
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-overflow: clip;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
 .chat-tool-status {
   flex: 0 0 auto;
   font-size: var(--fs-2xs);
@@ -181,6 +191,12 @@
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 2px;
+}
+
+/* 内联在命令行文本里那一种：字体/字号跟父行一致，别用 button 的 UA 字体。
+   只对后代生效，整段就是路径的那个按钮仍保留 .chat-tool-detail 的等宽字体。 */
+.chat-tool-detail .chat-tool-file {
+  font: inherit;
 }
 
 .chat-tool-file:hover {

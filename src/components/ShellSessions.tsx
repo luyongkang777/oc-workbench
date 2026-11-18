@@ -25,6 +25,12 @@ export default function ShellSessions({ root, connected, visible, onCount }: Pro
     active?.status === 'killed',
   )
 
+  // 回到纯列表：详情区没有自己的折叠入口时，用户进了「运行中」就找不到列表了
+  const back = () => {
+    setSelected(null)
+    reset()
+  }
+
   // 被缓存裁掉 / 被别处删除的条目要顺手清掉选中，否则详情区会静默消失还留着高亮
   useEffect(() => {
     if (selected && !items.some((item) => item.id === selected)) {
@@ -41,8 +47,12 @@ export default function ShellSessions({ root, connected, visible, onCount }: Pro
         items={items}
         selected={selected}
         onPick={(id) => {
-          setSelected(id)
-          reset()
+          // 再点一次已选中的行 = 收起详情（和「← 列表」等价）
+          if (id === selected) back()
+          else {
+            setSelected(id)
+            reset()
+          }
         }}
       />
       {error ? <div className="shell-error">{error}</div> : null}
@@ -55,6 +65,7 @@ export default function ShellSessions({ root, connected, visible, onCount }: Pro
           error={outError}
           killing={killing === active.id}
           onKill={() => void kill(active.id)}
+          onBack={back}
         />
       ) : null}
     </div>

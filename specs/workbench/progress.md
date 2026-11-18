@@ -391,3 +391,42 @@
   - REVIEW: 中 | 🔴0 🟡3 🟢4 | 结论: Approve（🟡3 全部修掉：Esc 关不掉面板、停止窗口没绑会话、
     `getSession` 无超时；🟢4：合并 lightFor、其余为已知取舍已注明）
 
+
+- 2026-11-18 **消息里点文件路径报 400「路径不允许包含盘符」修复**（用户报：`cd F:/opencode/workbench; node .tmp/make-app-icon.mjs` 打不开）：
+  - 根因：`splitTextPaths` 把整条 shell 命令当成一个绝对路径（以 `F:/` 开头、末尾 `.mjs` 又过了扩展名白名单），
+    `openFile` 原样把整条命令发给 `/local/fs`，后端逐段校验时遇到 `:` 直接 400
+  - `fileLinks.ts`：`; & | < >` 同时作为 `parseFilePath` 的拒绝条件和切分边界；
+    非绝对路径带空格一律不认（以前只按空白切词，整条命令漏网）；绝对路径允许中文文件名，
+    紧贴路径的正文汉字（`C:\a.txt看看`）按扩展名白名单剥离
+  - `MessageList.tsx`：工具详情改成逐段渲染，命令里的文件单独可点（整段就是路径时保持原按钮样式）
+  - `useFileTabs.ts`：残留冒号的路径不再发给本地通道，直接提示「这看着不像文件路径」
+  - 测试：新增 3 项回归（整条命令 / `&&`·`|` / 中文绝对路径），`npm test` 668 项全过、`tsc --noEmit` 干净
+  - REVIEW: 中 | 🔴0 🟡2 🟢2 | 结论: Approve（🟡：相对路径里的中文文件名仍不认，宁可漏判；
+    合法文件名带 `&` 会被当分隔符。🟢：`SHELL_PART_RE` 改就地 new，避开模块级正则 lastIndex）
+
+- 2026-11-18 **Shell 面板进详情后回不到列表**（用户报：点一条命令看到「运行中」就返回不了看 shell 列表）：
+  - 根因：列表与详情是上下两块，详情区头部只有「终止」，没有任何收起入口；选中状态只能靠点别的行换掉，
+    切 tab 也不重置（三个面板常驻挂载），进来就出不去
+  - `ShellSessions.tsx`：新增 `back()`（清空选中 + 清输出）传给详情；点已选中的行再点一次 = 收起（toggle）
+  - `shellViews.tsx`：详情头最左加常驻「← 列表」按钮；补命令摘要（以前只有一个「运行中」，看不出是哪条）
+  - `shell-panel.css`：`.shell-back` / `.shell-detail-cmd` 样式；详情头改 `flex-wrap: nowrap`，
+    状态/退出码/终止按钮 `white-space: nowrap`——底栏拖窄时「运行中」以前会被压成逐字竖排
+  - 验收：CDP 真机 8/8（进详情、返回按钮可见、点返回回列表、同行 toggle 收起）；`npm test` 668 项全过、`tsc --noEmit` 干净
+  - REVIEW: 中 | 🔴0 🟡1 🟢2 | 结论: Approve（🟡：极窄面板下命令摘要会缩没，靠 title 兜底；
+    🟢：`back` 定义在 `useShellOutput` 之后、样式与列表共用同一套 token）
+
+- 2026-11-18 **两轮改动的交付前审查（代码 + UI）**：
+  - 深度审派了独立子智能体（只给 diff，不看本轮推理），定级「高」，结论 🔴0 🟡1 🟢7；🟡 已修，🟢 逐条处置
+  - 修 1（🟡 真 bug）：前导引号/方括号/圆括号没剥，`"src/a.ts"` 会带标点当路径、点开报「打不开」
+    → `fileLinks.ts` 加 `LEAD_PUNCT`；补回归（`"src/a.ts"`、`[src/a.ts]`、`node "F:/a/b.mjs"`），fileLinks 测试 15 项
+  - 修 2（🟢 UI）：工具行内联的文件链接是 button，字体走 UA 默认（13.33px Arial），与命令正文 12.5px 等宽不一致
+    → `.chat-tool-detail .chat-tool-file { font: inherit }`（只对后代生效，整段路径按钮仍保留等宽）
+  - 修 3（🟢 UX）：长命令里路径在末尾，单行省略会把它裁掉、点不到
+    → 含链接时 `overflow-x: auto` + 细滚动条；DOM 桩实测 360 宽行：span 297 / 内容 556，可滑到末尾
+  - 修 4（🟢）：`.shell-detail-head` 重复定义（后一条把 gap 从 10 改成 8）→ 合并一处，并加 `overflow: hidden` 兜底极窄面板
+  - 未修（🟢 已知取舍）：`C:\a.txt看b.md` 这类无空格粘连会整段被吃；含 `&`/`;` 的文件名不可点（宁可漏判）；
+    非 Windows 的 `a:b.txt` 会被冒号拦截（本项目只跑 Windows）
+  - UI 验收：CDP 32/32（暗/浅 × 520/340 宽；详情头无溢出、不竖排、返回按钮可点、头部元素不重叠）；
+    截图人工复核 3 张（dark-wide / light-wide / dark-narrow）
+  - 机器验证：`npm test` 669 项全过、`tsc --noEmit` 干净、`css-check.mjs`（shell-panel.css + tools.css）通过
+  - REVIEW: 中 | 🔴0 🟡1→0 🟢7→4（3 条已修，4 条记录为取舍）| 结论: Approve

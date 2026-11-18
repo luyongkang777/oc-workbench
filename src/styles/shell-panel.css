@@ -105,10 +105,59 @@
 .shell-detail-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
   padding: 4px 12px;
   border-bottom: 1px solid var(--line-1);
   flex: 0 0 auto;
+  /* 极窄面板（桌面底栏拖到 300px 出头）时宁可裁掉命令摘要，也不让整行撑出面板 */
+  overflow: hidden;
+}
+
+/* 返回列表：详情区唯一的出口，必须常驻可见（不能只在 hover 时出现） */
+.shell-back {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  background: var(--bg-control);
+  color: var(--text-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.shell-back:hover {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
+}
+
+.shell-back:focus-visible {
+  outline: 1px solid var(--accent-line);
+  outline-offset: 1px;
+}
+
+/* 详情里要能看出「现在看的是哪条命令」，否则只剩一个「运行中」没法定位 */
+.shell-detail-cmd {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 底栏被拖窄时这几个不能换行：以前「运行中」会被压成逐字竖排 */
+.shell-detail-title,
+.shell-detail-exit,
+.shell-detail-cut,
+.shell-kill {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .shell-detail-title {

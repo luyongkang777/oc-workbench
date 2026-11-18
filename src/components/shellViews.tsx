@@ -51,19 +51,30 @@ export function ShellRows({ items, selected, onPick }: {
   )
 }
 
-export function ShellDetail({ item, output, truncated, error, killing, onKill }: {
+export function ShellDetail({ item, output, truncated, error, killing, onKill, onBack }: {
   item: ShellInfo
   output: string
   truncated: boolean
   error: string | null
   killing: boolean
   onKill: () => void
+  /** 收起详情，回到命令列表（详情区的唯一返回入口） */
+  onBack: () => void
 }) {
   const placeholder = item.status === 'running' ? '（还没有输出）' : '（没有输出）'
   return (
     <div className="shell-detail">
       <div className="shell-detail-head">
+        <button
+          type="button"
+          className="shell-back"
+          onClick={onBack}
+          title="返回命令列表"
+        >
+          ← 列表
+        </button>
         <span className="shell-detail-title">{statusText(item.status)}</span>
+        <span className="shell-detail-cmd" title={item.command}>{commandSummary(item.command)}</span>
         <span className="shell-detail-exit">
           {item.exit == null ? '' : `退出码 ${item.exit}`}
         </span>

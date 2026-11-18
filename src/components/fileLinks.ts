@@ -25,13 +25,26 @@ const FILE_EXT = new Set([
 const MAX_PATH_LEN = 300
 
 /** 尾部会粘在路径上的标点（中英文都有）。 */
-const TRAILING_PUNCT = /[\s,.;:!?，。；：！？、）)\]】》」』"'`]+$/
+const TRAILING_PUNCT = /[\s,.;:!?，。；：！？、）)\]】》」』"'\x60]+$/
+/**
+ * 前导会粘在路径上的标点：命令里的引号、括号、markdown 方括号。
+ * 不剥的话 `"src/a.ts"` 会被认成 `"src/a.ts`（带引号），点开必然打不开。
+ */
+const LEAD_PUNCT = /^["'\x60(\[{（【《]+/
 
 /**
  * 中文正文里路径常常直接粘着汉字（「改一下 src/b.ts，然后看」整段不是空白分隔的），
  * 所以边界还要认中文/全角字符：前缀剥掉、遇到就截断。
  */
 const CJK_RE = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/
+/** 中文/全角标点。绝对路径里汉字可以是文件名，但标点一定是正文边界。 */
+const CJK_PUNCT_RE = /[\u3000-\u303f\uff00-\uffef]/
+/**
+ * shell 命令分隔符。工具详情经常是一整条命令（`cd F:/x; node .tmp/a.mjs`），
+ * 不在这里断开就会把整条命令当成一个路径，点开必然 400「路径不允许包含盘符」。
+ */
+const SHELL_SEP_RE = /[;&|<>]/
+const SHELL_PART_RE = /[^;&|<>]+/
 const LEAD_CJK_RE = /^[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]+/
 
 export type FileRef = {
@@ -61,7 +74,9 @@ export function parseFilePath(value: string | undefined | null): FileRef | null 
       // 非法编码就按原样试
     }
   }
-  text = stripTrailing(text)
+  // 命令行里的 `;` / `|` / `&&` 是分段符，出现就说明这段不是单个文件名
+  if (SHELL_SEP_RE.test(text)) return null
+  text = stripTrailing(text.replace(LEAD_PUNCT, ''))
   if (!text) return null
   if (text.includes('://')) return null
 
@@ -82,11 +97,16 @@ export function parseFilePath(value: string | undefined | null): FileRef | null 
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase()
   if (!FILE_EXT.has(ext)) return null
 
-  // 路径里出现汉字/全角符号说明切错了（正常文件名不会有）
-  if (CJK_RE.test(path)) return null
-
   // 有盘符（F:\x）或含目录分隔符，或者就是个有名有姓的文件（package.json）
   const hasDrive = /^[a-zA-Z]:[\\/]/.test(path)
+  // 中文文件名合法，但只信「以盘符开头」的绝对路径；正文里切出来的相对路径带汉字
+  // 多半是切错了（「见（src/a.ts」），宁可漏判也不误点
+  if (CJK_RE.test(path) && !hasDrive) return null
+
+  // 空白只允许出现在「整段就是绝对路径」里（C:\Program Files\a.txt）；
+  // 非绝对路径带空格，多半是一整条命令（`cd F:/x; node y.mjs`）被整段传了进来。
+  if (/\s/.test(path) && !hasDrive && !/^\/[a-zA-Z]\//.test(path)) return null
+
   const hasSlash = /[\\/]/.test(path)
   const bareName = /^[\w.@~+-]+\.[A-Za-z0-9]+$/.test(path)
   if (!hasDrive && !hasSlash && !bareName) return null
@@ -120,9 +140,10 @@ function findPathInToken(token: string): { index: number; core: string; ref: Fil
 
 /**
  * 绝对路径可能带空格（`C:\Program Files\App\a.txt`），按空白切词会把它拦腰切断。
- * 这里从起点向后找：把所有「空白 / 中文 / 全角」位置当候选终点，从最长的往回试，
- * 第一个能被 parseFilePath 认下的就是完整路径。同一段里若还有下一个绝对路径起点，
- * 就强制截在它前面，免得把两条路径连成一条。
+ * 这里从起点向后找：把所有「空白 / 中文标点 / shell 分隔符」位置当候选终点，从最长的往回试，
+ * 第一个能被 parseFilePath 认下的就是完整路径。汉字不算终点（中文文件名合法），
+ * 但紧贴路径的正文汉字（`C:\a.txt看看`）要剥掉，靠扩展名白名单收尾。
+ * 同一段里若还有下一个绝对路径起点，就强制截在它前面，免得把两条路径连成一条。
  */
 function tryAbsolutePath(text: string, start: number): { ref: FileRef; core: string } | null {
   const head = text.slice(start, start + 4)
@@ -136,7 +157,7 @@ function tryAbsolutePath(text: string, start: number): { ref: FileRef; core: str
 
   const ends: number[] = []
   for (let i = start; i < limit; i += 1) {
-    if (/\s/.test(text[i]) || CJK_RE.test(text[i])) {
+    if (/\s/.test(text[i]) || CJK_PUNCT_RE.test(text[i]) || SHELL_SEP_RE.test(text[i])) {
       ends.push(i)
       if (ends.length >= 16) break
     }
@@ -148,8 +169,12 @@ function tryAbsolutePath(text: string, start: number): { ref: FileRef; core: str
     if (!raw) continue
     const core = stripTrailing(raw)
     if (!core) continue
-    const ref = parseFilePath(core)
-    if (ref) return { ref, core }
+    // 先整段试；失败再剥掉尾部粘连的正文汉字（`C:\a.txt看看` → `C:\a.txt`）
+    for (const cand of [core, core.replace(/[\u4e00-\u9fff]+$/, '').trimEnd()]) {
+      if (!cand) continue
+      const ref = parseFilePath(cand)
+      if (ref) return { ref, core: cand }
+    }
   }
   return null
 }
@@ -180,13 +205,19 @@ export function splitTextPaths(text: string): TextChunk[] {
       continue
     }
 
-    const found = findPathInToken(match[0])
-    if (!found) continue
-
-    const start = tokenStart + found.index
-    if (start > cursor) chunks.push({ kind: 'text', text: text.slice(cursor, start) })
-    chunks.push({ kind: 'file', ref: found.ref, text: found.core })
-    cursor = start + found.core.length
+    // 一个空白 token 里还可能藏着多条命令（`a.ts;b.ts`）：按 shell 分隔符再切一遍。
+    // 正则就地 new：SHELL_PART_RE 不带 g，避免模块级正则的 lastIndex 共享状态。
+    const partRe = new RegExp(SHELL_PART_RE.source, 'g')
+    let part: RegExpExecArray | null
+    while ((part = partRe.exec(match[0])) !== null) {
+      const found = findPathInToken(part[0])
+      if (!found) continue
+      const start = tokenStart + part.index + found.index
+      if (start < cursor) continue
+      if (start > cursor) chunks.push({ kind: 'text', text: text.slice(cursor, start) })
+      chunks.push({ kind: 'file', ref: found.ref, text: found.core })
+      cursor = start + found.core.length
+    }
   }
 
   if (cursor < text.length) chunks.push({ kind: 'text', text: text.slice(cursor) })
