@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   hasBoundary,
   joinRevertedDraft,
+  lastUserBoundary,
   revertNoticeText,
   sliceAtRevert,
 } from '../src/components/revert.ts'
@@ -63,4 +64,18 @@ test('消息附件能转回可再次发送的附件', () => {
   assert.equal(restored[0].name, 'note.txt')
   assert.equal(restored[0].bytes, 5)
   assert.equal(restored[0].dataUrl, `data:text/plain;base64,${b64}`)
+})
+
+test('「回到上一版」定位最近一条用户消息，而不是末尾的助手回复', () => {
+  // 末尾是助手回复时也要落在 m4：留一条 assistant 在边界外，界面上才看不出「命令还在、结果没了」
+  assert.equal(lastUserBoundary(messages)?.id, 'm4')
+})
+
+test('只有一条提问时也定位到它', () => {
+  assert.equal(lastUserBoundary([msg('a1', 'assistant'), msg('u1', 'user')])?.id, 'u1')
+})
+
+test('没有提问（空会话 / 只有助手消息）时返回 null', () => {
+  assert.equal(lastUserBoundary([]), null)
+  assert.equal(lastUserBoundary([msg('a1', 'assistant'), msg('a2', 'assistant')]), null)
 })

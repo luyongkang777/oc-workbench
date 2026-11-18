@@ -33,6 +33,20 @@ type Props = {
   onPickAgent: (id: string) => void
   onAddFiles: (files: File[]) => void
   onRemoveAttachment: (id: string) => void
+  /**
+   * 「回到上一版」：把最近一轮的代码改动撤回（含该轮消息）。
+   * 不传就不渲染这个按钮。
+   */
+  onUndo?: () => void
+  /** 按钮是否可用：没有可回退的一轮 / 生成中 / 已在回撤状态时禁用 */
+  undoDisabled?: boolean
+  /** 悬停提示：禁用时说明原因 */
+  undoTitle?: string
+  /** 打开「修改记录」面板（最近 N 个节点，先审核再回溯） */
+  onHistory?: () => void
+  /** 没有可回溯的修改时禁用 */
+  historyDisabled?: boolean
+  historyTitle?: string
   /** 输入框上方的附加区（会话统计条）。放在 wrap 内，好共用内边距和分隔，输入框保持贴底 */
   footer?: ReactNode
 }
@@ -60,6 +74,12 @@ export default function ChatInput({
   onPickAgent,
   onAddFiles,
   onRemoveAttachment,
+  onUndo,
+  undoDisabled,
+  undoTitle,
+  onHistory,
+  historyDisabled,
+  historyTitle,
   footer,
 }: Props) {
   // 手机屏上那条长提示会折成两行、把输入框挤满：窄视口换成一句短的
@@ -524,6 +544,28 @@ export default function ChatInput({
         >
           ＋图片
         </button>
+        {onUndo ? (
+          <button
+            type="button"
+            className="chat-undo"
+            onClick={onUndo}
+            disabled={undoDisabled}
+            title={undoTitle ?? '把最近一轮的代码改动撤回（可再取消）'}
+          >
+            回到上一版
+          </button>
+        ) : null}
+        {onHistory ? (
+          <button
+            type="button"
+            className="chat-undo"
+            onClick={onHistory}
+            disabled={historyDisabled}
+            title={historyTitle ?? '查看最近的修改节点，先审核再回到某一版'}
+          >
+            修改记录
+          </button>
+        ) : null}
         <textarea
           ref={areaRef}
           className="chat-input"

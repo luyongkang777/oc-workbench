@@ -717,6 +717,37 @@ export async function stageRevert(
   return revert
 }
 
+/** 一个文件在一轮里的改动（服务端 FileDiff.Info，字段和 stage 返回的 files 一致）。 */
+export type TurnDiffFile = {
+  file: string
+  patch: string
+  additions: number
+  deletions: number
+  status: 'added' | 'deleted' | 'modified'
+}
+
+/**
+ * 某一轮改了什么文件——**只读，不动磁盘**。
+ *
+ * `from` 是那一轮的用户消息 id；服务端拿这一轮的首尾快照做对比，
+ * 和 stage 带 files:true 时返回的 patch 是同一份数据，但**不会**改任何文件。
+ * 所以「先审核、再决定回不回」必须走这个接口：审核点多少次都安全。
+ *
+ * 省略 `from` 时服务端默认取最新一轮；查不到该消息会 404。
+ */
+export async function fetchTurnDiff(
+  sessionID: string,
+  messageID: string,
+  signal?: AbortSignal,
+): Promise<TurnDiffFile[]> {
+  const data = await call<{ data?: TurnDiffFile[] }>(
+    `/api/session/${encodeURIComponent(sessionID)}/diff?from=${encodeURIComponent(messageID)}`,
+    { signal },
+  )
+  const files = data?.data
+  return Array.isArray(files) ? files : []
+}
+
 /** 提交暂存的回撤：真正删掉边界消息及其之后的内容。不可恢复。 */
 export async function commitRevert(sessionID: string): Promise<void> {
   await call(`/api/session/${encodeURIComponent(sessionID)}/revert/commit`, {

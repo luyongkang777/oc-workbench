@@ -1,0 +1,277 @@
+/*
+ * 修改记录面板（最近 N 个节点，先审核再回溯）
+ *
+ * 停靠在输入框上方的一整块区域：高度用 min(60vh, 420px) 封顶，
+ * 不能让它把聊天区挤没——用户点开是想「查一下」，不是想切换成全屏。
+ */
+.revert-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: min(60vh, 420px);
+  margin: 0 0 6px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+
+.revert-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.revert-title {
+  font-size: 13px;
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+.revert-count {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* 换行按钮推到右边，和关闭按钮挨着 */
+.revert-wrap {
+  margin-left: auto;
+  padding: 1px 8px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.revert-wrap:hover,
+.revert-wrap.active {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+}
+
+.revert-wrap.active {
+  background: var(--accent-weak);
+}
+
+.revert-close {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.revert-close:hover {
+  color: var(--text-1);
+}
+
+.revert-main {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* 左栏：节点列表。窄一点，一屏能看全 10 条 */
+.revert-list {
+  width: 208px;
+  flex: 0 0 208px;
+  overflow: auto;
+  border-right: 1px solid var(--line-1);
+  background: var(--bg-1);
+}
+
+.revert-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.revert-node:hover {
+  background: var(--bg-hover);
+}
+
+.revert-node.active {
+  background: var(--accent-weak);
+}
+
+/* 序号固定宽度：右边文字才能对齐，扫一眼就能看出「回到第几轮」 */
+.revert-node-index {
+  flex: 0 0 30px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.revert-node.active .revert-node-index {
+  color: var(--accent);
+}
+
+.revert-node-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 右栏：diff。结构照抄审查面板（复用 DiffBody 和 diff.css 的行样式） */
+.revert-diff {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.revert-diff-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line-1);
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+}
+
+.revert-diff-stat {
+  flex: 0 0 auto;
+}
+
+/* 一轮改了多个文件时，文件名变成一排可点的标签；放不下就横向滚 */
+.revert-file-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  min-width: 0;
+}
+
+.revert-file-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 220px;
+  padding: 1px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 18px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.revert-file-tab:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+.revert-file-tab.active {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
+.revert-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+/* 右栏里的空态不要再 flex:1 撑开（外面已经是 flex 容器了） */
+.revert-empty.inner {
+  flex: 1 1 auto;
+  padding: 12px;
+}
+
+.revert-error {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 底部动作条：左边说清「回撤能取消」，右边才是那个按钮 */
+.revert-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 10px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--line-1);
+}
+
+.revert-foot-hint {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revert-do {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  height: 24px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.revert-do:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+
+.revert-do:disabled {
+  color: var(--text-3);
+  border-color: var(--line-1);
+  cursor: default;
+}

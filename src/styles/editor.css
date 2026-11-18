@@ -1293,10 +1293,55 @@
   cursor: default;
 }
 
+/*
+ * 「回到上一版」：一键撤回最近一轮（含文件）。
+ *
+ * 跟「＋图片」同高但没有填色，避免和「发送」抢注意力；
+ * 危险操作靠 disabled 态压暗，而不是靠红字（点错了能取消，不必吓人）。
+ */
+.chat-undo {
+  flex: 0 0 auto;
+  height: 84px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-undo:hover:not(:disabled) {
+  color: var(--text-1);
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+
+.chat-undo:disabled {
+  color: var(--text-3);
+  border-color: var(--line-1);
+  cursor: default;
+}
+
+/*
+ * 聊天列被拖窄（档 1 起，≤520px）时，两个回溯按钮收成竖排小字：
+ * 「回到上一版 / 修改记录 / ＋图片 / 发送」四个并排会把输入框挤到 200px 以下。
+ * 这里只缩不藏 —— 回撤是常用入口，藏进菜单等于没了。
+ */
+#root .chat-pane:not([data-chat-tier='0']) .chat-undo {
+  width: 56px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: normal;
+}
+
 .chat-attach-notice {
   color: var(--warn);
   font-size: 12px;
   line-height: 1.5;
+}
 }
 
 .chat-input {

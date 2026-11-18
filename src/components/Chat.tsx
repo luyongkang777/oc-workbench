@@ -97,7 +97,8 @@ import {
   type SessionInfo,
   type SessionRevert,
 } from '../api/chat'
-import { joinRevertedDraft, revertNoticeText, sliceAtRevert } from './revert'
+import { joinRevertedDraft, lastUserBoundary, revertNoticeText, sliceAtRevert } from './revert'
+import RevertPanel from './RevertPanel'
 import { findMentions } from '../api/localfs'
 
 type Props = {
@@ -226,15 +227,24 @@ export default function Chat({
   const [revert, setRevert] = useState<SessionRevert | null>(null)
 
   const currentRef = useRef<string | null>(null)
+  /**
+   * 最新消息列表的快照。
+   *
+   * 「回到上一版」要按最近一条提问定位边界，但它可能在键盘快捷键或异步回调里
+   * 被调用；那些地方读 state 会拿到闭包里的旧值，必须走 ref。
+   */
+  const messagesRef = useRef<ChatMessage[]>([])
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const attachmentsRef = useRef<ChatAttachment[]>([])
-  /** 继续往更早翻的游标；空 = 已经拉到最早 */
+  /** 「修改记录」面板是否展开 */
+  const [historyOpen, setHistoryOpen] = useState(false)
   const olderCursorRef = useRef<string | undefined>(undefined)
   /** 会话列表的最新快照：定时器里读它，避免闭包拿到旧 state */
   const sessionsRef = useRef<SessionInfo[]>([])
   attachmentsRef.current = attachments
   currentRef.current = currentID
   sessionsRef.current = sessions
+  messagesRef.current = messages
   // 上报当前会话：主界面的子智能体面板靠它知道该列谁的子孙。
   // 回调每次渲染都可能是新函数，不进依赖，只在会话 id 变化时通知。
   useEffect(() => {
@@ -973,6 +983,50 @@ export default function Chat({
     [cancelRevert],
   )
 
+  /**
+   * 「回到上一版」：一键撤回**最近一轮**，含它改过的代码文件。
+   *
+   * 和上面 revertTo 的区别只是「边界怎么选」：这里永远取最近一条用户消息，
+   * 也就是最后一次让模型动手的那句命令 —— 撤回它之后，那一轮读写的文件
+   * 全部回到动手前的样子。想选更早的某一轮，仍然用每条提问下面的「回撤」。
+   */
+  const undoLastTurn = useCallback(() => {
+    const last = lastUserBoundary(messagesRef.current)
+    if (!last) {
+      setError('还没有可撤回的一轮：这个会话里没有你的提问')
+      return
+    }
+    // 文件一定要一起还原：这才是「回到上一版」想做的事
+    void revertTo(last.id, last.text ?? '', last.files ?? [], true)
+  }, [revertTo])
+
+  /**
+   * 从「修改记录」面板回到某个节点。
+   *
+   * 面板里已经审核过那一轮的 diff 了，这里只管把边界和文件一起落下去；
+   * 回撤本身仍然可以取消（服务端 stage 是可撤销的），所以不算危险操作。
+   * 成功后面板自动关掉 —— 留着它会显示一个已经被隐藏的轮次，反而让人困惑。
+   */
+  const revertFromHistory = useCallback(
+    (node: { messageID: string; text: string; files: MessageFile[] }) => {
+      setHistoryOpen(false)
+      void revertTo(node.messageID, node.text, node.files, true)
+    },
+    [revertTo],
+  )
+
+  /**
+   * 有最近一轮提问、且当前不在生成/回撤状态时，才允许点「回到上一版」。
+   *
+   * 判据用「有没有用户消息」而不是「消息非空」：只有助手消息的会话（子智能体
+   * 回报、压缩摘要）回撤它没有任何意义，点了只会弹一句报错。
+   */
+  const canUndo =
+    Boolean(currentID) &&
+    !busy &&
+    !runningApi.running &&
+    !revert &&
+    lastUserBoundary(messages) !== null
 
   /**
    * 距底部多少像素以内算「贴底」。
@@ -1837,6 +1891,18 @@ export default function Chat({
         </div>
       ) : null}
 
+      {historyOpen ? (
+        <RevertPanel
+          sessionID={currentID}
+          messages={messages}
+          root={root}
+          busy={busy || runningApi.running}
+          reverted={Boolean(revert)}
+          onRevert={revertFromHistory}
+          onClose={() => setHistoryOpen(false)}
+        />
+      ) : null}
+
       <ChatInput
         draft={draft}
         busy={busy}
@@ -1852,6 +1918,20 @@ export default function Chat({
         }}
         onSend={() => void send()}
         onBackground={() => void moveToBackground()}
+        onUndo={undoLastTurn}
+        undoDisabled={!canUndo}
+        undoTitle={
+          canUndo
+            ? '把最近一轮的代码改动撤回（连带文件一起还原，可再取消）'
+            : busy || runningApi.running
+              ? '正在生成回复，先停止再撤回'
+              : revert
+                ? '已经在回撤状态，先取消回撤或直接发送'
+                : '还没有可撤回的一轮'
+        }
+        onHistory={() => setHistoryOpen((open) => !open)}
+        historyDisabled={!canUndo}
+        historyTitle={canUndo ? '查看最近 10 个修改节点，先审核再回到某一版' : '还没有可回溯的修改'}
         onFindFiles={async (query) => {
           if (!root) return []
           const hits = await findMentions(root, query)

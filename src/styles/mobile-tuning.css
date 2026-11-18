@@ -148,6 +148,17 @@
   font-size: var(--fs-sm);
 }
 
+/*
+ * 手机上的「回到上一版」：和「＋图片」一样缩成 38 高的小按钮。
+ * 窄屏里三个按钮加输入框放不下一行，靠 chat-input 的 flex 100% 换行解决。
+ */
+#root .app[data-mobile='1'] .chat-undo {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+
 #root .app[data-mobile='1'] .chat-send {
   flex: 0 0 auto;
   min-width: 80px;
