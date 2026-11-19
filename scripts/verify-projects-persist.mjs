@@ -23,6 +23,8 @@ const DATA_DIR = path.join(process.env.LOCALAPPDATA ?? os.homedir(), 'oc-workben
 const PROJECTS = path.join(DATA_DIR, 'projects.json')
 const LOG = path.join(DATA_DIR, 'gui-error.log')
 const BACKUP = `${PROJECTS}.verify-backup`
+/** 默认两次启动；`OCW_ROUNDS=8` 可以跑压力轮次。 */
+const ROUNDS = Math.max(2, Number(process.env.OCW_ROUNDS || 2))
 
 const SAMPLE = [
   { path: 'F:\\opencode\\workbench', name: 'workbench', lastUsed: Date.now(), state: { file: null, view: 'code' } },
@@ -158,15 +160,12 @@ fs.writeFileSync(PROJECTS, JSON.stringify(SAMPLE))
 
 let failed = false
 try {
-  const first = await runRound('第一次启动')
-  failed ||= !first.ok
-  killAll()
-  await waitGone()
-
-  const second = await runRound('第二次启动')
-  failed ||= !second.ok
-  killAll()
-  await waitGone()
+  for (let i = 1; i <= ROUNDS; i++) {
+    const round = await runRound(`第 ${i}/${ROUNDS} 次启动`)
+    failed ||= !round.ok
+    killAll()
+    await waitGone()
+  }
 } finally {
   if (fs.existsSync(BACKUP)) {
     fs.copyFileSync(BACKUP, PROJECTS)
@@ -174,5 +173,5 @@ try {
   }
 }
 
-console.log(failed ? '结论：FAIL（清单被覆盖）' : '结论：PASS（两次重启都保住两条）')
+console.log(failed ? '结论：FAIL（清单被覆盖）' : `结论：PASS（${ROUNDS} 次重启都保住两条）`)
 process.exit(failed ? 1 : 0)

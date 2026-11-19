@@ -11,7 +11,7 @@ import {
   upsertProject,
   type Project,
 } from '../components/projectList'
-import { createPersistGate, mergeStartupProjects } from '../components/projectStartup'
+import { createPersistGate, mergeStartupProjects, restoreMissingProjects } from '../components/projectStartup'
 
 /**
  * 工作区：项目清单 + 当前根目录 + 每个项目的界面位置。
@@ -56,25 +56,46 @@ export function useWorkspace(options: {
   const [projects, setProjects] = useState<Project[]>([])
   // IPC 回调里拿不到最新的 state，用 ref 兜。
   // 绝不能在 render 期间写它（projectsRef.current = projects）：并发渲染丢弃某一帧时
-  // 会把 ref 定格成旧值 —— 实测启动时刚 hydrate 好的完整清单被写回「空」，
-  // 紧接着 applyRoot 就把磁盘清单覆盖成单条。ref 只由写入点和下面这个 effect 维护。
+  // 会把 ref 定格成旧值 —— 实测启动时刚 hydrate 好的完整清单被写回「空」。
+  // ref 只由 commitProjects / hydrate / 下面这个 effect 维护。
   const projectsRef = useRef<Project[]>([])
   useEffect(() => {
     projectsRef.current = projects
   }, [projects])
 
   /**
-   * 写盘闸门：启动时 `root:<path>` 会比项目清单早到，那会儿内存清单还是空的。
+   * 启动期的写盘闸门：`root:<path>` 会比项目清单早到，那会儿内存清单还是空的。
    * 直接落盘会把 projects.json 覆盖成「只有当前目录」，其它项目全丢。
    */
   const gateRef = useRef(createPersistGate(persistProjects))
 
-  /** 更新清单并落盘（外壳写 projects.json）；清单还没读回来时只更新内存。 */
-  const commitProjects = useCallback((next: Project[]) => {
-    projectsRef.current = next
-    setProjects(next)
-    gateRef.current.save(next)
+  /**
+   * 权威基线：磁盘上读回来的清单，加上运行中见过的项目。
+   * 写盘前把「基线里有、这次却缺了」的条目补回来 —— 除非用户显式删掉
+   * （`forgetProject` 会先把它从基线里摘掉）。
+   *
+   * 为什么还要这一层：启动竞态是概率性的，闸门和 ref 维护只能降低概率。
+   * 基线保护让「磁盘上有的项目被一次残缺写盘删掉」变成不可能。
+   */
+  const baselineRef = useRef<Project[]>([])
+
+  /** 把基线里缺失的项目补回来（纯逻辑在 projectStartup，单测覆盖）。 */
+  const withBaseline = useCallback((next: Project[]): Project[] => {
+    if (!gateRef.current.isHydrated()) return next
+    return restoreMissingProjects(next, baselineRef.current)
   }, [])
+
+  /** 更新清单并落盘（外壳写 projects.json）；清单还没读回来时只更新内存。 */
+  const commitProjects = useCallback(
+    (next: Project[]) => {
+      const merged = withBaseline(next)
+      projectsRef.current = merged
+      setProjects(merged)
+      baselineRef.current = merged
+      gateRef.current.save(merged)
+    },
+    [withBaseline],
+  )
 
   /** 记住当前目录：root.txt 跨启动，localStorage 只管 dev 刷新。 */
   const rememberRoot = useCallback((path: string) => {
@@ -131,15 +152,19 @@ export function useWorkspace(options: {
 
   const forgetProject = useCallback(
     (path: string) => {
+      // 用户显式删除：先从基线摘掉，否则会被「补回缺失项目」的保护逻辑加回来。
+      baselineRef.current = baselineRef.current.filter((p) => normKey(p.path) !== normKey(path))
       const next = removeProject(projectsRef.current, path)
-      commitProjects(next)
+      projectsRef.current = next
+      setProjects(next)
+      gateRef.current.save(next)
       // 删掉的正好是当前项目：切到清单里第一个，别停在一个已经不在列表里的目录
       if (normKey(path) === normKey(rootRef.current)) {
         const fallback = next[0]
         if (fallback) applyRoot(fallback.path)
       }
     },
-    [rootRef, commitProjects, applyRoot],
+    [rootRef, applyRoot],
   )
 
   // 选文件夹：外壳通过 IPC 弹原生对话框；浏览器/手机打开目录浏览面板
@@ -171,6 +196,7 @@ export function useWorkspace(options: {
     const stop = startProjects((loaded) => {
       // 读回来的清单优先（带着每个项目上次的界面状态），再补启动期间内存里的和当前目录。
       const withActive = mergeStartupProjects(loaded, projectsRef.current, rootRef.current)
+      baselineRef.current = withActive
       projectsRef.current = withActive
       setProjects(withActive)
       // 就绪前攒下的改动在这里一次性落盘（也是唯一允许「补齐磁盘」的时机）。
@@ -202,12 +228,11 @@ export function useWorkspace(options: {
         view: uiSnapshot.view,
       })
       if (next === projectsRef.current) return
-      projectsRef.current = next
-      setProjects(next)
-      persistProjects(next)
+      // 走同一条写入路径：带基线保护，避免这里把别的项目写丢。
+      commitProjects(next)
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [uiSnapshot.file, uiSnapshot.view, rootRef])
+  }, [uiSnapshot.file, uiSnapshot.view, rootRef, commitProjects])
 
   return {
     root,

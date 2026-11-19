@@ -8,8 +8,10 @@
  * 那时内存里的清单还是空的 —— 如果照常落盘，projects.json 就被写成
  * 「只有当前这一个目录」，磁盘上的其它项目全被删掉。
  *
- * 所以：**清单读回来之前一律不落盘**，读回来时再把「磁盘清单 + 启动期间
- * 内存里攒的清单 + 当前目录」合并成一份写回去。
+ * 两层保护：
+ * 1. 写盘闸门（`createPersistGate`）：清单读回来之前一律不落盘。
+ * 2. 基线补齐（`restoreMissingProjects`）：写盘前把「磁盘上原本有、这次却缺了」
+ *    的项目补回来 —— 竞态是概率性的，闸门只能降低概率，这一层才保证不丢。
  */
 
 import { normKey, parseProjects, projectNameOf, type Project } from './projectList.ts'
@@ -32,6 +34,19 @@ export function mergeStartupProjects(
   const has = list.some((p) => normKey(p.path) === normKey(path))
   if (has) return list
   return parseProjects([...list, { path, name: projectNameOf(path) }])
+}
+
+/**
+ * 写盘前补齐：`baseline` 里有、`next` 里却没有的项目补回去。
+ *
+ * `baseline` 是「磁盘权威清单 + 运行中见过的项目」。只有用户显式删除时
+ * 调用方才会把它从 baseline 里摘掉，所以这里补回来的一定是「不该丢的」。
+ */
+export function restoreMissingProjects(next: Project[], baseline: Project[]): Project[] {
+  const keys = new Set(next.map((p) => normKey(p.path)))
+  const missing = baseline.filter((p) => !keys.has(normKey(p.path)))
+  if (missing.length === 0) return next
+  return parseProjects([...next, ...missing])
 }
 
 /**

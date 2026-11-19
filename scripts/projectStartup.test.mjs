@@ -7,7 +7,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createPersistGate, mergeStartupProjects } from '../src/components/projectStartup.ts'
+import {
+  createPersistGate,
+  mergeStartupProjects,
+  restoreMissingProjects,
+} from '../src/components/projectStartup.ts'
 import { upsertProject } from '../src/components/projectList.ts'
 
 const disk = [
@@ -70,4 +74,32 @@ test('同一路径大小写/斜杠不同也只留一条', () => {
   assert.equal(merged.length, 2)
   const hit = merged.find((p) => p.name !== '硬件开发')
   assert.equal(hit.name, 'workbench', '先出现的磁盘条目优先')
+})
+
+test('基线保护：残缺写盘会把磁盘上原有项目补回来', () => {
+  // 最坏情况：内存清单被并发渲染冲成空，只剩当前打开的一个目录
+  const broken = [{ path: 'F:\\opencode\\workbench', name: 'workbench', lastUsed: 200 }]
+  const fixed = restoreMissingProjects(broken, disk)
+  assert.deepEqual(fixed.map((p) => p.name).sort(), ['workbench', '硬件开发'])
+  // 已有的条目要保留本次的 lastUsed（刚用过），补回来的带磁盘上的 state
+  const workbench = fixed.find((p) => p.name === 'workbench')
+  assert.equal(workbench.lastUsed, 200)
+  const hardware = fixed.find((p) => p.name === '硬件开发')
+  assert.equal(hardware.state.file, 'tools/x.ps1')
+})
+
+test('基线保护：什么都不缺时原样返回同一个数组', () => {
+  const same = restoreMissingProjects(disk, disk)
+  assert.equal(same, disk, '没变化时不能新建数组，否则会多写一次盘')
+})
+
+test('基线保护：空清单也能被补回全部项目', () => {
+  const fixed = restoreMissingProjects([], disk)
+  assert.deepEqual(fixed.map((p) => p.name).sort(), ['workbench', '硬件开发'])
+})
+
+test('基线保护：新打开的项目和基线里的项目共存', () => {
+  const next = [{ path: 'F:\\新项目', name: '新项目', lastUsed: 300 }]
+  const fixed = restoreMissingProjects(next, disk)
+  assert.deepEqual(fixed.map((p) => p.name).sort(), ['workbench', '新项目', '硬件开发'].sort())
 })
