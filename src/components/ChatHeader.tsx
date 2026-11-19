@@ -8,6 +8,7 @@ import {
 import type { ContextUsage } from './contextUsage'
 import ContextMeter from './ContextMeter'
 import PurgeToggle from './PurgeToggle'
+import { RouterToggle } from './RouterPanel'
 import type { PurgeController } from '../hooks/usePurge'
 import { lightFromSnapshot, sessionLight, type SessionLike } from './sessionLight'
 import SessionMenu, { shortTitle } from './SessionMenu'
@@ -56,6 +57,10 @@ type Props = {
   }
   /** 破甲注入开关；不传就不显示（终端等场景用不到） */
   purge?: PurgeController
+  /** 当前项目根；有值才显示「路由」按钮 */
+  root?: string
+  /** 路由配置变更后通知外层刷新 agent 列表 */
+  onRouterApplied?: () => void
   /** 窄列模式（分屏列）：文字按钮收成图标，把宽度让给会话标题和模型名 */
   compact?: boolean
 }
@@ -116,6 +121,8 @@ export default function ChatHeader({
   context,
   purge,
   compact,
+  root,
+  onRouterApplied,
 }: Props) {
   const [modelsOpen, setModelsOpen] = useState(false)
   const [modesOpen, setModesOpen] = useState(false)
@@ -394,6 +401,10 @@ export default function ChatHeader({
         {context ? <ContextMeter {...context} /> : null}
 
         {purge ? <PurgeToggle controller={purge} currentModel={currentModel} /> : null}
+
+        {root ? (
+          <RouterToggle root={root} models={models} onApplied={onRouterApplied ?? (() => {})} />
+        ) : null}
 
         <button
           type="button"

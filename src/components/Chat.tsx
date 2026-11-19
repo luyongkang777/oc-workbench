@@ -228,6 +228,8 @@ export default function Chat({
   const [showAllSessions, setShowAllSessions] = useState(true)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  // 路由配置生成/删除后 +1，触发 agent 列表重新拉取
+  const [agentsVersion, setAgentsVersion] = useState(0)
   // 当前会话的 agent（界面叫「模式」）。空串表示跟着服务端默认走，显示时回退到第一个。
   const [agent, setAgent] = useState('')
   const [serverCommands, setServerCommands] = useState<CommandInfo[]>([])
@@ -487,7 +489,7 @@ export default function Chat({
     return () => {
       alive = false
     }
-  }, [connected, root])
+  }, [connected, root, agentsVersion])
 
   const commands = useMemo(
     () => mergeCommands(BUILTIN_COMMANDS, serverCommands),
@@ -1837,6 +1839,8 @@ export default function Chat({
           onCompact: () => void compactContext(),
         }}
         purge={purgeApi}
+        root={root}
+        onRouterApplied={() => setAgentsVersion((value) => value + 1)}
       />
 
       {error ? <div className="chat-warn">{error}</div> : null}
