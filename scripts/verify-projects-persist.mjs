@@ -167,8 +167,16 @@ try {
     await waitGone()
   }
 } finally {
+  // 还原：只把备份里有、现在缺的项目补回去，绝不整份回写。
+  // 整份回写会把「之前被污染的单条快照」一路传下去，也会删掉这期间新加的项目。
   if (fs.existsSync(BACKUP)) {
-    fs.copyFileSync(BACKUP, PROJECTS)
+    const keyOf = (x) =>
+      String(x?.path ?? '').trim().replace(/[\\/]+/g, '/').replace(/\/$/, '').toLowerCase()
+    const backup = JSON.parse(fs.readFileSync(BACKUP, 'utf8'))
+    const current = readProjects()
+    const have = new Set(current.map(keyOf))
+    const missing = backup.filter((p) => !have.has(keyOf(p)))
+    if (missing.length > 0) fs.writeFileSync(PROJECTS, JSON.stringify([...current, ...missing]))
     fs.unlinkSync(BACKUP)
   }
 }
