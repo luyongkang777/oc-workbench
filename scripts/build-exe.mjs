@@ -7,7 +7,7 @@
 //   2) dist/index.html 里引用的每个 asset 文件名都要能在 exe 字节里找到
 // 两条任一不满足就退出码非 0，别让人拿着一个嵌了旧包的 exe 去测。
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -178,8 +178,33 @@ if (missing.length > 0) {
   fail(`exe 里找不到前端资源：${missing.join('、')}`)
 }
 
+// 破甲插件也是编译期内嵌的（purge_seed::BUNDLED）。只核对"文件存在"不够：
+// sync 漏跑 / 目录被清空时 include_dir! 照样编得过一个空树，exe 里就什么都没有，
+// 装到新电脑上表现为"顶栏开关是开的、模型照拒"。
+const purgeRoot = path.join(shellDir, 'assets', 'purge')
+const purgeEntry = path.join(purgeRoot, 'index.ts')
+if (!existsSync(purgeEntry)) {
+  fail('shell/assets/purge/index.ts 不存在：先跑 node scripts/sync-purge-assets.mjs')
+}
+// 拿 index.ts 里一段独有 ASCII（redteam 初始化失败的那行日志）当探针。
+// 提示词是中文，按字节搜容易被编码搞混；这行是纯 ASCII，最稳。
+const purgeProbe = Buffer.from('purge redteam init failed', 'utf8')
+if (!binary.includes(purgeProbe)) {
+  fail('exe 里找不到破甲插件代码（purge redteam init failed 探针未命中）：资源没被内嵌')
+}
+const purgeFiles = (function walk(dir, base = '') {
+  const out = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const rel = base ? `${base}/${entry.name}` : entry.name
+    if (entry.isDirectory()) out.push(...walk(path.join(dir, entry.name), rel))
+    else if (entry.isFile()) out.push(rel)
+  }
+  return out
+})(purgeRoot)
+
 const size = (binary.byteLength / 1024 / 1024).toFixed(2)
 say('')
 say(`✓ ${exe}`)
 say(`  ${binary.byteLength.toLocaleString()} 字节（${size} MB），${new Date(exeTime).toLocaleString()}`)
 say(`  内嵌资源：${assets.join('、') || '（无）'}`)
+say(`  内嵌破甲插件：${purgeFiles.length} 个文件（${purgeFiles.slice(0, 3).join('、')}…）`)

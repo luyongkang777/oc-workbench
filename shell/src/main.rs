@@ -38,6 +38,7 @@ mod provider_quota;
 mod provider_quota_fetch;
 mod provider_store;
 mod purge;
+mod purge_seed;
 mod rules;
 mod rules_store;
 mod auth_gate;
@@ -99,6 +100,16 @@ const LOG_NAME: &str = "gui-error.log";
 fn main() {
     install_panic_hook();
 
+    // 自检 / 排障入口：只把内嵌的破甲插件落盘，然后退出。
+    // 不起窗口、不抢单实例、不连后端——装到别人机器后想确认"插件到底落没落"，
+    // 设 OC_SEED_PURGE_ONLY=1 跑一次，看 gui-error.log 里那行 [purge] 就行。
+    // 配合临时 USERPROFILE 可以在不碰真实家目录的前提下做端到端验收。
+    if std::env::var_os("OC_SEED_PURGE_ONLY").is_some() {
+        let report = purge_seed::ensure();
+        append_log(&format!("[purge] 自带插件（seed-only）：{}\n", report.describe()));
+        return;
+    }
+
     // 同一台机器只允许一个工作台在跑。开两个会让在线升级换不成新版本：
     // 升级脚本只重试覆盖一个 exe，另一个实例仍占着旧文件，重试到上限后会照样 start，
     // 结果就是「版本没变 / 两个窗口版本不一致」。
@@ -125,6 +136,11 @@ fn main() {
 
     init_com_sta();
     adopt_launch_arg();
+
+    // 破甲插件随 exe 自带：把内嵌的插件树落到 ~/.config/opencode/plugins/purge。
+    // 失败不挡启动——顶多是这一台机器上没有破甲，工作台本身照常可用。
+    let seeded = purge_seed::ensure();
+    append_log(&format!("[purge] 自带插件：{}\n", seeded.describe()));
 
     if let Err(err) = run() {
         let log = log_path();
