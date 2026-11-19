@@ -11,7 +11,8 @@ import {
   parseMentionAt,
   type MentionHit,
 } from './fileMention'
-import { isMobileViewport } from '../hooks/useMobileLayout'
+import { isMobileViewport, MOBILE_MAX_HEIGHT, MOBILE_MAX_WIDTH } from '../hooks/useMobileLayout'
+import { Icon } from './Icon'
 
 type Props = {
   draft: string
@@ -82,8 +83,12 @@ export default function ChatInput({
   historyTitle,
   footer,
 }: Props) {
-  // 手机屏上那条长提示会折成两行、把输入框挤满：窄视口换成一句短的
-  const compactHint = isMobileViewport()
+  /*
+   * 手机屏上那条长提示会折成两行、把输入框挤满：窄视口换成一句短的。
+   * 必须走 useState 而不是直接调：窗口从桌面拖窄时组件不会重挂载，
+   * 直接取值会一直停在首帧（宽的），提示语永远不切。
+   */
+  const [compactHint, setCompactHint] = useState(() => isMobileViewport())
   const [menu, setMenu] = useState<'commands' | 'agents' | 'files' | null>(null)
   const [active, setActive] = useState(0)
   const [dismissed, setDismissed] = useState(false)
@@ -105,6 +110,42 @@ export default function ChatInput({
     [commands, slashQuery],
   )
 
+  /**
+   * 输入框随内容长高（1~6 行），超过就内部滚动。
+   *
+   * 只给桌面/宽列用：手机上 CSS 已经把高度钉死在 48（矮屏 40）并靠内部滚动，
+   * 内联 style.height 的优先级高于任何 CSS 规则，在这里无条件写会把那两档顶掉。
+   *
+   * textarea 的 scrollHeight 永远反映全部内容，所以先归零再取，才能得到
+   * 「实际需要的高度」；不归零只会一路累加到 max-height 卡死。
+   */
+  useEffect(() => {
+    const node = areaRef.current
+    if (!node) return
+    if (isMobileViewport()) {
+      node.style.height = ''
+      return
+    }
+    node.style.height = 'auto'
+    node.style.height = `${Math.min(node.scrollHeight, 200)}px`
+  }, [draft])
+
+  // 视口跨过手机档时同步提示语：useMobileLayout 已挂 resize + matchMedia 两条来源，
+  // 这里同样两条一起挂，避免 CDP 仿真下 matchMedia 不派发导致提示不切。
+  // 断点用 useMobileLayout 的常量：这里再写死 800/520，改了那边就对不上。
+  useEffect(() => {
+    const sync = () => setCompactHint(isMobileViewport())
+    const query = window.matchMedia(
+      `(max-width: ${MOBILE_MAX_WIDTH}px), (max-height: ${MOBILE_MAX_HEIGHT}px)`,
+    )
+    sync()
+    query.addEventListener('change', sync)
+    window.addEventListener('resize', sync)
+    return () => {
+      query.removeEventListener('change', sync)
+      window.removeEventListener('resize', sync)
+    }
+  }, [])
   // 只有在「输入以 / 开头且还没空格」时才进入选择模式；Esc 关闭后不再自动弹回
   useEffect(() => {
     if (slashQuery === null) {
@@ -535,40 +576,10 @@ export default function ChatInput({
       {footer}
 
       <div className="chat-input-row">
-        <button
-          type="button"
-          className="chat-attach-add"
-          onClick={pickFiles}
-          title="选择图片/文件；也可以直接粘贴截图或拖进来"
-          disabled={!connected}
-        >
-          ＋图片
-        </button>
-        {onUndo ? (
-          <button
-            type="button"
-            className="chat-undo"
-            onClick={onUndo}
-            disabled={undoDisabled}
-            title={undoTitle ?? '把最近一轮的代码改动撤回（可再取消）'}
-          >
-            回到上一版
-          </button>
-        ) : null}
-        {onHistory ? (
-          <button
-            type="button"
-            className="chat-undo"
-            onClick={onHistory}
-            disabled={historyDisabled}
-            title={historyTitle ?? '查看最近的修改节点，先审核再回到某一版'}
-          >
-            修改记录
-          </button>
-        ) : null}
         <textarea
           ref={areaRef}
           className="chat-input"
+          rows={2}
           value={draft}
           onChange={(event) => {
             setDismissed(false)
@@ -590,32 +601,80 @@ export default function ChatInput({
           placeholder={
             connected
               ? compactHint
-                ? '输入消息，Enter 发送，/ 打开命令'
-                : '输入消息，Enter 发送，Shift+Enter 换行；/ 打开命令；可直接粘贴或拖入图片'
+                ? '输入消息，Enter 发送，/ 命令'
+                : '输入消息，Enter 发送，Shift+Enter 换行；/ 命令，@ 引用文件'
               : '后端未连接'
           }
           disabled={!connected}
         />
-        {running ? (
-          <>
+        <div className="chat-input-tools">
+          <button
+            type="button"
+            className="chat-attach-add"
+            onClick={pickFiles}
+            title="添加图片/文件；也可以直接粘贴截图或拖进来"
+            aria-label="添加图片或文件"
+            disabled={!connected}
+          >
+            <Icon name="attach" size={15} />
+            <span className="chat-tool-text">图片</span>
+          </button>
+          {onUndo ? (
             <button
               type="button"
-              className="chat-send ghost"
-              onClick={onBackground}
-              title="把正在跑的命令挪到后台，立刻解锁继续输入（Ctrl+B）"
+              className="chat-undo"
+              onClick={onUndo}
+              disabled={undoDisabled}
+              title={undoTitle ?? '把最近一轮的代码改动撤回（可再取消）'}
             >
-              后台
+              <Icon name="refresh" size={14} />
+              <span className="chat-tool-text">回到上一版</span>
             </button>
-            <button type="button" className="chat-send stop" onClick={onStop} title="停止生成">
-              停止
+          ) : null}
+          {onHistory ? (
+            <button
+              type="button"
+              className="chat-undo"
+              onClick={onHistory}
+              disabled={historyDisabled}
+              title={historyTitle ?? '查看最近的修改节点，先审核再回到某一版'}
+            >
+              <Icon name="review" size={14} />
+              <span className="chat-tool-text">修改记录</span>
             </button>
-          </>
-        ) : (
-          <button type="button" className="chat-send" onClick={onSend} disabled={!canSend}>
-            {busy ? '发送中' : '发送'}
-          </button>
-        )}
+          ) : null}
+          <div className="chat-input-actions">
+            {running ? (
+              <>
+                <button
+                  type="button"
+                  className="chat-send ghost"
+                  onClick={onBackground}
+                  title="把正在跑的命令挪到后台，立刻解锁继续输入（Ctrl+B）"
+                >
+                  后台
+                </button>
+                <button type="button" className="chat-send stop" onClick={onStop} title="停止生成">
+                  <Icon name="stop" size={12} />
+                  停止
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="chat-send"
+                onClick={onSend}
+                disabled={!canSend}
+                title="发送（Enter）"
+              >
+                <Icon name="send" size={14} />
+                {busy ? '发送中' : '发送'}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
+
     </div>
   )
 }

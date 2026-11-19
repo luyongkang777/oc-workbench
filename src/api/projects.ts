@@ -66,6 +66,15 @@ function readLocal(): Project[] {
   }
 }
 
+/** 清掉 localStorage 里的旧清单：迁移到服务端之后它就不再是数据源。 */
+function dropLocal() {
+  try {
+    window.localStorage.removeItem(LS_KEY)
+  } catch {
+    // 存储不可用只影响下次启动的迁移，不影响本次
+  }
+}
+
 /**
  * 启动时取一次清单。
  * `onReady` 只会被调一次：拿到外壳回复、或超时退回 localStorage。
@@ -81,7 +90,27 @@ export function startProjects(onReady: (list: Project[]) => void): () => void {
   const w = window as WindowWithIpc
   if (!hasShellIpc()) {
     // 浏览器/远程访问：没有 IPC，改走 HTTP；失败再退 localStorage。
-    void fetchProjectsHttp().then((list) => finish(list ?? readLocal()))
+    void fetchProjectsHttp().then((list) => {
+      /*
+       * 服务端清单是空的、而本机还留着旧数据（升级前只能存 localStorage）：
+       * 先搬过去再显示。不搬的话用户看到的就是「项目全没了」，
+       * 而且在换 origin（localhost ↔ 127.0.0.1 ↔ 局域网 IP）时白丢一次。
+       *
+       * 搬完必须把 localStorage 清掉：否则用户以后「删光所有项目」时，
+       * 服务端存的是空数组、本地这份旧清单还在，下次启动又被搬回去 ——
+       * 删掉的项目会自己复活。只搬一次，之后 localStorage 不再是数据源。
+       */
+      if (!list || list.length === 0) {
+        const local = readLocal()
+        if (local.length > 0) {
+          persistProjects(local)
+          dropLocal()
+          finish(local)
+          return
+        }
+      }
+      finish(list ?? readLocal())
+    })
     return () => {}
   }
 

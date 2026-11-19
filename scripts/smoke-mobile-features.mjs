@@ -27,8 +27,10 @@ ws.addEventListener('message', (event) => {
     // 两类环境噪音，不算产品失败：
     //  1) exe 直连 127.0.0.1:17800 时没有远程 cookie，/local/* 会 403（本地直连的鉴权行为）；
     //  2) vite dev 的 mock 没实现全部 /local/* （如 /local/cli/status 返回 400），生产由 Rust 处理。
+    //     判据按「dev server 的 /local/ 路径」写，不要写死端口：dev 换端口（5205/5273/…）就会假红。
+    //     只豁免 4xx：mock「没实现」是 4xx，5xx 是它自己崩了，必须照常算失败。
     const localDirect = res.url.includes('127.0.0.1:17800') && res.status === 403
-    const devMock = res.url.includes('127.0.0.1:5273/local/')
+    const devMock = res.status < 500 && /^https?:\/\/(localhost|127\.0\.0\.1):\d+\/local\//.test(res.url)
     if (!localDirect && !devMock) httpErrors.push({ status: res.status, url: res.url.split('?')[0] })
   }
   if (msg.id && pending.has(msg.id)) {

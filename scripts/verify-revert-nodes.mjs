@@ -155,7 +155,8 @@ async function main() {
       const b = list.find(x => x.textContent.trim() === '修改记录')
       if (!b) return null
       const r = b.getBoundingClientRect()
-      return { count: list.length, w: Math.round(r.width), h: Math.round(r.height), disabled: b.disabled, inRow: b.parentElement?.classList.contains('chat-input-row') }
+      // 按钮收在输入框内的工具条里：用 closest 判「在这块输入区域内部」
+      return { count: list.length, w: Math.round(r.width), h: Math.round(r.height), disabled: b.disabled, inRow: Boolean(b.closest('.chat-input-row')) }
     })()`,
   )
   check('「修改记录」按钮存在', Boolean(btn), btn ? `同行按钮数=${btn.count}` : '找不到')

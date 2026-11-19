@@ -108,6 +108,16 @@ const results = []
 async function probe(device) {
   const [group, name, w, h] = device
   await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 2, mobile: false })
+  /*
+   * 实测踩到的坑：这个 Edge 的 CDP 设备仿真改尺寸时，真正的浏览器
+   * resize 和 matchMedia 的 change 都不派发（监听计数恒为 0）。页面里的
+   * data-mobile 于是停在上一档的值，量出来全是「单列状态错误」。
+   * 这里显式补一次 resize 事件，让 React 按新视口重算。
+   *
+   * 只补在脚本里，不要照抄到产品：真机/真浏览器改窗口时 resize 会正常派发，
+   * useMobileLayout 就是靠它更新的；产品里再补一发反而会多一次无意义渲染。
+   */
+  await evaluate(`window.dispatchEvent(new Event('resize')); true`)
   await sleep(320)
   await clickChat()
   await sleep(180)
@@ -205,6 +215,7 @@ for (const [name, w, h, dpr, ua] of REAL) {
     screenHeight: h,
   })
   await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+  await evaluate(`window.dispatchEvent(new Event('resize')); true`)
   await sleep(800)
   const v = await evaluate(`(() => {
     const de = document.documentElement

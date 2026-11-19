@@ -10,6 +10,7 @@ import { localUsagePlugin } from './scripts/dev-local-usage.mjs'
 import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
 import { localRulesPlugin } from './scripts/dev-local-rules.mjs'
 import { localRemotePlugin } from './scripts/dev-local-remote.mjs'
+import { localProjectsPlugin } from './scripts/dev-local-projects.mjs'
 import { exec } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
@@ -97,6 +98,9 @@ export default defineConfig(async ({ command, isPreview }) => {
       localGitPlugin(),
       localRemotePlugin(),
       localPurgePlugin(),
+      // 项目清单：dev 里没有外壳，落到和 exe 同一个 projects.json，
+      // 否则只能存 localStorage，换个 origin（localhost ↔ 127.0.0.1 ↔ 局域网 IP）就丢
+      localProjectsPlugin(),
       // 强制规则的读写：规则正文落盘位置与插件共用，dev 只补接口
       localRulesPlugin(),
       localBalancePlugin(),

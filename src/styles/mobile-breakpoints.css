@@ -25,7 +25,9 @@
     min-height: 48px;
   }
 
+  /* 两个轻按钮和发送键同高，否则同一排会差 2px 看着歪 */
   #root .app[data-mobile='1'] .chat-attach-add,
+  #root .app[data-mobile='1'] .chat-undo,
   #root .app[data-mobile='1'] .chat-send {
     height: 32px;
   }
@@ -37,34 +39,45 @@
 }
 
 @media (max-height: 520px) {
-  /* 输入框和按钮并成一行，省下整行高度 */
+  /*
+   * 矮屏（横屏 844x390 / 568x320）：输入框和工具条并成一行，
+   * 只省一行的 40px 高度，够把底部占比压回 32% 以内。
+   */
   #root .app[data-mobile='1'] .chat-input-row {
-    flex-wrap: nowrap;
+    flex-direction: row;
     align-items: center;
   }
 
+  /*
+   * textarea 有浏览器默认最小宽度（cols 属性带来的固有宽度），
+   * 放进 flex 行里不写 min-width:0 会把整行撑宽 —— 320x480 实测右溢 27px。
+   */
   #root .app[data-mobile='1'] .chat-input {
-    order: 0;
-    flex: 1 1 auto;
-    width: auto;
+    flex: 1 1 0;
+    width: 0;
+    min-width: 0;
     height: 40px;
     min-height: 40px;
-    padding: 4px 10px;
+    padding: 8px 10px;
   }
 
-  #root .app[data-mobile='1'] .chat-attach-add {
-    min-width: 44px;
+  #root .app[data-mobile='1'] .chat-input-tools {
+    padding: 2px 6px 2px 0;
+    gap: 0;
+  }
+
+  #root .app[data-mobile='1'] .chat-attach-add,
+  #root .app[data-mobile='1'] .chat-undo {
+    min-width: 32px;
+    height: 32px;
     padding: 0;
-    font-size: 0;
-  }
-
-  #root .app[data-mobile='1'] .chat-attach-add::before {
-    content: '＋';
-    font-size: 18px;
+    justify-content: center;
   }
 
   #root .app[data-mobile='1'] .chat-send {
-    min-width: 60px;
+    min-width: 56px;
+    height: 32px;
+    padding: 0 10px;
   }
 
   /* 矮屏优先保证消息区，子智能体条也收掉 */
@@ -167,5 +180,25 @@
 @media (max-width: 800px), (max-height: 520px) {
   html {
     zoom: 1 !important;
+  }
+}
+
+/* ---------- 输入框高度：手机上不跟着内容长 ---------- */
+/* 桌面版 ChatInput 会按内容给 textarea 写内联 height（自动增高到 6 行）。
+   把窗口从桌面拖窄到手机档时那串内联高度还留着，会顶掉手机档的固定高度，
+   所以这里用 !important 把高度钉回原值（同上面 zoom 的处理方式）。
+
+   注意不能写 height:auto —— 自动增高会让手机输入框跟着内容长高，把消息区挤掉，
+   而手机档的设计本来就是「高度固定 + 内部滚动」。 */
+@media (max-width: 800px), (max-height: 520px) {
+  #root .app[data-mobile='1'] .chat-input {
+    height: 48px !important;
+  }
+}
+
+/* 矮屏回到 48 之后还要再压到 40：和上面 @media (max-height: 520px) 里的档位一致 */
+@media (max-height: 520px) {
+  #root .app[data-mobile='1'] .chat-input {
+    height: 40px !important;
   }
 }

@@ -81,6 +81,7 @@ import {
   listMessages,
   listSessions,
   mergeMessages,
+  POLL_PAGES,
   renameSession,
   replyForm,
   runSessionCommand,
@@ -99,6 +100,7 @@ import {
 } from '../api/chat'
 import { joinRevertedDraft, lastUserBoundary, revertNoticeText, sliceAtRevert } from './revert'
 import RevertPanel from './RevertPanel'
+import { mergeSessionList } from './sessionList'
 import { findMentions } from '../api/localfs'
 
 type Props = {
@@ -177,6 +179,23 @@ const TITLE_POLL_TRIES = 18
 /** 一次加载最多给几条历史会话补名字：每个都要翻消息，别在首屏一次开一堆请求。 */
 const TITLE_BACKFILL_LIMIT = 6
 
+/**
+ * 历史列表一次取多少条。
+ *
+ * 以前是 20：项目聊久一点，历史面板就只剩最上面十几条，用户看到的是
+ * 「历史记录不全」。现在给到 200：listSessions 会按 cursor 翻页收集
+ * （一页 max(limit,50) 条、最多 12 页），够覆盖一个项目的全部历史。
+ *
+ * 为什么是 200 而不是 120：实测这个项目有 123 条会话，120 会把最老的 3 条
+ * 直接切掉（用户翻到月底就发现少了几条）。代价是首屏多翻两次页（约 5 页
+ * 扫完 772 条全局会话），只发生一次，可以接受。
+ *
+ * 轮询另有 SESSION_POLL_LIMIT：它每 30 秒跑一次，不能跟着这个值变大。
+ */
+const SESSION_LIST_LIMIT = 200
+/** 轮询只取这么多：新会话和改过的标题都在最前面，更早的靠首屏那份 + 合并保住。 */
+const SESSION_POLL_LIMIT = 60
+
 export default function Chat({
   root,
   tabID,
@@ -203,8 +222,10 @@ export default function Chat({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
-  // 下拉默认只列工作台会话，这项打开后连外部会话一起列
-  const [showAllSessions, setShowAllSessions] = useState(false)
+  // 历史列表默认列全部会话（终端会话除外）：用户说的「历史记录不全」，
+  // 一半原因是这里以前默认只留工作台自己建的会话，CLI/TUI 里聊的全被藏起来了。
+  // 想只看本工作台的，可以在列表底部收窄。
+  const [showAllSessions, setShowAllSessions] = useState(true)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [agents, setAgents] = useState<AgentInfo[]>([])
   // 当前会话的 agent（界面叫「模式」）。空串表示跟着服务端默认走，显示时回退到第一个。
@@ -699,7 +720,7 @@ export default function Chat({
     let alive = true
     ;(async () => {
       try {
-        const list = await listSessions(20, root)
+        const list = await listSessions(SESSION_LIST_LIMIT, root)
         if (!alive) return
         setSessions(list)
         // 重连后列表刷新时保留用户正在看的会话，别强行跳到最新一条。
@@ -777,10 +798,15 @@ export default function Chat({
    *
    * 手机端 / CLI 在别的会话里发消息时，事件回调会调它 —— 以前这类事件被
    * 直接丢弃，电脑上的列表会一直停在打开时的那份快照上。
+   *
+   * 刷新只翻最新两页（POLL_PAGES）、只取 60 条（SESSION_POLL_LIMIT）而不是重拉 200 条：
+   * 新会话只会出现在最前面，为凑够 200 条去翻满 12 页，等于每 30 秒白打十几次公网往返。
+   * 拉回来的是子集，所以要和当前列表合并不是覆盖，否则用户刚翻出来的历史会缩水。
    */
   const reloadSessions = useCallback(async () => {
     try {
-      setSessions(await listSessions(20, root))
+      const fresh = await listSessions(SESSION_POLL_LIMIT, root, { pages: POLL_PAGES })
+      setSessions((prev) => mergeSessionList(fresh, prev, SESSION_LIST_LIMIT))
     } catch {
       // 静默：列表刷新失败不该打断正在进行的对话
     }
@@ -1722,8 +1748,8 @@ export default function Chat({
   const current =
     sessions.find((session) => session.id === currentID) ??
     (extraSession && extraSession.id === currentID ? extraSession : undefined)
-  // 下拉默认只列工作台会话；当前正在看的会话即使是外部会话也保留，
-  // 否则顶部标题和高亮会消失。
+  // 收窄视图（「只看工作台会话」）用的子集；当前正在看的会话即使是外部会话也保留，
+  // 否则顶部标题和高亮会消失。默认视图是全部会话，见 showAllSessions 的初值。
   const ownSessions = sessions.filter(
     (session) => isWorkbenchSession(session) || session.id === currentID,
   )

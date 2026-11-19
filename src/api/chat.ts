@@ -282,19 +282,35 @@ async function call<T>(
  * 页数不能省：本机实测 680 条顶层会话、57 个目录里 **26 个**目录的会话落在
  * 300 名之后 —— 砍到 6 页（300 条）会让这些项目切换后会话列表变空。
  * 省请求靠下面的「够用就停」，不靠减页数。
+ *
+ * pages 是给轮询用的逃生口：首屏要翻够（120 条可能落在第 3 页），
+ * 但每 30 秒的刷新只该看最新那一页 —— 不传就按 MAX_PAGES 翻到底。
  */
 const MAX_PAGES = 12
 /** 一页固定 50 条（不是 limit）：limit 只决定「显示多少」，取大一页能把分页次数压到 1~2 次。 */
 const PAGE_SIZE = 50
+/**
+ * 轮询只翻几页。
+ *
+ * 首屏要翻够（120 条可能落在第 3 页），但每 30 秒的刷新只需要看最新那一页。
+ * 留两页是给冷门项目余地：某个目录的会话可能排在全局第 60 名之后，
+ * 只翻一页会一条都匹配不到（合并时不会丢数据，但标题就不刷新了）。
+ */
+export const POLL_PAGES = 2
 
-export async function listSessions(limit = 20, root?: string): Promise<SessionInfo[]> {
+export async function listSessions(
+  limit = 20,
+  root?: string,
+  options: { pages?: number } = {},
+): Promise<SessionInfo[]> {
   const matches: SessionInfo[] = []
   const norm = (p: string) => p.replace(/[\\/]+$/, '').toLowerCase()
   const wanted = root ? norm(root) : null
   let cursor: string | undefined
   // 一页固定 50 条：远程下每页是一次公网往返，取大一页能少翻几次。
   const pageSize = Math.max(limit, PAGE_SIZE)
-  const maxPages = MAX_PAGES
+  // 轮询只翻一页时也要至少跑一次循环（pages 传 0 或负数当 1 处理）。
+  const maxPages = Math.max(1, options.pages ?? MAX_PAGES)
 
   for (let page = 0; page < maxPages; page += 1) {
     const params = new URLSearchParams({ limit: String(pageSize), order: 'desc', parentID: 'null' })

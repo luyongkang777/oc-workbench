@@ -161,9 +161,14 @@ export default function SessionMenu({
         ))
       )}
 
-      {hiddenCount > 0 || showAll ? (
+      {/*
+       * 默认已经是「全部会话」，这块只在需要收窄时出现：
+       * 外部会话（CLI / TUI 建的）多于 0 条时才给「只看工作台」的入口，
+       * 收窄之后必须能一键切回来。
+       */}
+      {hiddenCount > 0 ? (
         <button type="button" className="chat-session-more" onClick={onToggleShowAll}>
-          {showAll ? '只显示工作台会话' : `显示全部会话（另有 ${hiddenCount} 条外部会话）`}
+          {showAll ? `只看工作台会话（另有 ${hiddenCount} 条外部会话）` : '显示全部会话'}
         </button>
       ) : null}
     </div>

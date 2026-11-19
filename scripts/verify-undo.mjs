@@ -135,11 +135,12 @@ async function main() {
       const b = document.querySelector('.chat-undo')
       if (!b) return null
       const r = b.getBoundingClientRect()
-      const row = b.parentElement?.getBoundingClientRect()
+      // 按钮现在收在输入框内的工具条里，不是 .chat-input-row 的直接子元素
+      const row = b.closest('.chat-input-row')?.getBoundingClientRect()
       return {
         text: b.textContent.trim(),
         w: Math.round(r.width), h: Math.round(r.height),
-        inRow: b.parentElement?.classList.contains('chat-input-row') ?? false,
+        inRow: Boolean(b.closest('.chat-input-row')),
         rowH: row ? Math.round(row.height) : 0,
         disabled: b.disabled,
         title: b.title,

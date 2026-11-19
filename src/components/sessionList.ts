@@ -90,3 +90,31 @@ export function groupSessions<T extends ListSession>(
   // 空分组不渲染：历史少的项目不该出现四行小标题
   return buckets.filter((group) => group.items.length > 0)
 }
+
+/**
+ * 把一次「只取一页」的刷新结果并回已展开的列表。
+ *
+ * 为什么需要它：首屏会翻好几页拉 120 条，但每 30 秒的轮询只取最新一页 50 条
+ * （见 api/chat 的 pages 选项）。直接 setSessions(50 条) 会让用户刚翻出来的
+ * 历史突然缩水，看起来像「记录又丢了」。
+ *
+ * 规则：
+ *   - 服务端这份是权威顺序和最新字段，先全量铺进去
+ *   - 旧列表里服务端这次没返回的，按原顺序接在后面（只减不丢）
+ *   - 超过 limit 的部分切掉；limit 取两者中较大的那个，保持「翻到哪显示到哪」
+ */
+export function mergeSessionList<T extends ListSession>(
+  fresh: T[],
+  previous: T[],
+  limit: number,
+): T[] {
+  const seen = new Set(fresh.map((item) => item.id))
+  const merged = [...fresh]
+  for (const item of previous) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    merged.push(item)
+  }
+  const cap = Math.max(limit, fresh.length)
+  return merged.slice(0, cap)
+}

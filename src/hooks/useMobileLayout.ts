@@ -58,12 +58,22 @@ export function useMobileLayout() {
   const [pane, setPaneState] = useState<MobilePane>(readPane)
 
   useEffect(() => {
-    // matchMedia 比 resize 事件便宜，且拖拽缩放时不抖。
+    /*
+     * 两条来源都挂上：
+     *   1. matchMedia 的 change —— 桌面拖窗口最省事，不会每帧触发
+     *   2. resize —— WebView2 / CDP 设备仿真下实测 matchMedia 的 change 事件
+     *      完全不派发（hits 恒为 0），只靠第一条会让 data-mobile 永远停在初次值，
+     *      表现就是「窗口已经拉宽了，界面还是手机单列 + 底部导航」。
+     */
     const query = window.matchMedia(`(max-width: ${MOBILE_MAX_WIDTH}px), (max-height: ${MOBILE_MAX_HEIGHT}px)`)
-    const onChange = () => setWide(query.matches)
-    onChange()
-    query.addEventListener('change', onChange)
-    return () => query.removeEventListener('change', onChange)
+    const sync = () => setWide(isMobileWidth(window.innerWidth, window.innerHeight))
+    sync()
+    query.addEventListener('change', sync)
+    window.addEventListener('resize', sync)
+    return () => {
+      query.removeEventListener('change', sync)
+      window.removeEventListener('resize', sync)
+    }
   }, [])
 
   const setPane = useCallback((next: MobilePane) => {

@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { filterSessions, groupSessions, listSessionAt } from '../src/components/sessionList.ts'
+import { filterSessions, groupSessions, listSessionAt, mergeSessionList } from '../src/components/sessionList.ts'
 
 /** 造一条会话：默认只有标题。 */
 const at = (id, title, updated) => ({
@@ -92,4 +92,28 @@ test('过滤 + 分组串起来用：过滤后只剩命中项，分组跟着缩',
   const groups = groupSessions(filterSessions(list, '登录'), now)
   const ids = groups.flatMap((group) => group.items.map((item) => item.id))
   assert.deepEqual(ids, ['1', '3'])
+})
+
+test('轮询只取一页时，合并不能把已展开的历史缩水', () => {
+  const previous = [at('a', '新', 9), at('b', '旧', 8), at('c', '更旧', 7)]
+  // 轮询只返回了最新一条
+  const fresh = [at('a', '新', 9)]
+  const merged = mergeSessionList(fresh, previous, 120)
+  assert.deepEqual(merged.map((item) => item.id), ['a', 'b', 'c'])
+})
+
+test('合并时服务端顺序和字段优先，不拿旧数据盖新数据', () => {
+  const previous = [at('a', '旧标题', 1), at('b', 'B', 2)]
+  const fresh = [at('a', '改过的标题', 5)]
+  const merged = mergeSessionList(fresh, previous, 120)
+  assert.equal(merged[0].title, '改过的标题')
+  assert.equal(merged[0].time.updated, 5)
+  assert.deepEqual(merged.map((item) => item.id), ['a', 'b'])
+})
+
+test('合并结果受 limit 封顶，且不会因为 fresh 比 limit 长就被截断', () => {
+  const previous = [at('x1', 'X1', 1), at('x2', 'X2', 2)]
+  const fresh = [at('n1', 'N1', 9), at('n2', 'N2', 8), at('n3', 'N3', 7)]
+  assert.deepEqual(mergeSessionList(fresh, previous, 2).map((i) => i.id), ['n1', 'n2', 'n3'])
+  assert.deepEqual(mergeSessionList(fresh, previous, 10).map((i) => i.id), ['n1', 'n2', 'n3', 'x1', 'x2'])
 })
