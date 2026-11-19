@@ -6,13 +6,12 @@ import { normalizeRootPath } from '../components/localPath'
 import {
   findProject,
   normKey,
-  parseProjects,
-  projectNameOf,
   removeProject,
   setProjectState,
   upsertProject,
   type Project,
 } from '../components/projectList'
+import { createPersistGate, mergeStartupProjects } from '../components/projectStartup'
 
 /**
  * 工作区：项目清单 + 当前根目录 + 每个项目的界面位置。
@@ -48,18 +47,33 @@ export function useWorkspace(options: {
     }
   })
   rootRef.current = root
+  // 提交后同步一次：万一某一帧被丢弃，ref 也不会停在过期值上。
+  useEffect(() => {
+    rootRef.current = root
+  }, [root, rootRef])
 
   // 项目清单：一个目录一个项目，点一下就切过去，每个项目各自记着自己的界面状态
   const [projects, setProjects] = useState<Project[]>([])
-  // IPC 回调里拿不到最新的 state，用 ref 兜
+  // IPC 回调里拿不到最新的 state，用 ref 兜。
+  // 绝不能在 render 期间写它（projectsRef.current = projects）：并发渲染丢弃某一帧时
+  // 会把 ref 定格成旧值 —— 实测启动时刚 hydrate 好的完整清单被写回「空」，
+  // 紧接着 applyRoot 就把磁盘清单覆盖成单条。ref 只由写入点和下面这个 effect 维护。
   const projectsRef = useRef<Project[]>([])
-  projectsRef.current = projects
+  useEffect(() => {
+    projectsRef.current = projects
+  }, [projects])
 
-  /** 更新清单并立刻落盘（外壳写 projects.json）。 */
+  /**
+   * 写盘闸门：启动时 `root:<path>` 会比项目清单早到，那会儿内存清单还是空的。
+   * 直接落盘会把 projects.json 覆盖成「只有当前目录」，其它项目全丢。
+   */
+  const gateRef = useRef(createPersistGate(persistProjects))
+
+  /** 更新清单并落盘（外壳写 projects.json）；清单还没读回来时只更新内存。 */
   const commitProjects = useCallback((next: Project[]) => {
     projectsRef.current = next
     setProjects(next)
-    persistProjects(next)
+    gateRef.current.save(next)
   }, [])
 
   /** 记住当前目录：root.txt 跨启动，localStorage 只管 dev 刷新。 */
@@ -154,18 +168,15 @@ export function useWorkspace(options: {
   // 启动时拉起项目清单。外壳回的清单可能比「刚打开的这个目录」旧（两条 IPC 到达顺序不定），
   // 所以跟本地已有的合并，别把用户刚打开的项目覆盖掉。
   useEffect(() => {
-    const stop = startProjects((list) => {
-      const merged = parseProjects([...list, ...projectsRef.current])
-      const current = rootRef.current
-      const hasActive = current && merged.some((p) => normKey(p.path) === normKey(current))
-      const withActive =
-        current && !hasActive
-          ? parseProjects([...merged, { path: current, name: projectNameOf(current) }])
-          : merged
+    const stop = startProjects((loaded) => {
+      // 读回来的清单优先（带着每个项目上次的界面状态），再补启动期间内存里的和当前目录。
+      const withActive = mergeStartupProjects(loaded, projectsRef.current, rootRef.current)
       projectsRef.current = withActive
       setProjects(withActive)
-      persistProjects(withActive)
+      // 就绪前攒下的改动在这里一次性落盘（也是唯一允许「补齐磁盘」的时机）。
+      gateRef.current.hydrate(withActive)
 
+      const current = rootRef.current
       // 没有任何当前项目（首次启动 / 记录被清掉）时，自动打开最近用的那个。
       // 目录已被删掉也照切：文件树会给出明确报错，用户能从首页换一个。
       if (!current && withActive.length > 0) {
@@ -183,6 +194,7 @@ export function useWorkspace(options: {
   // 文件/视图变了就把位置写回当前项目。防抖：连点一串文件不会一路写盘。
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      if (!gateRef.current.isHydrated()) return
       const current = rootRef.current
       if (!current) return
       const next = setProjectState(projectsRef.current, current, {

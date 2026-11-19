@@ -1,0 +1,58 @@
+/**
+ * 启动阶段的项目清单规则。
+ *
+ * 这条规则是为了修「每次关掉再打开工作台，清单只剩第一个文件夹」：
+ *
+ * 启动时外壳先回 `oc:auth`，紧接着下发 `root:<上次的目录>`，而 `oc:projects`
+ * 的清单回复往往晚几毫秒到几十毫秒。`root:` 一到就会调 `applyRoot`，
+ * 那时内存里的清单还是空的 —— 如果照常落盘，projects.json 就被写成
+ * 「只有当前这一个目录」，磁盘上的其它项目全被删掉。
+ *
+ * 所以：**清单读回来之前一律不落盘**，读回来时再把「磁盘清单 + 启动期间
+ * 内存里攒的清单 + 当前目录」合并成一份写回去。
+ */
+
+import { normKey, parseProjects, projectNameOf, type Project } from './projectList.ts'
+
+/**
+ * 合并启动时的三份来源：
+ * - `loaded`：外壳/服务端读回来的清单（带每个项目记住的界面状态，优先级最高）
+ * - `inMemory`：清单回来之前，页面已经在操作的清单（可能只含刚打开的那个目录）
+ * - `current`：当前根目录；不在任何一份里就补一条
+ */
+export function mergeStartupProjects(
+  loaded: Project[],
+  inMemory: Project[],
+  current: string,
+): Project[] {
+  // loaded 在前：同一个路径只留先出现的那条，磁盘上的 state/file 不会被空项目覆盖。
+  const list = parseProjects([...loaded, ...inMemory])
+  const path = String(current ?? '').trim()
+  if (!path) return list
+  const has = list.some((p) => normKey(p.path) === normKey(path))
+  if (has) return list
+  return parseProjects([...list, { path, name: projectNameOf(path) }])
+}
+
+/**
+ * 写盘闸门：`hydrate` 之前的所有改动只留在内存。
+ *
+ * 只包一层布尔判断，是为了让「什么时候允许写盘」这件事可单测，
+ * 不依赖 React。
+ */
+export function createPersistGate(persist: (list: Project[]) => void) {
+  let hydrated = false
+  return {
+    /** 清单是否已经读回来（读回来之前不能写盘）。 */
+    isHydrated: () => hydrated,
+    /** 清单读回来时调一次：先就绪，再把合并结果落盘。 */
+    hydrate(list: Project[]) {
+      hydrated = true
+      persist(list)
+    },
+    /** 普通改动：就绪后才落盘。 */
+    save(list: Project[]) {
+      if (hydrated) persist(list)
+    },
+  }
+}
