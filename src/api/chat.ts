@@ -193,6 +193,8 @@ export type AgentInfo = {
   description?: string
   mode?: string
   hidden?: boolean
+  /** agent 自己固定的模型；有值时它会覆盖会话里临时选的模型 */
+  model?: ModelRef
 }
 
 /** 斜杠命令（GET /api/command，服务端配置的命令）。 */

@@ -1367,6 +1367,22 @@ export default function Chat({
       setAgent(id)
       // 记到本地：切标签重挂载后服务端会话数据可能还没轮询回来，先用这份兜底
       rememberSessionAgent(sessionID, id)
+      // agent 自己固定了模型时要顺手对齐会话模型：
+      // 服务端是「会话 model 优先于 agent model」，不对齐会让 router-main 用上
+      // 会话里上次选的便宜模型（新建会话默认就会带上当前模型）。
+      const fixed = agents.find((item) => item.id === id)?.model
+      if (fixed?.id && fixed.providerID) {
+        const target = modelsApi.models.find(
+          (item) => item.id === fixed.id && item.providerID === fixed.providerID,
+        )
+        if (target) {
+          try {
+            await modelsApi.pick(target, sessionID, fixed.variant)
+          } catch {
+            // 模型不可用时不阻塞切模式，继续用会话原模型
+          }
+        }
+      }
       await reloadMessages(sessionID)
     } catch (err) {
       setError((err as Error).message)
