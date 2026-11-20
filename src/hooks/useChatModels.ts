@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { PROVIDERS_APPLIED_EVENT } from './useProviderSync'
 import {
   getDefaultModel,
+  listBuiltinProviderIDs,
   listModels,
   switchModel,
   type ModelInfo,
@@ -28,9 +29,20 @@ export function useChatModels(root: string, connected: boolean) {
   const refreshingRef = useRef(false)
 
   const fetchModels = useCallback(async () => {
-    const list = await listModels(root)
-    setModels(list)
-    return list
+    // 两个请求互不依赖，并行发：串行会白等一个往返（实测各 100~250ms）。
+    const [list, builtin] = await Promise.all([listModels(root), listBuiltinProviderIDs()])
+    // 打上「来自内置 provider」的标记：模型下拉据此把内置那批藏掉。
+    // 内置 provider（opencode / opencode-go / anthropic…）自带的模型和用户自己接入的重复，
+    // 都在下拉里出现只会让人选错（实测 opencode 与 opencode-free 是同一批模型）。
+    // 拿不到 provider 列表时为空集合 = 一个都不藏，失败时宁可多显示。
+    const marked =
+      builtin.size === 0
+        ? list
+        : list.map((model) =>
+            builtin.has(model.providerID) ? { ...model, builtin: true } : model,
+          )
+    setModels(marked)
+    return marked
   }, [root])
 
   const load = useCallback(async () => {

@@ -12,6 +12,7 @@ import { RouterToggle } from './RouterPanel'
 import type { PurgeController } from '../hooks/usePurge'
 import { lightFromSnapshot, sessionLight, type SessionLike } from './sessionLight'
 import SessionMenu, { shortTitle } from './SessionMenu'
+import { filterByKeyword, selectableModels } from './modelList'
 export { shortTitle } from './SessionMenu'
 
 type ModelKey = { id: string; providerID: string; variant?: string }
@@ -180,12 +181,11 @@ export default function ChatHeader({
   // 截断会把它们全变成同一个词。放不下交给 CSS 省略 + title 提示。
   const modelLabel = active?.name ?? active?.id ?? currentModel?.id ?? '选择模型'
 
-  const keyword = filter.trim().toLowerCase()
-  const visible = keyword
-    ? models.filter((m) =>
-        `${m.name ?? ''} ${m.id} ${m.providerID}`.toLowerCase().includes(keyword),
-      )
-    : models
+  // 内置 provider 自带的模型不显示（判定与例外都在 modelList.ts，有单测）：
+  // 它们和用户自己接入的那批是同一份模型，一个模型在下拉里出现两次只会让人选错。
+  // 当前正在用的那条例外保留，否则切走之后就再也点不回来。
+  const selectable = selectableModels(models, currentModel)
+  const visible = filterByKeyword(selectable, filter)
 
   // opencode 在「不带 variant」切换后会把 variant 记成 "default"，显示时当作没选档位
   const variantId = currentModel?.variant && currentModel.variant !== 'default' ? currentModel.variant : ''
@@ -308,7 +308,15 @@ export default function ChatHeader({
                     ) : modelsLoading && models.length === 0 ? (
                       <div className="model-empty">加载模型列表…</div>
                     ) : visible.length === 0 ? (
-                      <div className="model-empty">{models.length === 0 ? '没有可用模型' : '没有匹配的模型'}</div>
+                      <div className="model-empty">
+                        {filter.trim()
+                          ? '没有匹配的模型'
+                          : models.length === 0
+                            ? '没有可用模型'
+                            : selectable.length === 0
+                              ? '只剩 opencode 内置模型了，去「第三方 API 接入」配一个自己的服务商'
+                              : '没有可用模型'}
+                      </div>
                     ) : (
                       visible.map((model) => {
                         const isActive =

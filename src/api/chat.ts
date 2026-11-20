@@ -211,6 +211,14 @@ export type ModelInfo = {
   id: string
   modelID?: string
   providerID: string
+  /**
+   * 这条模型来自 opencode **内置** provider（不是用户在面板里配的）。
+   *
+   * 判据是 `/api/provider` 里有没有 `integrationID`：内置带、自配不带（实测）。
+   * 模型下拉用它把「内置自带的」藏掉——它们和用户自己接入的同一批模型重复，
+   * 一个模型在列表里出现两次只会让人选错。
+   */
+  builtin?: boolean
   name?: string
   variants?: { id: string; name?: string; settings?: Record<string, unknown> }[]
   /** 能力上限：context 是上下文窗口，用来算上下文占用百分比 */
@@ -800,6 +808,28 @@ export async function sendPrompt(
     },
     0,
   )
+}
+
+/**
+ * opencode 内置 provider 的 id 集合（`opencode` / `opencode-go` / `anthropic` 这些）。
+ *
+ * 依据是 `/api/provider` 里的 `integrationID`：内置 provider 带它，用户自配的不带
+ * （2026-11-21 实测：opencode 有 integrationID，opencode-zen / opencode-free 都没有）。
+ *
+ * 拿不到列表时返回空集合 —— 失败时**宁可多显示**，也不要把用户自己配的模型藏掉。
+ */
+export async function listBuiltinProviderIDs(): Promise<Set<string>> {
+  try {
+    const data = await call<{ data?: { id?: string; integrationID?: string }[] }>('/api/provider')
+    const list = Array.isArray(data) ? data : (data.data ?? [])
+    const ids = new Set<string>()
+    for (const item of list) {
+      if (item?.id && item.integrationID) ids.add(item.id)
+    }
+    return ids
+  } catch {
+    return new Set()
+  }
 }
 
 /** 当前目录可用的模型列表（只保留有 id + providerID 的）。 */
