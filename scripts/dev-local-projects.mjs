@@ -22,6 +22,9 @@ const BODY_LIMIT = MAX_BYTES + 1024
 
 /** 与 Rust 侧 `projects::projects_file()` 同一套路径。 */
 export function projectsFile(env = process.env) {
+  // 自动化验收可以指到临时文件：既不会污染真实清单，断言也不会被真实清单干扰。
+  const override = String(env.OC_WORKBENCH_PROJECTS_FILE ?? '').trim()
+  if (override) return override
   const base = env.LOCALAPPDATA || path.join(homedir(), 'AppData', 'Local')
   return path.join(base, 'oc-workbench', 'projects.json')
 }

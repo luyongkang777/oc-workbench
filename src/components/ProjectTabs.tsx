@@ -9,6 +9,7 @@
  * 不是当前会话一个布尔值 —— 切走标签以后原来那个项目仍然要亮着。
  */
 
+import { useEffect, useRef } from 'react'
 import { Icon } from './Icon'
 import { normKey, type Project } from './projectList'
 
@@ -36,11 +37,33 @@ export default function ProjectTabs({
 }: Props) {
   const activeKey = normKey(active)
   const empty = projects.length === 0
+  const tabsRef = useRef<HTMLDivElement | null>(null)
+  const activeRef = useRef<HTMLDivElement | null>(null)
+
+  /*
+   * 切项目后把当前标签滚进可视区。
+   *
+   * 手机上顶栏只有一行的宽度，标签多了就要横滑。如果切到一个在可视区外的
+   * 项目（比如从欢迎页点开排在后面的目录），标签条不会自己动，用户看到的
+   * 还是原来那几个 —— 看起来就像「打开一个关一个」。
+   *
+   * 用 getBoundingClientRect 而不是 offsetLeft：offsetLeft 是相对 offsetParent，
+   * 和滚动容器不是同一个坐标系。
+   */
+  useEffect(() => {
+    const box = tabsRef.current
+    const el = activeRef.current
+    if (!box || !el) return
+    const boxRect = box.getBoundingClientRect()
+    const elRect = el.getBoundingClientRect()
+    if (elRect.left < boxRect.left) box.scrollLeft -= boxRect.left - elRect.left
+    else if (elRect.right > boxRect.right) box.scrollLeft += elRect.right - boxRect.right
+  }, [activeKey, projects.length])
 
   return (
     <div className="project-strip">
       {empty ? null : (
-        <div className="project-tabs" role="tablist" aria-label="项目">
+        <div className="project-tabs" role="tablist" aria-label="项目" ref={tabsRef}>
           {projects.map((project) => {
             const isActive = normKey(project.path) === activeKey
             const busy = running.has(normKey(project.path))
@@ -48,6 +71,7 @@ export default function ProjectTabs({
             return (
               <div
                 key={project.path}
+                ref={isActive ? activeRef : undefined}
                 className={`project-tab${isActive ? ' active' : ''}`}
                 role="tab"
                 aria-selected={isActive}

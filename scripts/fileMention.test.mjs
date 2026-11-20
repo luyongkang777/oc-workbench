@@ -14,8 +14,10 @@ import {
   filterHits,
   filterMentions,
   mentionPaths,
+  nextMenuForSlash,
   parseMentionAt,
   pendingMentions,
+  shouldResetHits,
 } from '../src/components/fileMention.ts'
 
 test('行首的 @ 触发提及，query 为空', () => {
@@ -167,4 +169,57 @@ test('mentionPaths / filterHits 保留类型信息', () => {
   const filtered = filterHits(hits, 'chat')
   assert.equal(filtered.length, 1)
   assert.equal(filtered[0].type, 'file')
+})
+
+/*
+ * 回归：@ 文件菜单「出来一瞬间又没了」。
+ *
+ * 两个独立的坑，都是同一个症状，任一个复发都会让用户看不到候选：
+ *   1. 命令菜单的 effect 在「没有 / 前缀」时无条件 setMenu(null)，顺手把 @ 菜单关掉；
+ *   2. 光标在同一段提及里移动时无条件清空候选，而搜索 effect 依赖没变、不会重搜。
+ */
+
+test('没有 / 前缀时不动 @ 文件菜单', () => {
+  assert.equal(nextMenuForSlash('files', null, false), 'files')
+})
+
+test('没有 / 前缀时关掉命令/agent 菜单', () => {
+  assert.equal(nextMenuForSlash('commands', null, false), null)
+  assert.equal(nextMenuForSlash('agents', null, false), null)
+})
+
+test('有 / 前缀进入命令菜单', () => {
+  assert.equal(nextMenuForSlash(null, 'help', false), 'commands')
+})
+
+test('打 /agents 先进命令列表（点了才进 agent 菜单）', () => {
+  assert.equal(nextMenuForSlash(null, 'agents', false), 'commands')
+})
+
+test('已经在 agent 菜单里时保持不动', () => {
+  assert.equal(nextMenuForSlash('agents', 'agents', false), 'agents')
+})
+
+test('Esc 关闭后不再自动弹回命令菜单', () => {
+  assert.equal(nextMenuForSlash('commands', 'help', true), null)
+})
+
+test('首次进入提及要清候选', () => {
+  assert.equal(shouldResetHits({ query: '', start: 0, end: 1 }, null), true)
+})
+
+test('query 变了要清候选', () => {
+  const prev = { query: '', start: 0, end: 1 }
+  const next = { query: 's', start: 0, end: 2 }
+  assert.equal(shouldResetHits(next, prev), true)
+})
+
+test('光标在同一段提及里移动不清候选（否则列表永久空白）', () => {
+  const prev = { query: 'src', start: 0, end: 4 }
+  const next = { query: 'src', start: 0, end: 4 }
+  assert.equal(shouldResetHits(next, prev), false)
+})
+
+test('离开提及不触发清空', () => {
+  assert.equal(shouldResetHits(null, { query: 'src', start: 0, end: 4 }), false)
 })

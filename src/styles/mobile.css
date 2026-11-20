@@ -171,7 +171,7 @@
   padding: 0 9px;
 }
 
-/* 项目区：手机上只显示「当前项目」一格（点开是完整项目列表）+「＋」。
+/* 项目区：手机和桌面一样平铺「全部项目」，标签条横向可滑。
    保底 30px 是给「＋」留的位置——压到 0 时那个按钮会溢出去压在旁边的图标上。 */
 #root .app[data-mobile='1'] .project-strip {
   flex: 1 1 auto;
@@ -179,32 +179,35 @@
   margin-left: 0;
 }
 
-#root .app[data-mobile='1'] .project-tabs {
-  display: flex;
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-}
-
-/* 非当前项目不占位置；切项目在标签行里点（标签仍可横滑） */
-#root .app[data-mobile='1'] .project-tab:not(.active) {
-  display: none;
-}
-
+/*
+ * 这里不隐藏非当前项目。
+ *
+ * 以前写的是 .project-tab:not(.active){display:none}：手机上永远只看得到一个
+ * 项目，切走以后上一个像被关掉了。现在全部标签都渲染，靠手指横滑查看和切换，
+ * 和桌面 / exe 的行为一致（.project-tabs 自带 overflow-x: auto）。
+ *
+ * 别在这里写 overflow: hidden：那会把桌面的横向滚动一起废掉。
+ */
 #root .app[data-mobile='1'] .project-tab {
-  /* 允许被容器压缩：可用宽度不够时收缩成省略号，而不是溢出盖住「＋」 */
-  flex: 0 1 auto;
+  /* 不参与压缩：挤窄了每个标签只剩省略号，横滑也分不清是哪个项目 */
+  flex: 0 0 auto;
   min-width: 0;
-  height: 32px;
-  /* 上限放宽，实际宽度交给 flex 分配：屏幕宽松时多显示几个字，
-     紧的时候自己收缩成省略号，不需要按机型写死 */
-  max-width: 132px;
-  padding: 0 8px 0 9px;
+  height: 34px;
+  max-width: 118px;
+  padding: 0 10px;
+  /* 横滑停靠：滑一下正好停在一个项目上，不会卡在两个标签中间 */
+  scroll-snap-align: start;
+}
+
+#root .app[data-mobile='1'] .project-tabs {
+  /* 横滑更跟手；scroll-padding 让第一个标签不被圆角切掉 */
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 2px;
 }
 
 #root .app[data-mobile='1'] .project-tab-name {
   min-width: 0;
-  max-width: 112px;
+  max-width: 104px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -215,9 +218,41 @@
   display: none;
 }
 
-#root .app[data-mobile='1'] .project-tab {
-  height: 34px;
-  padding: 0 10px;
+/* ---------- 竖屏手机：项目标签单独占一行 ---------- */
+/*
+ * 挤在顶栏一行里时，390px 扣掉右侧按钮只剩 130 多像素，连两个项目名都露不全，
+ * 看起来还是「只有一个项目」。给标签条整行宽度，三个项目能同时看到，
+ * 和 exe 的多项目标签一致。
+ *
+ * 横屏 / 极矮视口（高度 ≤ 560）不启用：顶栏吃掉太多垂直空间，聊天区会被挤没。
+ * 那边继续用一行 + 横滑。
+ */
+@media (min-height: 561px) {
+  #root .app[data-mobile='1'] .topbar {
+    height: auto;
+    min-height: 50px;
+    padding: 6px 10px;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  #root .app[data-mobile='1'] .project-strip {
+    order: 3;
+    flex: 1 0 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  /* 整行宽度通常放得下全部标签；放不下时仍然横滑 */
+  #root .app[data-mobile='1'] .project-tabs {
+    flex: 1 1 auto;
+  }
+
+  /* 顶栏变两行后高度约 88px，窗口按钮的 height:100% 会跟着撑成 88px 高。
+     exe 拖窄到手机宽度时这三个按钮是第一行唯一的内容，必须保持正常手感。 */
+  #root .app[data-mobile='1'] .win-controls {
+    height: 36px;
+  }
 }
 
 /* ---------- 主区：单列，一次只显示一栏 ---------- */

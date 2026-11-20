@@ -100,6 +100,43 @@ export function applyMention(
 }
 
 /**
+ * 这次提及状态变化要不要清空候选并重置高亮。
+ *
+ * 只有「进入新提及」或「query 真的变了」才需要重新搜索。光标在同一段提及里
+ * 来回移动（onSelect 会反复触发）时如果无条件清空，搜索 effect 的依赖
+ * `[menu, query]` 没变、不会重跑，候选就永久空白 —— 用户看到的是
+ * 「文件列表出来一瞬间又没了」。
+ */
+export function shouldResetHits(
+  next: MentionQuery | null,
+  prev: MentionQuery | null,
+): boolean {
+  if (!next) return false
+  if (!prev) return true
+  return prev.query !== next.query
+}
+
+/**
+ * 菜单状态机的目标值：这个 effect 只管命令/agent 菜单，不得抢走 @ 文件菜单。
+ *
+ * **总是返回确定的目标值**（不返回 undefined）。调用方必须直接 `setMenu(next)`，
+ * 不能写 `next ?? current`：`null ?? current` 会把「该关闭」当成「保持不动」，
+ * 结果是删掉 `/` 后命令菜单不关、Esc 也失效（实测回归）。
+ */
+export function nextMenuForSlash(
+  current: 'commands' | 'agents' | 'files' | null,
+  slashQuery: string | null,
+  dismissed: boolean,
+): 'commands' | 'agents' | 'files' | null {
+  if (slashQuery === null) {
+    // 没有 / 前缀：不归这个 effect 管。@ 菜单原样留着，其余一律关掉。
+    return current === 'files' ? current : null
+  }
+  if (dismissed) return null
+  return current === 'agents' && slashQuery === 'agents' ? 'agents' : 'commands'
+}
+
+/**
  * 在一个较长的草稿里判断某个提及是否还完整（用于发送前提示未选中的 @）。
  *
  * 只是为了灰条提示，不做严格校验：返回所有「`@` 后紧跟非空白但后面没有路径分隔或扩展名」的片段，

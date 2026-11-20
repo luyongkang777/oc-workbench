@@ -8,7 +8,9 @@ import {
   baseName,
   dirName,
   filterHits,
+  nextMenuForSlash,
   parseMentionAt,
+  shouldResetHits,
   type MentionHit,
 } from './fileMention'
 import { isMobileViewport, MOBILE_MAX_HEIGHT, MOBILE_MAX_WIDTH } from '../hooks/useMobileLayout'
@@ -147,18 +149,15 @@ export default function ChatInput({
     }
   }, [])
   // 只有在「输入以 / 开头且还没空格」时才进入选择模式；Esc 关闭后不再自动弹回
+  //
+  // 这个 effect 只管「命令 / agent」两种菜单。@ 文件菜单归 syncMention 与它自己的
+  // 搜索 effect 管：这里无条件 setMenu(null) 会把刚弹出的 @ 菜单一起关掉，
+  // 表现就是「文件列表出来一瞬间又没了」（实测：先打 / 再改成 @ 必现）。
   useEffect(() => {
-    if (slashQuery === null) {
-      setMenu(null)
-      setDismissed(false)
-      return
-    }
-    if (dismissed) {
-      setMenu(null)
-      return
-    }
-    setMenu((current) => (current === 'agents' && slashQuery === 'agents' ? 'agents' : 'commands'))
-    setActive(0)
+    if (slashQuery === null) setDismissed(false)
+    // 直接采用返回值：返回 null 就是「该关闭」，不能写 ?? current 兜底
+    setMenu((current) => nextMenuForSlash(current, slashQuery, dismissed))
+    if (slashQuery !== null && !dismissed) setActive(0)
   }, [slashQuery, dismissed])
 
   // 键盘切换时把当前项滚进可视区
@@ -207,11 +206,18 @@ export default function ChatInput({
    */
   function syncMention(value: string, caret: number | null) {
     const found = caret === null ? null : parseMentionAt(value, caret)
+    // 只有「进入新提及」或「query 真的变了」才清候选。
+    // 光标在同一段提及里来回移动（onSelect 会反复触发）时如果无条件清空，
+    // 搜索 effect 的依赖 [menu, mention?.query] 没变、不会重新搜，列表就永久空白 ——
+    // 用户看到的是「文件列表出来一瞬间又没了」（实测复现）。
+    const started = shouldResetHits(found, mention)
     setMention(found)
     if (found) {
       setMenu('files')
-      setActive(0)
-      setFileHits([])
+      if (started) {
+        setActive(0)
+        setFileHits([])
+      }
     } else if (menu === 'files') {
       setMenu(null)
     }
