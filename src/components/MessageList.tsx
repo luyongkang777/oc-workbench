@@ -4,7 +4,7 @@ import { pageVisible } from '../api/visibility'
 import MarkdownText, { type OpenFile } from './MarkdownText'
 import { useTurnWindow } from './useTurnWindow'
 import { copyText } from './clipboard'
-import { isRetryableFailure } from './retryPolicy'
+import { describeFailure } from './failureText'
 import { isImageFile, messageFilePreview } from './attachments'
 import { splitTextPaths } from './fileLinks'
 import {
@@ -276,6 +276,10 @@ const TurnView = memo(
     onToggleConfirm?: (messageID: string) => void
   }) {
     const stamp = turnTimeLabel(turn)
+    // 服务端给的是英文原文（"Free usage limit reached. Connect a provider or..."），
+    // 直接贴给用户等于没说。这里翻成中文的「为什么 + 怎么办」，
+    // 英文原文留在提示里，排查时鼠标一停还能看到。
+    const failText = turn.failure ? describeFailure(turn.failure) : null
     const startTitle = turn.startedAt === undefined ? '' : `提问时间 ${formatDateTime(turn.startedAt)}`
     const endTitle = turn.endedAt === undefined ? '' : `结束时间 ${formatDateTime(turn.endedAt)}`
     return (
@@ -367,17 +371,11 @@ const TurnView = memo(
           )
         })}
 
-        {turn.failure ? (
-          <div className="chat-msg-error" role="alert">
-            <span className="chat-msg-error-title">这一轮没有跑完</span>
-            <span className="chat-msg-error-reason">{turn.failure.message}</span>
-            <span className="chat-msg-error-hint">
-              {/* 只给结论，不承诺「正在重试」：有些情况（已经拿到部分回复）不会重投，
-                  重试进度由聊天区底部的提示条负责，那里才知道真实状态 */}
-              {isRetryableFailure(turn.failure)
-                ? '可以直接重新发送；临时故障恢复后也会自动重试'
-                : '这类错误重试也不会好，请检查模型或配置后重新发送'}
-            </span>
+        {failText ? (
+          <div className="chat-msg-error" role="alert" title={failText.raw}>
+            <span className="chat-msg-error-title">{failText.title}</span>
+            <span className="chat-msg-error-hint">{failText.hint}</span>
+            <span className="chat-msg-error-raw">原文：{failText.raw}</span>
           </div>
         ) : null}
 

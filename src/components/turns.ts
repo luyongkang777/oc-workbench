@@ -72,7 +72,7 @@ export type Turn = {
    * 用户完全不知道发生了什么，只能凭感觉重发。现在挂到本轮上，由渲染层
    * 显示一条失败说明（自动重投也会同时启动）。
    */
-  failure?: { message: string; type?: string; status?: number }
+  failure?: { message: string; type?: string; status?: number; retryAfterMs?: number }
 }
 
 const DETAIL_LIMIT = 90
@@ -172,6 +172,11 @@ function buildTurns(ordered: ChatMessage[]): TurnGroup {
             message: text || type || '模型调用失败（服务端没有给出原因）',
             ...(type ? { type } : {}),
             ...(typeof message.error?.status === 'number' ? { status: message.error.status } : {}),
+            // 服务端会告诉我们「多久之后恢复」（免费额度按 IP 计，实测约 16 小时）。
+            // 界面用它说「大约 X 小时后恢复」，比只报一个英文错误有用得多。
+            ...(typeof message.error?.retryAfterMs === 'number'
+              ? { retryAfterMs: message.error.retryAfterMs }
+              : {}),
           }
           // 失败也是一轮的终点：没有 completed 的回复不该继续显示「思考中」
           if (turn.endedAt === undefined) turn.endedAt = message.time?.created
@@ -502,6 +507,7 @@ export function sameTurn(a: Turn, b: Turn): boolean {
   if (a.failure?.message !== b.failure?.message) return false
   if (a.failure?.type !== b.failure?.type) return false
   if (a.failure?.status !== b.failure?.status) return false
+  if (a.failure?.retryAfterMs !== b.failure?.retryAfterMs) return false
   // 时间戳变化也要重渲染：结束时间是在流式过程中才补上的，漏比就永远显示不出来
   if (a.startedAt !== b.startedAt || a.endedAt !== b.endedAt) return false
 

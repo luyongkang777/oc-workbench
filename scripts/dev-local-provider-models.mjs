@@ -9,7 +9,9 @@ export function pickModelOptions(payload) {
   const push = (item) => {
     if (typeof item === 'string') {
       const id = item.trim()
-      if (id && !out.some((seen) => seen.id === id)) out.push({ id, name: id, context: 0, output: 0 })
+      if (id && !out.some((seen) => seen.id === id)) {
+        out.push({ id, name: id, context: 0, output: 0, free: false, type: 'chat' })
+      }
       return
     }
     const id = [item?.id, item?.name, item?.model].find((value) => typeof value === 'string' && value.trim())
@@ -25,6 +27,8 @@ export function pickModelOptions(payload) {
       name: typeof item?.name === 'string' && item.name.trim() ? item.name.trim() : key,
       context,
       output,
+      free: isFreeModel(item),
+      type: modelType(item),
     })
   }
   if (Array.isArray(payload)) {
@@ -35,6 +39,33 @@ export function pickModelOptions(payload) {
     if (Array.isArray(payload?.[field])) payload[field].forEach(push)
   }
   return out
+}
+
+/**
+ * 上游是否声明这条模型免费（输入输出单价都是 0）。
+ *
+ * 与 `shell/src/provider_models.rs` 的 `is_free` 同口径：**没有 cost 字段一律不免费**，
+ * 否则 DeepSeek / Command Code 这类不报价格的接口会被整份判成免费。
+ */
+function isFreeModel(item) {
+  const cost = item?.cost
+  if (!cost || typeof cost !== 'object') return false
+  const priceOf = (node) => {
+    if (node === undefined || node === null) return null
+    if (typeof node === 'number') return node
+    const price = node?.price
+    return typeof price === 'number' ? price : null
+  }
+  const text = cost.text || {}
+  const input = priceOf(text.input) ?? priceOf(cost.input)
+  const output = priceOf(text.output) ?? priceOf(cost.output)
+  return input === 0 && output === 0
+}
+
+/** 模型类型；没给按 chat 处理（多数 OpenAI 兼容接口不给这个字段）。 */
+function modelType(item) {
+  const text = typeof item?.type === 'string' ? item.type.trim().toLowerCase() : ''
+  return text || 'chat'
 }
 
 /** 兼容旧名字（只取 id）。 */

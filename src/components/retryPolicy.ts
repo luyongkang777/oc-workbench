@@ -84,6 +84,13 @@ const PERMANENT_PATTERNS = [
   /content[- ]?filter/i,
   /session not found/i,
   /location not found/i,
+  // 免费额度用光：重试到额度重置要等十几小时，一分钟内重试多少次都没用。
+  // 必须立刻告诉用户换模型，别让他在「自动重试」里干等。
+  /free[-_. ]?limit/i,
+  /free usage limit/i,
+  /free tier/i,
+  /FreeUsageLimitError/i,
+  /FreeTierError/i,
 ]
 
 /** 网络层这类错误都是「过一会儿可能就好了」。 */

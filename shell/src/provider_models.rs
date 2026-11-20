@@ -132,11 +132,11 @@ pub(crate) fn collect_models(payload: &Value) -> Vec<Value> {
     out
 }
 
-/// 单条模型 → `{id, name, context, output}`（兼容字符串项与各种字段名）。
+/// 单条模型 → `{id, name, context, output, free, type}`（兼容字符串项与各种字段名）。
 fn model_value(item: &Value) -> Value {
     if let Some(id) = item.as_str() {
         let id = id.trim();
-        return json!({ "id": id, "name": id, "context": 0, "output": 0 });
+        return json!({ "id": id, "name": id, "context": 0, "output": 0, "free": false, "type": "chat" });
     }
     let id = ["id", "name", "model"]
         .iter()
@@ -161,7 +161,49 @@ fn model_value(item: &Value) -> Value {
         .and_then(Value::as_u64)
         .or_else(|| item.get("max_output_tokens").and_then(Value::as_u64))
         .unwrap_or(0);
-    json!({ "id": id, "name": name, "context": context, "output": output })
+    let kind = item
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("chat")
+        .to_ascii_lowercase();
+    json!({
+        "id": id,
+        "name": name,
+        "context": context,
+        "output": output,
+        "free": is_free(item),
+        "type": kind,
+    })
+}
+
+/// 上游是否声明这条模型免费：输入与输出单价都是 0。
+///
+/// **没有 `cost` 字段一律算不免费**。DeepSeek / Command Code 不报价格，
+/// 把「没说价格」当免费会让整个清单被误判成免费池。
+/// 价格既可能是数字（`0`）也可能是对象包一层，两种都认——实测 opencode 免费池是
+/// `cost.text.input.price = 0`，别的地方可能直接给 `cost.input = 0`。
+fn is_free(item: &Value) -> bool {
+    let Some(cost) = item.get("cost") else {
+        return false;
+    };
+    let price_of = |node: Option<&Value>| -> Option<f64> {
+        let node = node?;
+        if let Some(value) = node.as_f64() {
+            return Some(value);
+        }
+        node.get("price").and_then(Value::as_f64)
+    };
+    let text = cost.get("text");
+    let input = price_of(text.and_then(|node| node.get("input")))
+        .or_else(|| price_of(cost.get("input")));
+    let output = price_of(text.and_then(|node| node.get("output")))
+        .or_else(|| price_of(cost.get("output")));
+    match (input, output) {
+        (Some(input), Some(output)) => input == 0.0 && output == 0.0,
+        _ => false,
+    }
 }
 
 /// 从磁盘读回某个 provider 的真实 key（只给同一个 id 用）。
@@ -201,6 +243,55 @@ mod tests {
         let text = r#"{"error":{"message":"Incorrect API key provided"}}"#;
         assert_eq!(extract_error(text), "Incorrect API key provided");
         assert_eq!(extract_error("plain text"), "plain text");
+    }
+    #[test]
+    fn marks_only_zero_cost_as_free() {
+        // 免费池真实形状：cost.text.input.price / cost.text.output.price
+        let free: Value = serde_json::from_str(
+            r#"{"data":[{"id":"deepseek-v4.1-flash-free","type":"chat","limit":{"context":200000,"output":32000},
+               "cost":{"text":{"input":{"price":0},"output":{"price":0}}}}]}"#,
+        )
+        .unwrap();
+        let list = collect_models(&free);
+        assert_eq!(list[0]["free"], true);
+        assert_eq!(list[0]["type"], "chat");
+
+        // 付费：任一单价非 0 就不算免费
+        let paid: Value = serde_json::from_str(
+            r#"{"data":[{"id":"claude-fable-5","cost":{"text":{"input":{"price":10},"output":{"price":50}}}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(collect_models(&paid)[0]["free"], false);
+
+        // 只有一半价格为 0 也不算免费
+        let half: Value = serde_json::from_str(
+            r#"{"data":[{"id":"jev","cost":{"text":{"input":{"price":0.042},"output":{"price":0}}}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(collect_models(&half)[0]["free"], false);
+
+        // **没有 cost 字段一律不免费**（DeepSeek / Command Code 不报价格）
+        let no_cost: Value = serde_json::from_str(r#"{"data":[{"id":"deepseek-chat"}]}"#).unwrap();
+        assert_eq!(collect_models(&no_cost)[0]["free"], false);
+
+        // 字符串项：不是免费，类型按 chat
+        let plain: Value = serde_json::from_str(r#"["x-model"]"#).unwrap();
+        let list = collect_models(&plain);
+        assert_eq!(list[0]["free"], false);
+        assert_eq!(list[0]["type"], "chat");
+    }
+
+    #[test]
+    fn keeps_upstream_model_type() {
+        let payload: Value = serde_json::from_str(
+            r#"{"data":[{"id":"img","type":"image"},{"id":"rt","type":"realtime"},{"id":"plain"}]}"#,
+        )
+        .unwrap();
+        let list = collect_models(&payload);
+        assert_eq!(list[0]["type"], "image");
+        assert_eq!(list[1]["type"], "realtime");
+        // 缺省按 chat：多数 OpenAI 兼容接口不给这个字段
+        assert_eq!(list[2]["type"], "chat");
     }
 
     #[test]

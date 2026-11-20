@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-import { maskKey, readStatus, saveConfig, upsertProvider, removeProvider } from './dev-local-provider.mjs'
+import { maskKey, parseSaveModels, readStatus, saveConfig, upsertProvider, removeProvider } from './dev-local-provider.mjs'
 
 async function makeHome() {
   const home = await mkdtemp(path.join(tmpdir(), 'oc-provider-'))
@@ -331,6 +331,56 @@ test('model 为 null 时保存 provider 不能被拦（没碰 model）', async (
     assert.equal(disk.provider.x.options.baseURL, 'https://x/v1')
     assert.equal(disk.model, null, '没碰的 model 要保持原样')
     assert.deepEqual(disk.mcp, { servers: {} })
+  } finally {
+    env.restore()
+    await rm(env.home, { recursive: true, force: true })
+  }
+})
+
+test('parseSaveModels 两种写法都收，对象不能被丢掉', () => {
+  // 面板传的是对象数组（带上下文/输出）；以前这里只留字符串，
+  // 结果「保存成功但模型一个都没写进去」——只在 dev 复现，exe 里正常。
+  const list = parseSaveModels([
+    { id: 'deepseek-v4.1-flash-free', name: 'DS Free', context: 200000, output: 32000 },
+    'plain-id',
+    { id: '   ' },
+    null,
+  ])
+  assert.equal(list.length, 2)
+  assert.equal(list[0].id, 'deepseek-v4.1-flash-free')
+  assert.equal(list[0].context, 200000)
+  assert.equal(list[1], 'plain-id')
+  // 非数组 / 缺字段一律给空数组，不抛
+  assert.deepEqual(parseSaveModels(undefined), [])
+  assert.deepEqual(parseSaveModels({}), [])
+})
+
+test('保存对象数组时上下文与输出要落盘成 limit', async () => {
+  const env = await makeHome()
+  try {
+    await writeFile(env.file, JSON.stringify(FULL, null, 2), 'utf8')
+    const models = parseSaveModels([
+      { id: 'deepseek-v4.1-flash-free', name: 'DS Free', context: 200000, output: 32000 },
+      { id: 'longcat-2.5-free', name: 'LongCat', context: 1000000, output: 0 },
+    ])
+    saveConfig((config) =>
+      upsertProvider(config, {
+        id: 'opencode-free',
+        name: 'OpenCode 免费模型',
+        baseURL: 'https://opencode.ai/inference/openai/v1',
+        apiKey: 'public',
+        models,
+      }),
+    )
+    const disk = JSON.parse(await readFile(env.file, 'utf8'))
+    const entry = disk.provider['opencode-free']
+    assert.equal(entry.options.apiKey, 'public')
+    assert.deepEqual(entry.models['deepseek-v4.1-flash-free'].limit, { context: 200000, output: 32000 })
+    // output 为 0 时不写 output 字段（写死会截断大输出模型）
+    assert.deepEqual(entry.models['longcat-2.5-free'].limit, { context: 1000000 })
+    // 其它 provider 与顶层键不被冲掉
+    assert.equal(disk.provider.keepme.options.apiKey, 'sk-keepkeykeepkey12')
+    assert.equal(disk.model, 'purge/deepseek-flash')
   } finally {
     env.restore()
     await rm(env.home, { recursive: true, force: true })

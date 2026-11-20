@@ -31,6 +31,31 @@ import { providerQuota } from './dev-local-provider-quota.mjs'
 
 export { configPath, maskKey, readStatus, saveConfig, upsertProvider, removeProvider } from './dev-local-provider-store.mjs'
 export { pickModelIds, pickModelOptions } from './dev-local-provider-models.mjs'
+export { parseSaveModels }
+
+/**
+ * 保存请求里的 `models` → 上游能认的数组。
+ *
+ * 两种写法都要收：纯字符串 `"id"` 与对象 `{id,name,context,output}`。
+ * 之前这里只留字符串、把对象丢掉，导致面板勾完保存后**模型一个都没写进去**：
+ * Rust 侧 `parse_models` 两种都认，dev 口径不同 → 只有 exe 里能用，dev 验收看不出来。
+ */
+function parseSaveModels(value) {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const raw of value) {
+    if (typeof raw === 'string') {
+      const id = raw.trim()
+      if (id) out.push(id)
+      continue
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    // 没有有效 id 的对象留不下来（写进配置会变成一个空键）
+    if (!String(raw.id ?? '').trim()) continue
+    out.push(raw)
+  }
+  return out
+}
 
 /**
  * 前端把掩码原样传回来（用户没改 key）：按同一个 id 从磁盘读回真 key。
@@ -117,10 +142,7 @@ async function handle(req, res) {
     const apiKey = await resolveKey(map)
     if (!apiKey) throw httpError(400, '缺少 apiKey')
     if (/\s/.test(apiKey)) throw httpError(400, 'API Key 里不能有空格或换行')
-    // 只收字符串（Rust 侧 filter_map(as_str) 同口径），数字/对象一律丢弃
-    const models = Array.isArray(map.models)
-      ? map.models.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
-      : []
+    const models = parseSaveModels(map.models)
     saveConfig((config) =>
       upsertProvider(config, { id, name: String(map.name ?? '').trim() || id, baseURL, apiKey, models }),
     )

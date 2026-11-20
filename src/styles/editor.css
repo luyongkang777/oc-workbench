@@ -947,11 +947,24 @@
   color: var(--danger);
 }
 
-.chat-msg-error-reason {
-  font-size: 12px;
-  color: var(--text-1);
+/* 服务端原文：只留一行、悬停看全文。中文说明已经在上面的 title / hint 里，
+   原文放在这儿是为了排查（鼠标一停能看到完整英文报错和控制台错误码）。 */
+.chat-msg-error-raw {
+  font-size: 11px;
+  color: var(--text-3);
+  opacity: 0.75;
   /* 服务端的原因可能很长（带整个响应体），别把行撑爆 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   word-break: break-word;
+  cursor: help;
+}
+
+/* 悬停时展开看全文。只放宽 white-space，**保留 overflow:hidden**：
+   改成 visible 会让整块高度跟着内容变，鼠标一挪下面的内容就上下跳。 */
+.chat-msg-error:hover .chat-msg-error-raw {
+  white-space: normal;
 }
 
 .chat-msg-error-hint {

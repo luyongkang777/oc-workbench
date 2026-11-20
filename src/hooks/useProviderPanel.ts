@@ -8,7 +8,9 @@ import {
 } from '../api/provider'
 import type { ProviderQuota, ProviderUsage } from '../api/providerQuota'
 import { normalizeBaseURL } from '../api/providerFormat'
+import { fetchModelsMessage, filterModels } from '../api/providerFree'
 import { PROVIDERS_SAVED_EVENT } from './useProviderSync'
+import type { ProviderController } from './providerController'
 import { useProviderQuota } from './useProviderQuota'
 import {
   applyRemoteModels,
@@ -27,49 +29,6 @@ import {
   type ProviderPreset,
 } from '../components/providerForm'
 import type { ProviderInfo } from '../api/provider'
-
-/**
- * 第三方 API 接入面板的全部状态与动作。
- *
- * 面板只负责画：所有「读、拉模型、保存、删除」都在这儿，失败原因统一落在 `message`。
- * 保存成功后必须**回读一次磁盘真值**——界面显示的是配置文件里的实际内容，
- * 不是「我刚提交的请求」。
- *
- * 额度与本机用量单独放在 `useProviderQuota`（网络请求 + 手动刷新自成一块）。
- */
-export type ProviderController = {
-  status: ProviderStatus | null
-  /** providerID → 额度（DeepSeek 有金额，其它只有控制台地址） */
-  quota: Record<string, ProviderQuota>
-  /** providerID → 本机累计消耗 */
-  usage: Record<string, ProviderUsage>
-  loading: boolean
-  busy: boolean
-  /** 正在重新拉额度（与保存/删除的 busy 分开，互不阻塞） */
-  quotaBusy: boolean
-  message: string | null
-  form: FormState
-  models: string[]
-  saveDisabled: boolean
-  /** 编辑已有的一条；传 null 表示新建 */
-  edit: (info: ProviderInfo | null) => void
-  preset: (preset: ProviderPreset) => void
-  /** 一键接入：套预设 → 拉模型 → 优先勾选指定前缀（Magpie 用 `workbuddy/`） */
-  connectPreset: (preset: ProviderPreset, preferPrefix?: string) => Promise<void>
-  patch: (field: keyof FormState, value: string) => void
-  fetchModels: () => Promise<void>
-  save: () => Promise<void>
-  remove: (id: string) => Promise<void>
-  reload: () => Promise<ProviderStatus | null>
-  /** 手动刷新所有服务商的额度 + 本机用量 */
-  refreshQuota: () => Promise<void>
-  toggle: (modelId: string) => void
-  /** 全选 / 全不选（模型多的服务商一键处理） */
-  selectAll: (checked: boolean) => void
-  /** 改某个模型的上下文 / 输出上限 */
-  limit: (modelId: string, field: 'context' | 'output', raw: string) => void
-  normalizedBase: string
-}
 
 export function useProviderPanel(open: boolean, root = ''): ProviderController {
   const [status, setStatus] = useState<ProviderStatus | null>(null)
@@ -226,14 +185,25 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
           cur.apiKey.trim() === wanted.apiKey
         return same ? applyRemoteModels(cur, list) : cur
       })
-      setMessage(`拉到 ${list.length} 个模型`)
+      // 过滤模式下说清「上游给了 N 个、只留 M 个」——文案逻辑在 providerFree.fetchModelsMessage
+      const kept = filterModels(list, form.filter).length
+      setMessage(fetchModelsMessage(list.length, kept, form.filter))
+
+      // 提示要与实际结果对上：protected 生效时表单并没有被改写（见 applyRemoteModels 的保护分支），
+      // 若照常说「只保留 N 个」会让人以为清单已经换成新的，实际还是旧的。
+      if (list.length > 0 && kept === 0 && form.filter !== '' && form.models.length > 0) {
+        setMessage(
+          `上游这次没返回可用模型（可能没标记免费），已保留现有 ${form.models.length} 个配置，` +
+            '没有改动。稍后可再试，或切到「自定义」手动调整。',
+        )
+      }
     } catch (err) {
       if (!alive.current) return
       setMessage(err instanceof Error ? err.message : '拉取模型失败')
     } finally {
       if (alive.current) setBusy(false)
     }
-  }, [busy, form.apiKey, form.baseURL, form.id])
+  }, [busy, form.apiKey, form.baseURL, form.filter, form.id])
 
   const save = useCallback(async () => {
     if (busy) return
@@ -331,3 +301,4 @@ export function useProviderPanel(open: boolean, root = ''): ProviderController {
 }
 
 export { canFetchModels }
+export type { ProviderController } from './providerController'

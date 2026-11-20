@@ -18,6 +18,8 @@ import {
   effectiveOutput,
   EMPTY_FORM,
   formFromProvider,
+  OPENCODE_FREE_BASE_URL,
+  OPENCODE_FREE_KEY,
   OPENCODE_GO_BASE_URL,
   PRESETS,
   presetForBaseURL,
@@ -45,10 +47,11 @@ const OPTIONS = [
   { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', context: 128_000, output: 8_192 },
 ]
 
-test('预设：四个 ID 都避开 opencode 内置名', () => {
+test('预设：五个 ID 都避开 opencode 内置名', () => {
   assert.deepEqual(PRESETS.map((item) => item.id), [
     'deepseek-official',
     'opencode-zen',
+    'opencode-free',
     'command-code',
     'magpie',
   ])
@@ -64,6 +67,15 @@ test('预设：四个 ID 都避开 opencode 内置名', () => {
   const go = PRESETS.find((item) => item.id === 'opencode-zen')
   assert.equal(go?.baseURL, OPENCODE_GO_BASE_URL)
   assert.ok(go?.baseURL.includes('/inference/go/'), go?.baseURL)
+  // 免费池：key 是字面量 public，且预设必须带 filter='free'
+  const free = PRESETS.find((item) => item.id === 'opencode-free')
+  assert.equal(free?.baseURL, OPENCODE_FREE_BASE_URL)
+  assert.equal(free?.apiKey, OPENCODE_FREE_KEY)
+  assert.equal(free?.filter, 'free')
+  // 两个 opencode 端点只差一段路径，别写成同一个
+  assert.notEqual(free?.baseURL, go?.baseURL)
+  assert.equal(presetForm(free).filter, 'free')
+  assert.equal(presetForm(go).filter, '')
 })
 
 test('从配置读出来的 provider：模型带上下文，key 用掩码', () => {

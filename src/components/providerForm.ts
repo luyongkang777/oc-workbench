@@ -1,5 +1,4 @@
 import {
-  DEEPSEEK_BASE_URL,
   mergeModelIds,
   modelDisplayName,
   prettyModelName,
@@ -7,16 +6,39 @@ import {
   type ModelOption,
   type ProviderDraft,
 } from '../api/providerFormat.ts'
+import { filterModels, type ModelFilter } from '../api/providerFree.ts'
+import {
+  PRESETS,
+  presetById,
+  presetForBaseURL,
+  type ProviderPreset,
+} from './providerPresetsData.ts'
 
 /**
  * provider 表单的状态与判定（纯函数）。
  *
  * 2026-11-16 起每个模型带 `context` / `output` 两个上限：
- *   * 上游 \`/models\` 给了就用上游的（Command Code 的 \`context_length\`、
- *     zen 的 \`limit.context\`、DeepSeek 的 \`context_window\`）；
- *   * 用户可以改，改完保存会写进 \`opencode.json\` 的 \`models.<id>.limit\`；
+ *   * 上游 `/models` 给了就用上游的（Command Code 的 `context_length`、
+ *     zen 的 `limit.context`、DeepSeek 的 `context_window`）；
+ *   * 用户可以改，改完保存会写进 `opencode.json` 的 `models.<id>.limit`；
  *   * 没给的才退回保守默认值（128k / 8k）——**不要把 1M 的模型写成 128k**。
+ *
+ * 预设数据、地址反查在 `providerPresetsData.ts`（这里只保留表单逻辑，避免破 300 行墙）。
  */
+
+// 预设相关全部从这里转出：界面与单测都只 import 这个文件，
+// 拆分对调用方无感。
+export {
+  MAGPIE_BASE_URL,
+  OPENCODE_FREE_BASE_URL,
+  OPENCODE_FREE_KEY,
+  OPENCODE_GO_BASE_URL,
+  PRESETS,
+  presetById,
+  presetForBaseURL,
+  WORKBUDDY_PRESET,
+  type ProviderPreset,
+} from './providerPresetsData.ts'
 
 export type FormState = {
   /** 正在编辑的 provider id；空字符串表示新增 */
@@ -28,6 +50,8 @@ export type FormState = {
   models: ModelOption[]
   /** 已勾选的模型 id */
   picked: string[]
+  /** 拉模型后只留哪些（`'free'` = 只留免费对话模型；空串 = 全部） */
+  filter: ModelFilter
 }
 
 export const EMPTY_FORM: FormState = {
@@ -37,84 +61,14 @@ export const EMPTY_FORM: FormState = {
   apiKey: '',
   models: [],
   picked: [],
+  filter: '',
 }
 
 /** 上游没给上限时的保守默认值。 */
 export const DEFAULT_CONTEXT = 128_000
 export const DEFAULT_OUTPUT = 8_192
 
-/**
- * OpenCode Go 套餐端点。
- *
- * 不能写成 `https://opencode.ai/zen/v1`：那是按量付费（credits）网关，
- * 套餐请求打到那里会被判成 pay-as-you-go，回 402 Insufficient balance，
- * 文案还写着「OpenCode Go covers only requests to the OpenCode Go provider」，
- * 看起来像套餐过期，实际是地址接错了。
- */
-export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/inference/go/openai/v1'
-
-/** Magpie 网关地址：本机固定端口，OpenAI 兼容层挂在 `/v1` 下。 */
-export const MAGPIE_BASE_URL = 'http://127.0.0.1:3425/v1'
-
-export type ProviderPreset = {
-  id: string
-  name: string
-  baseURL: string
-  icon: 'deepseek' | 'opencode' | 'commandcode' | 'magpie' | 'workbuddy'
-  /**
-   * 预设自带的默认 key。
-   *
-   * 本地网关（Magpie）没有鉴权，Bearer 带什么都能过；但表单校验要求 key 非空，
-   * 预设直接填好，省得用户对着「请填 API Key」发呆。
-   */
-  apiKey?: string
-}
-
-/**
- * ID 必须避开 opencode 内置的 provider 名（deepseek / opencode / opencode-go / commandcode…）。
- *
- * 用内置 ID 时 opencode 会把它自己那份模型目录合并进来（实测 `opencode` 写 12 个模型会显示 89 个，
- * `whitelist`/`blacklist` 都不生效），于是「没勾选的模型也会出现在下拉里」。
- * 换成自定义 ID 后，配置里写几个就是几个（实测写 3 个 = 显示 3 个）。
- */
-/**
- * WorkBuddy 的本地转发端点。
- *
- * baseURL 留空是有意的：exe 的端口是随机的，远程入口还多一层 `/u/<id>/` 前缀，
- * 只能由界面按当前 origin 现拼。这个常量只用来给 provider 列表配图标与 id。
- */
-export const WORKBUDDY_PRESET: ProviderPreset = {
-  id: 'workbuddy',
-  name: 'WorkBuddy',
-  baseURL: '',
-  icon: 'workbuddy',
-}
-
-export const PRESETS: ProviderPreset[] = [
-  { id: 'deepseek-official', name: 'DeepSeek 官方', baseURL: DEEPSEEK_BASE_URL, icon: 'deepseek' },
-  // id 保持 `opencode-zen`（历史名字），不要换成 `opencode-go`：
-  //   1. 那是 opencode 内置 provider 名，会把自己那份模型目录合并进来，勾选失效；
-  //   2. 老配置里存的也是 `opencode-zen`，换了会让同一条变成两个 provider。
-  // 名字与地址才是给用户看的，id 只是键。
-  { id: 'opencode-zen', name: 'OpenCode Go', baseURL: OPENCODE_GO_BASE_URL, icon: 'opencode' },
-  {
-    id: 'command-code',
-    name: 'Command Code',
-    baseURL: 'https://api.commandcode.ai/provider/v1',
-    icon: 'commandcode',
-  },
-  // Magpie 是本地网关：WorkBuddy（要在 Magpie 里浏览器登录）、ZCode、Cursor 等都从这里出。
-  // id 不带后缀，opencode 里的模型 id 才短（`magpie/workbuddy/deepseek-v4.1-flash`）。
-  {
-    id: 'magpie',
-    name: 'Magpie 网关',
-    baseURL: MAGPIE_BASE_URL,
-    icon: 'magpie',
-    apiKey: 'magpie',
-  },
-]
-
-/** 预设 → 空表单（只填 id/名称/地址）。 */
+/** 预设 → 空表单（只填 id / 名称 / 地址 / key / 过滤模式）。 */
 export function presetForm(preset: ProviderPreset): FormState {
   return {
     id: preset.id,
@@ -123,6 +77,7 @@ export function presetForm(preset: ProviderPreset): FormState {
     apiKey: preset.apiKey ?? '',
     models: [],
     picked: [],
+    filter: preset.filter ?? '',
   }
 }
 
@@ -161,6 +116,8 @@ export function formFromProvider(info: ProviderLike): FormState {
       output: model.output || 0,
     })),
     picked: info.models.map((model) => model.id),
+    // 重新打开免费池条目时要继续只显示免费模型——按地址认，不依赖 id 命名
+    filter: presetForBaseURL(info.baseURL)?.filter ?? '',
   }
 }
 
@@ -268,24 +225,51 @@ export function effectiveOutput(model: ModelOption): number {
  *   * 首次拉取且还没勾选时默认全选。
  */
 export function applyRemoteModels(form: FormState, remote: ModelOption[]): FormState {
+  // 先按预设的过滤模式裁剪远端清单：免费池会把付费模型一起返回，
+  // 不裁就会让用户在「免费」这一条里勾到要钱的模型（第一次发消息就 402）。
+  const allowed = filterModels(remote, form.filter)
+  // **保护：过滤后一个都没剩、但表单里本来有模型 —— 绝不能把清单清空。**
+  // 触发场景都是实测过的：上游某次没带 free / 没带 cost 标记（接口变更、走了别的镜像），
+  // 或返回空清单（接口抽风）。这时如果按过滤结果写回，表单就剩 0 个模型，
+  // 用户接着点「保存」→ 配置里那条 provider 的 models 被整段删光，模型凭空消失。
+  // 保留原样最安全：用户还能手动取消勾选，也能看到旧模型继续用。
+  if (form.filter !== '' && allowed.length === 0 && form.models.length > 0) {
+    return form
+  }
   const byId = new Map(form.models.map((model) => [model.id, model]))
-  for (const item of remote) {
+  for (const item of allowed) {
     const existing = byId.get(item.id)
     byId.set(item.id, {
       id: item.id,
-      name: existing?.name && existing.name !== existing.id ? existing.name : item.name || prettyModelName(item.id),
+      // 名字以上游为准：配置里存的名字是保存时按「模型名 (商家名)」自动拼的，
+      // 不是用户的创作，所以上游改名（Flash → Flash 2）就该跟着变。
+      // 以前用「旧名 != id」判断「用户改过」——保存后的名字永远带括号、条件永远成立，
+      // 结果上游改名后界面一辈子显示旧名（实测确认）。
+      // 上游没给 name 时才退回旧名，最后才按 id 拆词。
+      name: item.name || existing?.name || prettyModelName(item.id),
       context: item.context || existing?.context || 0,
       output: item.output || existing?.output || 0,
+      free: item.free,
+      type: item.type,
     })
   }
-  const merged = mergeModelIds(remote.map((item) => item.id), form.models.map((item) => item.id))
+  // 并集是给「远端漏报某些模型」的中转站用的；但**过滤模式下不能并旧清单**——
+  // 旧清单里可能躺着付费模型（用户先按「全部」拉过一次），并进来就又混进免费这一条了。
+  const merged =
+    form.filter === ''
+      ? mergeModelIds(allowed.map((item) => item.id), form.models.map((item) => item.id))
+      : allowed.map((item) => item.id)
   const models = merged
     .map((id) => byId.get(id))
     .filter((item): item is ModelOption => Boolean(item))
+  // 已勾选的模型可能被过滤掉（从「全部」切到「只免费」）：收敛一次，
+  // 否则保存会把看不见的付费模型一起写进配置。
+  const visible = new Set(models.map((model) => model.id))
+  const picked = form.picked.filter((id) => visible.has(id))
   return {
     ...form,
     models,
-    picked: form.picked.length > 0 ? form.picked : merged,
+    picked: picked.length > 0 ? picked : models.map((model) => model.id),
   }
 }
 
@@ -306,33 +290,4 @@ export function toSaveModels(
       context: effectiveContext(model),
       output: effectiveOutput(model),
     }))
-}
-
-/** 按 baseURL 的 host 找预设，用来给列表里的条目配图标。 */
-export function presetForBaseURL(raw: string): ProviderPreset | null {
-  const text = (raw ?? '').trim()
-  if (!text) return null
-  let host = ''
-  let pathname = ''
-  try {
-    const url = new URL(text.includes('://') ? text : `https://${text}`)
-    // 用 host（含端口）而不是 hostname：本机网关靠端口区分（127.0.0.1:3425）
-    host = url.host.toLowerCase()
-    pathname = url.pathname
-  } catch {
-    return null
-  }
-  // WorkBuddy 的本地转发：端口随机，只能靠路径认
-  if (pathname.includes('/local/workbuddy/v1')) return WORKBUDDY_PRESET
-  const known: Record<string, string> = {
-    'api.deepseek.com': 'deepseek-official',
-    'deepseek.com': 'deepseek-official',
-    'opencode.ai': 'opencode-zen',
-    'api.commandcode.ai': 'command-code',
-    'commandcode.ai': 'command-code',
-    '127.0.0.1:3425': 'magpie',
-    'localhost:3425': 'magpie',
-  }
-  const id = known[host]
-  return PRESETS.find((preset) => preset.id === id) ?? null
 }

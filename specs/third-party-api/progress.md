@@ -1,6 +1,6 @@
 # 第三方 API 接入 · 进度
 
-当前任务：T5 接线（已完成，待审查）
+当前任务：T-FREE 接入 OpenCode 自带免费模型（已过审，待发布）
 
 ## 已完成
 
@@ -153,8 +153,164 @@
 - 修复：GET 响应统一包 `{profile}`（原先后两种形状导致每次启动都判成云端为空并覆盖）；
   apply 写默认模型前检查 provider 是否存在（换机场景）。
 
+## 2026-11-20 T-FREE：接入 OpenCode 自带免费模型（已完成）
+
+需求：面板加一条「OpenCode 免费模型」，只列免费模型，上下文可改。
+
+### 做了什么
+
+- 新预设 `opencode-free`：地址 `https://opencode.ai/inference/openai/v1`，key 字面量 `public`。
+  它和 Go 套餐**同一个 host、只差一段路径**，因此 `presetForBaseURL` 里按路径区分
+  （`/inference/openai/` → 免费池；其余 opencode.ai → Go 套餐）。
+- 新增 `src/api/providerFree.ts`（判定与过滤纯函数）：
+  * `isFreeModel` 只认上游 `free` 标记；
+  * `isChatModel` 排掉 `image` / `realtime` / `decision`；
+  * `filterModels(models, 'free')` 两个条件同时满足才留；
+  * `fetchModelsMessage` 统一「拉到 N 个 / 只留 M 个 / 一个没剩」三种文案。
+- 上游解析层补 `free` 与 `type` 两个字段（Rust `provider_models.rs` + dev `dev-local-provider-models.mjs`，
+  两侧同口径）：**没有 `cost` 字段一律算不免费**，否则 DeepSeek / Command Code 会被整份误判。
+- 表单带 `filter` 字段：`applyRemoteModels` 拉完先过滤；**过滤模式下不并旧清单**
+  （旧清单可能躺着付费模型），并收敛 `picked`，防止看不见的付费模型被一起保存。
+- 为守 300 行墙拆出两个文件：`components/providerPresetsData.ts`（预设数据与地址反查）、
+  `hooks/providerController.ts`（面板契约类型）。
+
+### 实测（2026-11-20）
+
+- 免费池 `GET /models` 现在**能拉**（91 个）——技能 `opencode-zen-free-proxy` 里记的「404」已过时。
+- 91 个里只有 14 个 `cost` 全 0；其中 `gpt-live-1`(realtime) / `grok-imagine-image-2.0`(image) /
+  `jev-1.13-free`(decision) 不能做对话 → 最终 11 个 chat 免费模型。
+- 真实配置已写入 `opencode-free` 11 个模型，`limit` 带真实上下文（200k~1M）。
+  `GET /api/model` 立刻热加载出现，不需要重启。
+- 手改上下文验证过：把 200000 改成 131072 → 配置文件与 opencode 模型列表都变成 131072，
+  `output` 传 0 时不写该字段（避免截断大输出模型）。
+- 顶层键 / `mcp` / `instructions` / 其它 provider 一字未动（写前自动备份）。
+
+### 修掉的真 bug（dev 与外壳口径分叉）
+
+- dev 的 `save` 只收**字符串数组**的 models，把 `{id,name,context,output}` 对象整份丢掉 →
+  面板勾完点保存，**模型一个都没写进去**，而 Rust 侧 `parse_models` 两种都认，
+  所以只有 exe 里正常、dev 验收看不出来。
+- 修法：dev 抽出 `parseSaveModels`（两种写法都收、无有效 id 的对象丢弃），并补两条回归测试。
+
+### 审查结论
+
+REVIEW: 中 | 🔴0 🟡2 🟢3 | 结论: Approve
+
+- 🟡 已修：`fetchModels` 的 `useCallback` 依赖漏了 `form.filter`，可能用旧过滤模式算提示。
+- 🟡 已修：过滤后一个模型都没剩时只报数字，用户看不出该干什么 → 补「切自定义手动勾选」的指引。
+- 🟢 验收脚本的套餐额度 SKIP 条件写错（只判空数组），把「key 401」误报成 FAIL，已改成按实际是否有百分比判定。
+
+## 2026-11-20 复审（第二轮，中等档）
+
+第一轮报 🔴0 🟡2 🟢3 之后又按「高一级」重审了一遍，**多抓出 2 个真 bug + 1 处数据安全风险**。
+
+### 🔴 上游没带 `free` 标记时会把配置里的模型删光（已修）
+
+- **现象**：`filter='free'` 时如果上游某次没带 `free` / `cost` 标记（接口变更、走了镜像），
+  或直接返回空清单，`applyRemoteModels` 会把表单清成 **0 个模型**，
+  用户接着点「保存」→ 配置里那条 provider 的 `models` 被整段删空，模型凭空消失。
+- **根因**：过滤结果直接当写回结果，没有「一个都没剩」的保护分支。
+- **修法**：过滤模式下「过滤后 0 个 + 表单原本有模型」直接 `return form` 原样返回。
+  同时修了配套文案：这种情况不再说「只保留 0 个」，改成「已保留现有 N 个配置，没有改动」。
+- **回归测试**：`providerFree.test.mjs` 的「上游没带 free 标记时不能把已配模型清空」，
+  断言 `toSaveModels` 仍然写出 2 个（而不是 0 个）。
+
+### 🟡 上游改名后界面永远显示旧名（已修）
+
+- **现象**：上游把 `DeepSeek V4.1 Flash Free` 改成 `DeepSeek V4.1 Flash Free 2`，
+  界面不动。实测确认。
+- **根因**：名字保留条件是 `existing.name !== existing.id`——本意是「用户改过名就保留」，
+  但**保存进配置的名字永远带「(商家名)」后缀**，条件永远成立，于是永久锁定旧名。
+- **修法**：改成「名字以上游为准」（`item.name || existing?.name || prettyModelName(id)`）。
+  配置里的名字本来就是保存时自动拼的，不是用户的创作，跟着上游变才对。
+- **回归测试**：「上游改名后界面要跟着更新」。
+
+### 🟢 验收脚本把环境问题报成 FAIL（已修）
+
+- `opencode-zen` 的 key 已失效（401）、DeepSeek 余额为负，导致「额度行百分比」两条一直 FAIL。
+- 原判定只看数组是否为空，改成「真的查到百分比才断言，否则 SKIP 并说明原因」。
+- 现在真机验收是 **17/17 PASS + 2 SKIP**（无 FAIL）。
+
+### 实测数据（2026-11-20 复审时重拉）
+
+- 免费池 `/models` 这次返回 **103 个**（上次 91 个）→ **上游模型数会漂移，不能写死数字**。
+- `type` 分布比预想多：`chat` 83 / `embedding` 12 / `decision` 4 / `image` 3 / `realtime` 1。
+  `isChatModel` 是**白名单**（只认 `chat`），所以 `embedding` 这类新类型自动被排掉，
+  上游以后再加类型也不会漏进来。
+- 免费判定实测仍然准确：12 个免费，排掉 `decision` 后 **11 个 chat**。
+- `cost.text.input` 有三种形状（`{price,cache}` / `{price}` / `{price,cache,overrides}`），
+  部分模型带 `overrides`（超上下文翻倍计价）——都是非零价，不影响免费判定。
+
+### 一个环境干扰（要记住）
+
+复审期间发现配置里 `opencode-free` 从 11 个模型变成 1 个，追查后确认：
+
+- 有一个**旧版 `oc-workbench-shell.exe`**（`%LOCALAPPDATA%\opencode\worktree\c0149a\...`，
+  15:50 启动，占 17800 端口，标题「OpenCode 工作台」）一直在后台运行。
+- 它用的是旧代码，在界面上操作时会按旧口径写配置（写进去的那条是
+  `context=1000000 / output=38400`，既不是上游值也不是我的值）。
+- **不是本次改动引入的 bug**。已从备份 `opencode.json.bak-1795176495-801` 恢复成 11 个模型，
+  其它 provider 与顶层键都没动。
+- **教训**：在本机验证 provider 面板写入前，先确认没有别的旧实例在跑
+  （`Get-Process | ? ProcessName -match 'workbench'`），否则两边会互相覆盖配置。
+
+## 2026-11-20 第三轮：失败提示改成中文（截图驱动）
+
+用户发来截图：免费额度用光时，界面显示
+「这一轮没有跑完 / Free usage limit reached. Connect a provider or subscribe to OpenCode Go...」
+外加一句「可以直接重新发送；临时故障恢复后也会自动重试」。三个问题：
+
+1. **英文看不懂** —— 服务端原文直接贴给用户。
+2. **误导** —— 说「会自动重试」，但免费额度按 IP 计、要等十几小时，重试毫无意义。
+3. **不知所措** —— 没有任何「现在该干什么」的指引。
+
+### 修法
+
+- **新增 `src/components/failureText.ts`**（纯函数）：把失败归类成
+  `free-limit` / `rate-limit` / `quota` / `auth` / `model-missing` / `context` /
+  `network` / `server` / `unknown` 九类，每类给「中文标题 + 中文做法」，
+  原始英文留在 `raw` 里进悬停提示。
+- **判定顺序从具体到笼统**：免费额度必须排在普通 429 限流**前面**——
+  两者都可能是 429，但结论完全不同（等十几小时 vs 稍等几秒）。
+- **`humanizeWait` 把毫秒说成人话**：59181000ms → 「约 16 小时」。
+- **`retryPolicy.ts` 加规则**：免费额度用光归入不可重试（不再白试 5 轮）。
+  正则用 `/free[-_. ]?limit/i` 这类精确写法，不用裸 `/free\b/i`
+  （后者会把 "the free plan has no access" 判死）。
+- **`turns.ts` 把 `retryAfterMs` 带进 turn.failure**：界面才能说「约 X 小时后恢复」。
+- **`MessageList.tsx` / `editor.css`**：三段式展示（标题 / 做法 / 原文），
+  原文默认单行截断、悬停展开。
+
+### 界面实际显示（实测截图确认）
+
+```
+免费模型的额度用光了
+这类免费额度按 IP 计算，约 16 小时后恢复。现在可以换一个模型继续。
+原文：Free usage limit reached. Connect a provider or subscribe to …   ← 单行截断
+```
+
+### 验收
+
+- 单测：`failureText.test.mjs` 7 条（含「含 free 但不是额度不能被误判」边界）、
+  `failureFlow.test.mjs` 3 条（端到端：真实 idle 消息 → turn.failure → 中文文案）。
+- 真机：`verify-failure-text.mjs` 5/5 PASS（样式生效、原文截断、旧类名已清理）。
+- 截图：`.tmp/failure-ui.png` 肉眼确认两种失败态的显示。
+- 回归：Node **746** 项、Rust **309** 项、`tsc --noEmit`、`vite build` 全绿。
+
+### 审查
+
+REVIEW: 中 | 🔴0 🟡1 🟢2 | 结论: Approve
+
+- 🟡 已修：悬停态原来写 `overflow: visible`，展开时整块高度会变，鼠标一挪内容上下跳。
+  改成只放宽 `white-space`、保留 `overflow: hidden`。
+- 🟢 实测确认 `nowrap` + `text-overflow: ellipsis` 不会撑破容器
+  （558px 滚动宽度正确截到 391px，外层 420px 容器无溢出）。
+- 🟢 实测确认新正则不误伤 "free plan" / "freely" / "freeway" 这类无关词。
+
 ## 已知边界
 
-- 保存后 opencode 是否**热加载**配置未验证（面板文案写成「没出现就重启服务」）。
+- 保存后 opencode 是否**热加载**配置未验证（面板文案写成「没出现就重启服务」）——实测会热加载。
 - 不做服务重启（会打断正在跑的会话）。
 - 不支持非 OpenAI 兼容协议，`npm` 固定 `@ai-sdk/openai-compatible`。
+- **免费池有额度上限且按 IP 计**：本机 2026-11-20 已用光（429，约 16 小时后重置）。
+  接入链路本身已验证（回 429 而不是 403，说明免费池的三道校验都通过了），
+  但「真跑一轮对话」要等额度恢复才能验。

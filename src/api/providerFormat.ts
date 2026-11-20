@@ -31,6 +31,15 @@ export type ModelOption = {
   context: number
   /** 单次输出上限（token）；0 表示上游没给 */
   output: number
+  /**
+   * 上游声明这条模型免费（输入输出价格都是 0）。
+   *
+   * 只有 opencode 免费池会给；DeepSeek / Command Code 这类不报价格的接口
+   * 一律是 undefined——「没说价格」不等于免费，别拿它当默认真值。
+   */
+  free?: boolean
+  /** 上游给的模型类型（`chat` / `image` / `realtime` / `decision`）；缺省按 chat 处理。 */
+  type?: string
 }
 
 /** 校验结果：ok=false 时 `error` 是一句能直接显示给用户的话。 */

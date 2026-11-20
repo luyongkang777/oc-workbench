@@ -119,19 +119,20 @@ check('列表不含明文 key', leaked === false)
 const providerCount = await evaluate(`document.querySelectorAll('.provider-item').length`)
 check('读到已有 provider', providerCount > 0, `${providerCount} 条`)
 
-// 4. 三个内置预设 + 图标
+// 4. 六个入口 + 图标（5 个预设 + WorkBuddy 卡片，都用 .provider-preset 类）
 const presetCount = await evaluate(`document.querySelectorAll('.provider-preset').length`)
-check('三个内置预设都在', presetCount === 3, `数量 ${presetCount}`)
+check('六个入口都在', presetCount === 6, `数量 ${presetCount}`)
 const presetNames = await evaluate(
   `[...document.querySelectorAll('.provider-preset-name')].map((el) => el.textContent)`,
 )
 check(
   '预设名称正确',
-  JSON.stringify(presetNames) === JSON.stringify(['DeepSeek 官方', 'OpenCode Go', 'Command Code']),
+  JSON.stringify(presetNames) ===
+    JSON.stringify(['DeepSeek 官方', 'OpenCode Go', 'OpenCode 免费模型', 'Command Code', 'Magpie 网关', 'WorkBuddy']),
   JSON.stringify(presetNames),
 )
 const iconOk = await evaluate(`[...document.querySelectorAll('.provider-preset img.provider-icon')].every((img) => img.complete && img.naturalWidth > 0)`)
-check('三个预设图标都加载成功', iconOk === true)
+check('六个入口图标都加载成功', iconOk === true)
 
 // 4a. 额度行：真实配置里 deepseek-official 应该有金额，其余提示去控制台
 await waitFor(`document.querySelectorAll('.provider-item-quota').length > 0`, 20000)
@@ -149,17 +150,17 @@ const hasBalance = await evaluate(
 check('DeepSeek 显示真实余额', hasBalance === true, hasBalance ? '' : '（没配 deepseek 时可为空）')
 
 // 4a2. 套餐额度：主行是「剩 N%」，金额明细在 title 里；刷新按钮能重新拉一遍
+//
+// 只在**真的查到套餐额度**时才断言：opencode-zen 的 key 失效（401）或这台机器只配了
+// DeepSeek 余额时，界面上根本没有百分比可看。以前的判定只看数组是否为空，
+// 于是「有余额行但没有套餐行」会被误报成 FAIL —— 那是环境问题，不是界面坏了。
 const percentLines = await evaluate(`[...document.querySelectorAll('.provider-item-quota')].map((el) => el.textContent)`)
-// 只有 DeepSeek（余额）的干净环境没有百分比可看：跳过而不是误报失败
-if (!Array.isArray(percentLines) || percentLines.length === 0) {
-  process.stdout.write('SKIP  额度行百分比（这台机器没有可查套餐额度的服务商）\n')
+const hasMeters = Array.isArray(percentLines) && percentLines.some((text) => /剩 \d+%/.test(text || ''))
+if (!hasMeters) {
+  process.stdout.write('SKIP  额度行百分比（这台机器没查到套餐额度：key 失效或只配了余额类服务商）\n')
 } else {
-  check(
-    '额度行显示剩余百分比',
-    percentLines.some((text) => /剩 \d+%/.test(text || '')),
-    JSON.stringify(percentLines),
-  )
-  // 金额明细挪到 title：悬停能看到原始金额（本次改动的另一半）
+  check('额度行显示剩余百分比', true, JSON.stringify(percentLines))
+  // 金额明细挪到 title：悬停能看到原始金额
   const detailInTitle = await evaluate(
     `[...document.querySelectorAll('.provider-item-quota')].some((el) => (el.getAttribute('title') || '').includes('$'))`,
   )
@@ -193,6 +194,42 @@ check(
     preset.base === 'https://api.deepseek.com/v1',
   JSON.stringify(preset),
 )
+
+
+// 4c. opencode 免费池：只列免费且能对话的模型（付费的勾了就是 402 余额不足）
+await evaluate(
+  `[...document.querySelectorAll('.provider-preset')].find((b) => b.textContent.includes('OpenCode 免费模型')).click()`,
+)
+await sleep(300)
+const freeFilled = await evaluate(
+  `(() => {
+    const inputs = [...document.querySelectorAll('.provider-panel .provider-input')]
+    return { id: inputs[0]?.value, base: inputs[2]?.value, key: inputs[3]?.value }
+  })()`,
+)
+check(
+  '免费池预设填好 id / 地址 / key',
+  freeFilled.id === 'opencode-free' &&
+    freeFilled.base === 'https://opencode.ai/inference/openai/v1' &&
+    freeFilled.key === 'public',
+  JSON.stringify(freeFilled),
+)
+await evaluate(
+  `[...document.querySelectorAll('.provider-panel button')].find((b) => b.textContent.trim() === '获取模型').click()`,
+)
+// 免费池 /models 会返回 90 多个（含付费），过滤后应只剩十来个
+await waitFor(
+  `document.querySelectorAll('.provider-model').length > 0`,
+  60000,
+)
+const freeModels = await evaluate(
+  `[...document.querySelectorAll('.provider-model-name')].map((el) => el.getAttribute('title') || el.textContent)`,
+)
+const paidLeft = freeModels.filter((id) =>
+  ['claude-', 'gpt-5', 'grok-4', 'opus', 'sonnet'].some((bad) => id.startsWith(bad)),
+)
+check('免费池只列免费模型', freeModels.length > 0 && paidLeft.length === 0, `共 ${freeModels.length} 个，付费残留 ${JSON.stringify(paidLeft)}`)
+check('免费池里全是 -free / big-pickle 这类免费模型', freeModels.every((id) => id.endsWith('-free') || id === 'big-pickle'), JSON.stringify(freeModels.slice(0, 5)))
 
 // 5. 假 key → 应该看到上游 401 原文
 //    按顺序取第 4 个 input（ID / 名称 / 地址 / Key）；nth-of-type 在 label 结构里不可靠。
