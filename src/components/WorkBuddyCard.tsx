@@ -12,7 +12,7 @@ import {
 } from '../api/workbuddy'
 import type { ProviderController } from '../hooks/useProviderPanel'
 import { WORKBUDDY_PRESET } from './providerForm'
-import workbuddyIcon from '../assets/providers/workbuddy.svg'
+import workbuddyIcon from '../assets/providers/workbuddy.png'
 
 /** 令牌轮询间隔：腾讯那边登录一完成就能拿到。 */
 const POLL_MS = 1200

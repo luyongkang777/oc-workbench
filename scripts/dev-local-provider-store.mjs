@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import os from 'node:os'
 import path from 'node:path'
 
-import { httpError } from './dev-local-provider-util.mjs'
+import { httpError, upstreamOf } from './dev-local-provider-util.mjs'
 
 /** 备份最多保留几份。 */
 const BACKUP_KEEP = 10
@@ -54,7 +54,7 @@ function providerView(id, value) {
     id,
     name: value?.name || id,
     npm: value?.npm || '',
-    baseURL: options.baseURL || '',
+    baseURL: upstreamOf(options.baseURL || ''),
     keyMasked: maskKey(options.apiKey),
     hasKey: Boolean(String(options.apiKey ?? '').trim()),
     modelCount: keys.length,

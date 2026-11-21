@@ -1,6 +1,6 @@
 // dev 的额度查询（对齐 shell/src/provider_quota.rs + provider_quota_fetch.rs）。
 
-import { httpError } from './dev-local-provider-util.mjs'
+import { httpError, upstreamOf } from './dev-local-provider-util.mjs'
 import { readConfig } from './dev-local-provider-store.mjs'
 
 /**
@@ -122,7 +122,8 @@ export async function providerQuota(id) {
   const { value } = readConfig()
   const entry = value?.provider?.[id]
   if (!entry) throw httpError(404, `没有找到 provider ${id}`)
-  const baseURL = entry.options?.baseURL || ''
+  // 磁盘上可能是本机梯子地址（/local/relay/<secret>/go|cc），先还原成上游再识别
+  const baseURL = upstreamOf(entry.options?.baseURL || '')
   const apiKey = entry.options?.apiKey || ''
   const lower = String(baseURL).toLowerCase()
 

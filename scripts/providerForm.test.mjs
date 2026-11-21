@@ -203,6 +203,9 @@ test('按地址反查预设图标', () => {
   assert.equal(presetForBaseURL('http://127.0.0.1:3425/v1')?.id, 'magpie')
   // WorkBuddy 走本机转发：端口随机，靠路径认
   assert.equal(presetForBaseURL('http://127.0.0.1:54321/local/workbuddy/v1')?.id, 'workbuddy')
+  // 本机梯子转发：/local/relay/<secret>/go|cc（dev 里界面拿到的是原始地址）
+  assert.equal(presetForBaseURL('http://127.0.0.1:17800/local/relay/abc123/go')?.id, 'opencode-zen')
+  assert.equal(presetForBaseURL('http://127.0.0.1:17800/u/x/local/relay/abc123/cc')?.id, 'command-code')
   assert.equal(presetForBaseURL('http://localhost:3425/v1')?.id, 'magpie')
   assert.equal(presetForBaseURL('https://my-proxy.example.com/v1'), null)
 })

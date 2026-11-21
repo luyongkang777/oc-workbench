@@ -125,6 +125,16 @@ export function presetForBaseURL(raw: string): ProviderPreset | null {
   }
   // WorkBuddy 的本地转发：端口随机，只能靠路径认
   if (pathname.includes('/local/workbuddy/v1')) return WORKBUDDY_PRESET
+  // 本机梯子转发（/local/relay/<secret>/go|cc）：dev 里界面拿到的是原始地址，
+  // 外壳会还原成上游；两边都认，图标才不会退化成首字母。
+  if (pathname.includes('/local/relay/')) {
+    const tail = pathname.slice(pathname.indexOf('/local/relay/') + '/local/relay/'.length)
+    // 当前格式是 <secret>/go；旧格式可能只有 go（与 relay.rs 的宽松解析保持一致）
+    const parts = tail.split('/')
+    const key = parts.length > 1 ? parts[1] : parts[0]
+    if (key === 'go') return presetById('opencode-zen')
+    if (key === 'cc') return presetById('command-code')
+  }
   // opencode.ai 下有三个通道，同一 host 只能靠路径区分：
   //   /inference/openai/v1     免费池（key=public）
   //   /inference/go/openai/v1  Go 套餐

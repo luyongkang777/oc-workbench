@@ -51,16 +51,21 @@ pub fn handle(request: Request, path: &str, url: &str) {
     };
 
     let options = entry.get("options");
-    let base_url = options
-        .and_then(|o| o.get("baseURL"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    // 磁盘上存的可能是本机梯子转发地址（/local/relay/<secret>/go|cc）：
+    // 界面显示时会还原成上游，额度识别也必须还原，否则会被当成「没有公开接口」，
+    // 连「到控制台查看」那一行都不显示（实测 OpenCode Go / Command Code 两条空白）。
+    let base_url = crate::relay::to_upstream(
+        options
+            .and_then(|o| o.get("baseURL"))
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    );
     let api_key = options
         .and_then(|o| o.get("apiKey"))
         .and_then(Value::as_str)
         .unwrap_or("");
 
-    let body = if is_workbuddy(base_url) {
+    let body = if is_workbuddy(&base_url) {
         let value = crate::workbuddy_billing::snapshot(true);
         if value.get("ok").and_then(Value::as_bool) == Some(true) {
             json!({
@@ -81,7 +86,7 @@ pub fn handle(request: Request, path: &str, url: &str) {
                     .unwrap_or("没读到 WorkBuddy 积分"),
             })
         }
-    } else if is_opencode(base_url) && !api_key.trim().is_empty() {
+    } else if is_opencode(&base_url) && !api_key.trim().is_empty() {
         match crate::provider_quota_fetch::fetch_opencode_meters(api_key) {
             Ok(meters) => {
                 let mut value = json!({
@@ -103,7 +108,7 @@ pub fn handle(request: Request, path: &str, url: &str) {
                 "note": format!("没读到套餐额度（{message}），请到控制台查看"),
             }),
         }
-    } else if crate::provider_quota_fetch::is_commandcode(base_url) && !api_key.trim().is_empty() {
+    } else if crate::provider_quota_fetch::is_commandcode(&base_url) && !api_key.trim().is_empty() {
         match crate::provider_quota_fetch::fetch_commandcode_usage(api_key) {
             Ok(value) => value,
             Err(message) => json!({
@@ -113,7 +118,7 @@ pub fn handle(request: Request, path: &str, url: &str) {
                 "note": format!("没读到套餐额度（{message}），请到控制台查看"),
             }),
         }
-    } else if crate::provider_quota_fetch::is_deepseek(base_url) && !api_key.trim().is_empty() {
+    } else if crate::provider_quota_fetch::is_deepseek(&base_url) && !api_key.trim().is_empty() {
         match crate::provider_quota_fetch::fetch_deepseek_balance(api_key) {
             Ok(balance) => json!({
                 "ok": true,
@@ -129,7 +134,7 @@ pub fn handle(request: Request, path: &str, url: &str) {
         json!({
             "ok": true,
             "kind": "console",
-            "consoleUrl": console_url(base_url),
+            "consoleUrl": console_url(&base_url),
             "note": "该服务商没有公开的额度接口，请到控制台查看",
         })
     };

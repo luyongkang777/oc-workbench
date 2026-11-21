@@ -10,6 +10,31 @@ export function httpError(status, message) {
   return err
 }
 
+/** 本机梯子转发的目标（与 shell/src/relay.rs 的 TARGETS 一致）。 */
+const RELAY_TARGETS = {
+  go: 'https://opencode.ai/inference/go/openai/v1',
+  cc: 'https://api.commandcode.ai/provider/v1',
+}
+
+/**
+ * 本机 relay 地址 → 上游地址；不是 relay 就原样返回。
+ *
+ * 磁盘配置里 OpenCode Go / Command Code 的 baseURL 会被换成
+ * `http://127.0.0.1:<port>/local/relay/<secret>/go|cc`。外壳展示时会还原，
+ * dev 也得还原，否则额度识别会认不出服务商（整行额度空白），图标也会退化成首字母。
+ */
+export function upstreamOf(url) {
+  const text = String(url ?? '').trim().replace(/\/+$/, '')
+  const marker = '/local/relay/'
+  const index = text.indexOf(marker)
+  if (index < 0) return url
+  const head = text.slice(0, index)
+  if (!/^http:\/\/(127\.0\.0\.1|localhost):/i.test(head)) return url
+  const parts = text.slice(index + marker.length).split('/')
+  const key = parts.length > 1 ? parts[1] : parts[0]
+  return RELAY_TARGETS[key] || url
+}
+
 export function sendJson(res, status, data) {
   res.statusCode = status
   res.setHeader('content-type', 'application/json; charset=utf-8')

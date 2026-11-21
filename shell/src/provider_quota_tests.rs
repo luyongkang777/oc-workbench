@@ -33,6 +33,20 @@ use crate::provider_quota_fetch::{is_commandcode, is_deepseek, micro_cents_to_us
     }
 
     #[test]
+    fn relay_addresses_resolve_before_matching() {
+        // 磁盘里存的是本机梯子地址；必须先还原成上游，否则两条都识别不出来，
+        // 界面连「额度：到控制台查看」都不显示（实测 1.22.0）。
+        let go = crate::relay::to_upstream("http://127.0.0.1:17800/local/relay/abc123/go");
+        assert_eq!(go, "https://opencode.ai/inference/go/openai/v1");
+        assert!(is_opencode(&go));
+
+        let cc = crate::relay::to_upstream("http://localhost:5273/u/x/local/relay/abc123/cc");
+        assert_eq!(cc, "https://api.commandcode.ai/provider/v1");
+        assert!(is_commandcode(&cc));
+        assert!(!is_opencode(&cc));
+    }
+
+    #[test]
     fn console_links_per_host() {
         assert!(console_url("https://opencode.ai/zen/v1").contains("console"));
         assert!(console_url("https://api.commandcode.ai/provider/v1").contains("studio"));
