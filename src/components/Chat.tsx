@@ -1966,6 +1966,11 @@ export default function Chat({
           root={root}
           connected={connected}
           mcp={mcpApi}
+          onInsert={(text) => {
+            userTouchedRef.current = true
+            setDraft((prev) => (prev.trim() ? `${prev.trim()}\n${text}` : text))
+            setManage(null)
+          }}
           onClose={() => setManage(null)}
         />
       ) : null}

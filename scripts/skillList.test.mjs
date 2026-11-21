@@ -47,3 +47,12 @@ test('过滤：名字 / 描述 / 路径都算，大小写不敏感', () => {
   assert.equal(filterSkills(list, '   ').length, 2)
   assert.equal(filterSkills(list, '不存在').length, 0)
 })
+
+test('保留 SKILL.md 全文，正文不做 trim', () => {
+  const body = '# 标题\n\n正文...\n'
+  const list = normalizeSkills([{ id: 'x', name: 'x', content: body }, { id: 'y', name: 'y' }])
+  assert.equal(list.find((item) => item.id === 'x')?.content, body)
+  assert.equal(list.find((item) => item.id === 'y')?.content, '')
+  // 非字符串的 content 当没有处理，不能把对象塞进去
+  assert.equal(normalizeSkills([{ id: 'z', name: 'z', content: { a: 1 } }])[0].content, '')
+})

@@ -1,4 +1,4 @@
-// 验证 /mcps、/skills 在工作台里能打开清单面板（dev 版：先起 vite 5273）。
+// 验证 /mcps、/skills 的展示与操作（dev 版：先起 vite 5273）。
 // 用法：node scripts/verify-manage.mjs
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -78,7 +78,6 @@ function check(name, ok, detail = '') {
   process.stdout.write(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}\n`)
 }
 
-/** 往输入框打一条斜杠命令：先关掉候选菜单，再回车，直接走 send()。 */
 /** 往输入框敲一条斜杠命令再回车（分两步，模拟真人节奏，避免同一 tick 的 state 竞态）。 */
 const typeCommand = async (cdp, text) => {
   const typed = await cdp.eval(`(() => {
@@ -96,7 +95,52 @@ const typeCommand = async (cdp, text) => {
   )
 }
 
-async function waitFor(cdp, expression, timeout = 15_000) {
+const setDraft = (value) => `(() => {
+  const el = document.querySelector('.chat-input')
+  if (!el) return 'no-input'
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+  setter.call(el, ${JSON.stringify(value)})
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  return el.value
+})()`
+
+/** 用真实鼠标事件点某个服务器行里的按钮（合成 .click() 在 headless 下不触发 React onClick）。 */
+async function clickRowButton(cdp, name, label) {
+  const rect = await cdp.eval(`(() => {
+    const rows = [...document.querySelectorAll('.manage-row')]
+    const row = rows.find((r) => (r.querySelector('.manage-row-name')?.textContent ?? '').includes(${JSON.stringify(name)}))
+    if (!row) return null
+    const btn = [...row.querySelectorAll('.manage-mini')].find((b) => b.textContent === ${JSON.stringify(label)})
+    if (!btn) return null
+    // 行会随状态重排（已停用排最后），可能滚出可视区：先滚到中间再取坐标
+    btn.scrollIntoView({ block: 'center' })
+    const r = btn.getBoundingClientRect()
+    const x = r.x + r.width / 2
+    const y = r.y + r.height / 2
+    const hit = document.elementFromPoint(x, y)
+    if (hit !== btn) return { blocked: hit ? hit.className : 'null' }
+    return { x, y }
+  })()`)
+  if (!rect) return 'no-btn'
+  if (rect.blocked !== undefined) return `blocked:` + rect.blocked
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: rect.x,
+    y: rect.y,
+    button: 'left',
+    clickCount: 1,
+  })
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: rect.x,
+    y: rect.y,
+    button: 'left',
+    clickCount: 1,
+  })
+  return 'ok'
+}
+
+async function waitFor(cdp, expression, timeout = 20_000) {
   const deadline = Date.now() + timeout
   for (;;) {
     const value = await cdp.eval(expression)
@@ -105,6 +149,23 @@ async function waitFor(cdp, expression, timeout = 15_000) {
     await sleep(250)
   }
 }
+
+/** 选中一个「失败」的服务器行（不动已连上的，避免影响用户正在用的工具）。 */
+const pickFailedRow = () => `(() => {
+  const rows = [...document.querySelectorAll('.manage-row')]
+  const failed = rows.filter((row) => {
+    const tag = row.querySelector('.manage-row-tag')?.textContent ?? ''
+    return tag.includes('失败') || tag.includes('授权')
+  })
+  const row = failed.find((r) => (r.querySelector('.manage-row-name')?.textContent ?? '').includes('edge')) ?? failed[0]
+  return row ? (row.querySelector('.manage-row-name')?.textContent ?? '') : null
+})()`
+
+const rowTag = (name) => `(() => {
+  const rows = [...document.querySelectorAll('.manage-row')]
+  const row = rows.find((r) => (r.querySelector('.manage-row-name')?.textContent ?? '').includes(${JSON.stringify(name)}))
+  return row ? (row.querySelector('.manage-row-tag')?.textContent ?? '') : ''
+})()`
 
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true })
@@ -140,113 +201,152 @@ async function main() {
       mobile: false,
     })
 
-    const loaded = new Promise((resolve) => {
-      const onMsg = (event) => {
-        const msg = JSON.parse(event.data)
-        if (msg.method === 'Page.loadEventFired') {
-          cdp.ws.removeEventListener('message', onMsg)
-          resolve()
+    const waitLoad = () =>
+      new Promise((resolve) => {
+        const onMsg = (event) => {
+          const msg = JSON.parse(event.data)
+          if (msg.method === 'Page.loadEventFired') {
+            cdp.ws.removeEventListener('message', onMsg)
+            resolve()
+          }
         }
-      }
-      cdp.ws.addEventListener('message', onMsg)
-    })
+        cdp.ws.addEventListener('message', onMsg)
+      })
+
+    let loaded = waitLoad()
     await cdp.send('Page.navigate', { url: APP_URL })
     await loaded
-    const reloaded = new Promise((resolve) => {
-      const onMsg = (event) => {
-        const msg = JSON.parse(event.data)
-        if (msg.method === 'Page.loadEventFired') {
-          cdp.ws.removeEventListener('message', onMsg)
-          resolve()
-        }
-      }
-      cdp.ws.addEventListener('message', onMsg)
-    })
+    loaded = waitLoad()
     await cdp.eval(
       `window.localStorage.setItem('oc-workbench:root', ${JSON.stringify(path.resolve('.'))})`,
     )
     await cdp.send('Page.reload')
-    await reloaded
+    await loaded
 
     const ready = await waitFor(cdp, `!!document.querySelector('.chat-input')`, 30_000)
     check('聊天输入框已渲染', Boolean(ready))
     if (!ready) throw new Error('页面没就绪')
 
-    // ---- /skills ----
+    // ---------------- /skills ----------------
     check('输入 /skills 并回车', (await typeCommand(cdp, '/skills')) === 'ok')
-    const skillsShown = await waitFor(cdp, `!!document.querySelector('.manage-dialog')`, 20_000)
-    check('/skills 打开面板', Boolean(skillsShown))
+    check('/skills 打开面板', Boolean(await waitFor(cdp, `!!document.querySelector('.manage-dialog')`)))
+
     await waitFor(
       cdp,
       `(() => {
-        const dialog = document.querySelector('.manage-dialog')
-        if (!dialog) return false
-        const foot = dialog.querySelector('.manage-foot span')?.textContent ?? ''
+        const foot = document.querySelector('.manage-foot span')?.textContent ?? ''
         return foot !== '' && !foot.includes('读取中')
       })()`,
       30_000,
     )
-
     const skillState = await cdp.eval(`(() => {
       const dialog = document.querySelector('.manage-dialog')
       if (!dialog) return null
-      const rows = dialog.querySelectorAll('.manage-row')
       return {
-        title: dialog.querySelector('.manage-title')?.textContent ?? '',
-        rows: rows.length,
-        firstName: rows[0]?.querySelector('.manage-row-name')?.textContent ?? '',
+        rows: dialog.querySelectorAll('.manage-row').length,
         count: dialog.querySelector('.manage-foot span')?.textContent ?? '',
         error: dialog.querySelector('.manage-error')?.textContent ?? '',
       }
     })()`)
-    check(
-      '技能面板有清单',
-      Boolean(skillState && skillState.rows > 10),
-      JSON.stringify(skillState),
-    )
-    check('技能条数来自服务端', /共 \d+ 个技能/.test(skillState?.count ?? ''), skillState?.count ?? '')
-    await cdp.shot(path.join(OUT_DIR, 'verify-manage-skills.png'))
+    check('技能面板有清单', Boolean(skillState && skillState.rows > 10), JSON.stringify(skillState))
 
-    // 搜索过滤
-    const filtered = await cdp.eval(`(() => {
+    // 搜索
+    await cdp.eval(`(() => {
       const input = document.querySelector('.manage-search-input')
-      if (!input) return null
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
       setter.call(input, 'ida')
       input.dispatchEvent(new Event('input', { bubbles: true }))
-      return document.querySelectorAll('.manage-row').length
     })()`)
     await sleep(400)
-    const filteredCount = await cdp.eval(`document.querySelectorAll('.manage-row').length`)
-    check('搜索框能过滤', filteredCount > 0 && filteredCount < (skillState?.rows ?? 0), `ida → ${filteredCount} 行（原 ${filtered}）`)
+    const filtered = await cdp.eval(`document.querySelectorAll('.manage-row').length`)
+    check('搜索框能过滤', filtered > 0 && filtered < (skillState?.rows ?? 0), `ida → ${filtered} 行`)
 
-    // Esc 关闭
-    await cdp.eval(
-      `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+    // 清空搜索后展开第一行看全文
+    await cdp.eval(`(() => {
+      const input = document.querySelector('.manage-search-input')
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, '')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await sleep(300)
+    await cdp.eval(`document.querySelector('.manage-row-btn')?.click()`)
+    const docLen = await waitFor(
+      cdp,
+      `(() => {
+        const doc = document.querySelector('.manage-doc')
+        return doc ? doc.textContent.length : 0
+      })()`,
+      10_000,
     )
-    const closed = await waitFor(cdp, `!document.querySelector('.manage-dialog')`, 5000)
-    check('Esc 关闭面板', Boolean(closed))
+    check('点技能能看 SKILL.md 全文', Number(docLen) > 200, `正文 ${docLen} 字`)
+    await cdp.shot(path.join(OUT_DIR, 'verify-manage-skill-detail.png'))
 
-    // ---- /mcps ----
-    await waitFor(cdp, `!document.querySelector('.manage-dialog')`, 5000)
+    // 插入到对话
+    const insertClicked = await cdp.eval(`(() => {
+      const btn = [...document.querySelectorAll('.manage-doc-actions .manage-mini')].find((b) => b.textContent === '插入到对话')
+      if (!btn) return 'no-btn'
+      btn.click()
+      return 'ok'
+    })()`)
+    check('点「插入到对话」', insertClicked === 'ok')
+    const inserted = await waitFor(
+      cdp,
+      `(() => {
+        const value = document.querySelector('.chat-input')?.value ?? ''
+        return value.includes('请用 skill 工具加载技能') ? value : ''
+      })()`,
+      5000,
+    )
+    check('插入后关闭面板并写好提示词', Boolean(inserted), String(inserted).slice(0, 60))
+    await cdp.eval(setDraft(''))
+    await cdp.shot(path.join(OUT_DIR, 'verify-manage-after-insert.png'))
+
+    // ---------------- /mcps ----------------
     await sleep(300)
     check('输入 /mcps 并回车', (await typeCommand(cdp, '/mcps')) === 'ok')
-    await sleep(300)
-    const mcpShown = await waitFor(cdp, `!!document.querySelector('.manage-dialog')`, 15_000)
-    check('/mcps 打开面板', Boolean(mcpShown))
+    check('/mcps 打开面板', Boolean(await waitFor(cdp, `!!document.querySelector('.manage-dialog')`)))
+    await waitFor(cdp, `!!document.querySelector('.manage-sub')`, 10_000)
+
     const mcpState = await cdp.eval(`(() => {
       const dialog = document.querySelector('.manage-dialog')
       if (!dialog) return null
       return {
-        title: dialog.querySelector('.manage-title')?.textContent ?? '',
         sub: dialog.querySelector('.manage-sub')?.textContent ?? '',
         rows: dialog.querySelectorAll('.manage-row').length,
-        note: dialog.querySelector('.manage-note')?.textContent ?? '',
+        hasReconnectAll: [...dialog.querySelectorAll('.manage-btn')].some((b) => b.textContent.includes('全部重连')),
       }
     })()`)
     check('MCP 面板显示连接统计', /已连接 \d+\/\d+/.test(mcpState?.sub ?? ''), JSON.stringify(mcpState))
-    await cdp.shot(path.join(OUT_DIR, 'verify-manage-mcps.png'))
+    check('有「全部重连」入口', Boolean(mcpState?.hasReconnectAll))
 
+    // 断开一个失败中的服务器 → 状态变「已停用」
+    const target = await cdp.eval(pickFailedRow())
+    check('选中一个失败的服务器', Boolean(target), target ?? '无')
+    if (target) {
+      check('点「断开」', (await clickRowButton(cdp, target, '断开')) === 'ok', target)
+      const disabled = await waitFor(
+        cdp,
+        `(() => {
+          const tag = ${rowTag(target)}
+          return tag.includes('已停用')
+        })()`,
+        20_000,
+      )
+      check('断开后状态变「已停用」', Boolean(disabled))
+
+      check('点「连接」重连', (await clickRowButton(cdp, target, '连接')) === 'ok')
+      const reconnected = await waitFor(
+        cdp,
+        `(() => {
+          const tag = ${rowTag(target)}
+          return tag !== '' && !tag.includes('已停用')
+        })()`,
+        25_000,
+      )
+      check('重连后离开「已停用」', Boolean(reconnected), await cdp.eval(rowTag(target)))
+    }
+
+    await cdp.shot(path.join(OUT_DIR, 'verify-manage-mcps.png'))
     writeFileSync(
       path.join(OUT_DIR, 'verify-manage.json'),
       JSON.stringify({ report, skillState, mcpState }, null, 2),

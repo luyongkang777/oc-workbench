@@ -7,6 +7,8 @@ const MARKS = [
   'manage-dialog', // 面板根节点类名
   'manage-search-input', // 技能搜索框
   '/api/skill', // 技能清单接口
+  '/api/experimental/mcp', // MCP 运行时连接/断开
+  '插入到对话', // 技能详情里的操作
   '读取技能列表超时', // 接口层错误文案
 ]
 

@@ -1,8 +1,9 @@
 /**
  * 技能清单（`GET /api/skill`）→ 管理面板用的结构化列表。
  *
- * 接口返回的每条带完整 `content`（本机实测 155 条共约 1.5 MB），
- * 面板只展示元数据，所以在这里就把正文丢掉，别留在内存里。
+ * 接口返回的每条带完整 `content`（本机实测 155 条共约 1.5 MB）。
+ * 面板支持点开看全文，所以这里保留 content（列表页不渲染它），
+ * 其余字段照常清洗；正文不 trim，避免为每个技能多复制一份字符串。
  */
 
 export type SkillInfo = {
@@ -10,6 +11,8 @@ export type SkillInfo = {
   name: string
   description: string
   path: string
+  /** SKILL.md 全文；没有就空串 */
+  content: string
   /** 所在目录名（如 opencode / workbench），只用于展示来源，不参与任何判断 */
   source: string
 }
@@ -19,6 +22,7 @@ type RawSkill = {
   name?: unknown
   description?: unknown
   path?: unknown
+  content?: unknown
 }
 
 function text(value: unknown): string {
@@ -58,6 +62,7 @@ export function normalizeSkills(raw: unknown): SkillInfo[] {
       name,
       description: text(record.description),
       path,
+      content: typeof record.content === 'string' ? record.content : '',
       source: skillSource(path),
     })
   }

@@ -264,3 +264,129 @@
     font-size: 13px;
   }
 }
+
+/* 顶部一行：统计 + 全部重连 */
+.manage-sub-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 6px;
+}
+
+/* 每行右侧的运行时操作（连接 / 重连 / 断开） */
+.manage-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.manage-mini {
+  height: 24px;
+  padding: 0 8px;
+  font-size: var(--fs-2xs);
+  font-family: inherit;
+  color: var(--text-2);
+  background: var(--bg-control);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.manage-mini:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-control-hover);
+}
+
+.manage-mini:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.manage-mini.strong {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
+.manage-mini.busy {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-3);
+}
+
+/* 技能行是按钮：整行可点开详情 */
+.manage-skill {
+  display: flex;
+  flex-direction: column;
+}
+
+.manage-row-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.manage-row-btn.open {
+  background: var(--bg-control);
+}
+
+.manage-row-chev {
+  flex: 0 0 auto;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+/* 展开后的 SKILL.md 全文 */
+.manage-doc-wrap {
+  padding: 0 10px 10px 28px;
+}
+
+.manage-doc-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  min-width: 0;
+}
+
+.manage-doc-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+.manage-doc {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-2);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .manage-doc {
+    max-height: 46vh;
+  }
+
+  .manage-doc-wrap {
+    padding-left: 10px;
+  }
+}
