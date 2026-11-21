@@ -100,6 +100,7 @@ import {
 } from '../api/chat'
 import { joinRevertedDraft, lastUserBoundary, revertNoticeText, sliceAtRevert } from './revert'
 import RevertPanel from './RevertPanel'
+import ManagePanel, { type ManageKind } from './ManagePanel'
 import { mergeSessionList } from './sessionList'
 import { findMentions } from '../api/localfs'
 
@@ -261,6 +262,8 @@ export default function Chat({
   const attachmentsRef = useRef<ChatAttachment[]>([])
   /** 「修改记录」面板是否展开 */
   const [historyOpen, setHistoryOpen] = useState(false)
+  /** /mcps、/skills 的展示面板 */
+  const [manage, setManage] = useState<ManageKind | null>(null)
   const olderCursorRef = useRef<string | undefined>(undefined)
   /** 会话列表的最新快照：定时器里读它，避免闭包拿到旧 state */
   const sessionsRef = useRef<SessionInfo[]>([])
@@ -1222,6 +1225,14 @@ export default function Chat({
 
   /** 工作台内置的斜杠命令。 */
   async function runBuiltin(name: string) {
+    if (name === 'mcps') {
+      setManage('mcps')
+      return
+    }
+    if (name === 'skills') {
+      setManage('skills')
+      return
+    }
     if (name === 'new' || name === 'clear') {
       await newSession()
       return
@@ -1946,6 +1957,16 @@ export default function Chat({
           reverted={Boolean(revert)}
           onRevert={revertFromHistory}
           onClose={() => setHistoryOpen(false)}
+        />
+      ) : null}
+
+      {manage ? (
+        <ManagePanel
+          kind={manage}
+          root={root}
+          connected={connected}
+          mcp={mcpApi}
+          onClose={() => setManage(null)}
         />
       ) : null}
 

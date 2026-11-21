@@ -9,7 +9,16 @@ export type CommandItem = {
   group: CommandGroup
   aliases?: string[]
   /** 选中后由工作台直接执行的客户端命令 */
-  builtin?: 'agents' | 'compact' | 'new' | 'clear' | 'copy' | 'sessions' | 'fork'
+  builtin?:
+    | 'agents'
+    | 'compact'
+    | 'new'
+    | 'clear'
+    | 'copy'
+    | 'sessions'
+    | 'fork'
+    | 'mcps'
+    | 'skills'
   /** TUI 专有命令：显示但不可执行 */
   disabled?: boolean
   /** 灰条上的提示（默认「仅 TUI」） */
@@ -37,7 +46,7 @@ export const BUILTIN_COMMANDS: CommandItem[] = [
   { name: 'fork', description: '从当前会话分叉', group: 'builtin', builtin: 'fork' },
   { name: 'help', description: '查看帮助', group: 'builtin', disabled: true },
   { name: 'highlights', description: '查看高亮', group: 'builtin', disabled: true },
-  { name: 'mcps', description: '管理 MCP', group: 'builtin', disabled: true },
+  { name: 'mcps', description: '查看 MCP 服务器与连接状态', group: 'builtin', builtin: 'mcps' },
   { name: 'models', description: '切换模型', group: 'builtin', disabled: true, note: '顶栏' },
   { name: 'new', description: '新建会话', group: 'builtin', builtin: 'new' },
   { name: 'open', description: '打开项目', group: 'builtin', disabled: true, aliases: ['projects', 'project'], note: '文件树' },
@@ -48,7 +57,7 @@ export const BUILTIN_COMMANDS: CommandItem[] = [
   { name: 'rename', description: '重命名会话', group: 'builtin', disabled: true },
   { name: 'restart', description: '重启 TUI', group: 'builtin', disabled: true },
   { name: 'settings', description: '设置', group: 'builtin', disabled: true },
-  { name: 'skills', description: '技能', group: 'builtin', disabled: true },
+  { name: 'skills', description: '查看当前目录可用的技能', group: 'builtin', builtin: 'skills' },
   { name: 'stats', description: '统计', group: 'builtin', disabled: true },
   { name: 'status', description: '会话状态', group: 'builtin', disabled: true },
   { name: 'terminal', description: '终端', group: 'builtin', disabled: true, note: '底部终端' },
