@@ -6,6 +6,7 @@ import { localGitPlugin } from './scripts/dev-local-git.mjs'
 import { localProviderPlugin } from './scripts/dev-local-provider.mjs'
 import { localUpdatePlugin } from './scripts/dev-local-update.mjs'
 import { localWorkBuddyPlugin } from './scripts/dev-local-workbuddy.mjs'
+import { localMaxiPlugin } from './scripts/dev-local-maxi.mjs'
 import { localUsagePlugin } from './scripts/dev-local-usage.mjs'
 import { localPurgePlugin } from './scripts/dev-local-purge.mjs'
 import { localRulesPlugin } from './scripts/dev-local-rules.mjs'
@@ -106,6 +107,7 @@ export default defineConfig(async ({ command, isPreview }) => {
       localBalancePlugin(),
       // WorkBuddy 登录：dev 里没有外壳，用 Node 补一份同语义实现
       localWorkBuddyPlugin(),
+      localMaxiPlugin(),
       // 第三方 API 接入：provider 读写 + 拉 /models，dev 只补接口
       localProviderPlugin(),
       // 工作台自身的更新：dev 里没有外壳，补一份模拟实现（不替换 exe）

@@ -36,6 +36,7 @@ export {
   PRESETS,
   presetById,
   presetForBaseURL,
+  MAXI_PRESET,
   WORKBUDDY_PRESET,
   type ProviderPreset,
 } from './providerPresetsData.ts'

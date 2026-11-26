@@ -1,6 +1,6 @@
 [package]
 name = "oc-workbench-shell"
-version = "1.22.1"
+version = "1.22.2"
 edition = "2021"
 description = "OpenCode 工作台桌面外壳（tao + wry / WebView2）"
 publish = false
@@ -34,6 +34,10 @@ sha2 = "0.10"
 # 光读 magpie 的 usage.jsonl 会漏掉不走网关的请求。bundled 自带 SQLite，
 # 不依赖系统里的 sqlite3.dll。
 rusqlite = { version = "0.32", features = ["bundled"] }
+# 解码栖客户端的 Chromium OSCrypt(v10) 登录态：AES-256-GCM，纯 Rust
+aes-gcm = "0.10"
+# 扫码绑定：在壳里直接渲染二维码（SVG），前端不用再引 JS 库
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 # 依赖一次性编译好，debug 也能秒开窗口
 [profile.dev.package."*"]

@@ -38,6 +38,15 @@ mod plat {
     /// 互斥体名字。`Local\` 让不同登录用户各开一个，互不影响。
     const MUTEX_NAME: &str = "Local\\oc-workbench-single-instance";
 
+    /// 允许用环境变量换一个互斥体名：自动化验收 / 并行调试时各开一个，
+    /// 不跟用户正在用的那个实例抢。默认行为不变。
+    fn mutex_name() -> String {
+        match std::env::var("OC_WORKBENCH_MUTEX") {
+            Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+            _ => MUTEX_NAME.to_string(),
+        }
+    }
+
     /// 重复启动时最多等这么久「让老实例把窗口摆出来 / 把互斥体放掉」。
     ///
     /// 升级重启正好落在这个窗口期：老进程 `exit(0)` 之后脚本才替换 exe 并拉起新进程，
@@ -77,19 +86,26 @@ mod plat {
         // 看到别的实例时不能立刻判死：升级脚本是「taskkill 旧进程 → 覆盖 exe →
         // 立刻 start 新进程」。杀掉到窗口真正销毁之间有个很短的窗口期，
         // 若此刻直接返回 None，新版本会自己退出，用户看到的是「升级后打不开」。
-        let deadline = Instant::now() + PEER_SETTLE;
-        while !crate::single_peer::peer_windows().is_empty() {
-            if Instant::now() >= deadline {
-                return None;
+        // 自动化验收 / 并行调试可以显式放行：配合 OC_WORKBENCH_MUTEX 各开一个，
+        // 不打扰用户正在用的窗口。默认（不设）行为一个字不变。
+        let allow_multi = std::env::var("OC_WORKBENCH_ALLOW_MULTI")
+            .map(|value| value.trim() == "1")
+            .unwrap_or(false);
+        if !allow_multi {
+            let deadline = Instant::now() + PEER_SETTLE;
+            while !crate::single_peer::peer_windows().is_empty() {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(POLL);
             }
-            std::thread::sleep(POLL);
         }
         mutex_acquire(DUPLICATE_WAIT)
     }
 
     /// 只用互斥体挡（不看窗口）。抽出来是为了能单测，不受「本机是否正开着工作台」影响。
     pub fn mutex_acquire(wait: Duration) -> Option<Instance> {
-        mutex_acquire_named(MUTEX_NAME, wait)
+        mutex_acquire_named(&mutex_name(), wait)
     }
 
     /// 同上，但可以指定互斥体名字。单测用独立名字，避免和正在运行的客户端抢同一个对象。

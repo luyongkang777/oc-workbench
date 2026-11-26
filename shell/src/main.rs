@@ -63,6 +63,11 @@ mod win32;
 mod proxy;
 mod relay;
 mod relay_http;
+mod maxi_auth;
+mod maxi_bind;
+mod maxi_convert;
+mod maxi_import;
+mod maxi_proxy;
 mod workbuddy;
 mod workbuddy_billing;
 mod workbuddy_models;
@@ -215,6 +220,7 @@ fn start_local(token: &str) -> Result<String, String> {
     relay::set_port(port);
     relay::heal_provider_ports(port);
     workbuddy::heal_provider_port(port);
+    maxi_auth::heal_provider_port(port);
     server::spawn_bootstrap(backend.clone(), last_error);
     // 后台采样「本机有没有会话在跑」：`/api/state` 的 busy 字段由它提供，
     // 手机顶部的设备条据此显示黄灯（在跑）/ 绿灯（空闲）。

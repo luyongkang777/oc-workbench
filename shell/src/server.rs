@@ -490,6 +490,12 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
         return;
     }
 
+    // 码栖通道本地转发：同样给 opencode 用，排在 /local 的令牌校验之前。
+    if path.starts_with("/local/maxi/v1/") {
+        crate::maxi_proxy::handle(request, &path, &url);
+        return;
+    }
+
     // 本地文件通道：直接读磁盘，不经过 opencode。同样要 token（页面从 IPC 拿）。
     if path == "/local" || path.starts_with("/local/") {
         if !token_allowed(&request, ctx) {
@@ -546,6 +552,11 @@ fn handle(request: tiny_http::Request, ctx: &Ctx) {
             return;
         }
         // WorkBuddy 登录：登录页 + 令牌轮询 + 本机令牌文件（只读写本机状态）。
+        // 码栖通道的账号接口：导入登录态、配置、退出（页面调用，走页面令牌）。
+        if path == "/local/maxi" || path.starts_with("/local/maxi/") {
+            crate::maxi_auth::handle(request, &path, &url);
+            return;
+        }
         if path == "/local/workbuddy" || path.starts_with("/local/workbuddy/") {
             crate::workbuddy::handle(request, &path, &url);
             return;

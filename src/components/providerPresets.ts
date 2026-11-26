@@ -16,6 +16,7 @@ import deepseekIcon from '../assets/providers/deepseek.png'
 import magpieIcon from '../assets/providers/magpie.svg'
 import opencodeIcon from '../assets/providers/opencode.svg'
 import workbuddyIcon from '../assets/providers/workbuddy.png'
+import maxiIcon from '../assets/providers/maxi.png'
 import type { ProviderPreset } from './providerForm'
 
 export const PRESET_ICONS: Record<ProviderPreset['icon'], string> = {
@@ -24,4 +25,5 @@ export const PRESET_ICONS: Record<ProviderPreset['icon'], string> = {
   commandcode: commandCodeIcon,
   magpie: magpieIcon,
   workbuddy: workbuddyIcon,
+  maxi: maxiIcon,
 }

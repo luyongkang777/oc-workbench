@@ -15,6 +15,15 @@ import { WORKBUDDY_PRESET } from './providerForm'
 import workbuddyIcon from '../assets/providers/workbuddy.png'
 
 /** 令牌轮询间隔：腾讯那边登录一完成就能拿到。 */
+
+/** 面板反复开关不该反复等腾讯：状态与积分缓存 60 秒。 */
+const WB_TTL = 60_000
+const wbCache: {
+  at: number
+  status: WorkBuddyStatus | null
+  billing: WorkBuddyBilling | null
+} = { at: 0, status: null, billing: null }
+
 const POLL_MS = 1200
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 
@@ -67,18 +76,28 @@ export default function WorkBuddyCard({ controller, open }: Props) {
   }, [stop])
 
   const load = useCallback(async (refresh = false) => {
+    if (!refresh && wbCache.status && Date.now() - wbCache.at < WB_TTL) {
+      setStatus(wbCache.status)
+      if (wbCache.billing) setBilling(wbCache.billing)
+      return
+    }
     try {
       const fresh = await getWorkBuddyStatus()
       if (!alive.current) return
       setStatus(fresh)
+      wbCache.status = fresh
       if (!fresh.configured) {
         if (alive.current) setBilling(null)
+        wbCache.billing = null
+        wbCache.at = Date.now()
         return
       }
       // 打开面板/刷新时带 auto=1：今天没签到就顺手签了
       const money = await getWorkBuddyBilling(!refresh, refresh)
       if (!alive.current) return
       setBilling(money)
+      wbCache.billing = money
+      wbCache.at = Date.now()
       setError(money.ok ? null : (money.error ?? null))
     } catch (err) {
       if (alive.current) setError(err instanceof Error ? err.message : '读不到 WorkBuddy 状态')
@@ -152,6 +171,9 @@ export default function WorkBuddyCard({ controller, open }: Props) {
       if (!alive.current) return
       setStatus(fresh)
       setBilling(null)
+      wbCache.status = fresh
+      wbCache.billing = null
+      wbCache.at = Date.now()
     } catch (err) {
       if (alive.current) setError(err instanceof Error ? err.message : '退出登录失败')
     }

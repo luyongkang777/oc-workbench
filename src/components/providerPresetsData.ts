@@ -32,7 +32,7 @@ export type ProviderPreset = {
   id: string
   name: string
   baseURL: string
-  icon: 'deepseek' | 'opencode' | 'commandcode' | 'magpie' | 'workbuddy'
+  icon: 'deepseek' | 'opencode' | 'commandcode' | 'magpie' | 'workbuddy' | 'maxi'
   /**
    * 预设自带的默认 key。
    *
@@ -55,6 +55,13 @@ export type ProviderPreset = {
  * baseURL 留空是有意的：exe 的端口是随机的，远程入口还多一层 `/u/<id>/` 前缀，
  * 只能由界面按当前 origin 现拼。这个常量只用来给 provider 列表配图标与 id。
  */
+export const MAXI_PRESET: ProviderPreset = {
+  id: 'maxi',
+  name: '码栖官方',
+  baseURL: '',
+  icon: 'maxi',
+}
+
 export const WORKBUDDY_PRESET: ProviderPreset = {
   id: 'workbuddy',
   name: 'WorkBuddy',
